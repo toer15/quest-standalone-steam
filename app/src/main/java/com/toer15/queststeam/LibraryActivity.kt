@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.toer15.queststeam.launcher.DeviceMode
 import com.toer15.queststeam.launcher.GameLauncher
 import com.toer15.queststeam.steam.OwnedGame
 import com.toer15.queststeam.steam.SessionStore
@@ -30,6 +31,7 @@ class LibraryActivity : AppCompatActivity() {
         val list = RecyclerView(this).apply { layoutManager = LinearLayoutManager(this@LibraryActivity) }
         adapter = GameAdapter(games) { onGameClicked(it) }
         list.adapter = adapter
+        root.addView(TextView(this).apply { textSize = 14f; text = DeviceMode.label(this@LibraryActivity) })
         root.addView(status)
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
@@ -57,7 +59,7 @@ class LibraryActivity : AppCompatActivity() {
     private fun onGameClicked(g: OwnedGame) {
         AlertDialog.Builder(this)
             .setTitle(g.name)
-            .setMessage("Try to run this standalone via Box64 + Wine?\nThis is an experiment and will very likely fail for VR titles.")
+            .setMessage("Try to run this standalone via Box64 + Wine?\nMode: ${DeviceMode.label(this)}\nThis is an experiment and will very likely fail for VR titles.")
             .setPositiveButton("Try it") { _, _ ->
                 val result = GameLauncher(this).launch(g.appId, g.name)
                 Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()

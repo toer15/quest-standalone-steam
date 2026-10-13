@@ -43,6 +43,8 @@ class GameLauncher(private val ctx: Context) {
             put("DISPLAY", ":0")
             put("LD_LIBRARY_PATH", File(rootfs, "usr/lib").path)
             put("SteamAppId", appId.toString())
+            // Flat mode everywhere until the OpenXR bridge works; on Quest this shows as a 2D panel.
+            put("QSS_MODE", if (DeviceMode.isQuest) "quest-flat" else "phone-flat")
         }
         return try {
             val p = pb.start()

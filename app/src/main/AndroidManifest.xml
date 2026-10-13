@@ -13,8 +13,7 @@
 
         <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s|quest2|questpro" />
 
-        <activity android:name=".MainActivity" android:exported="true"
-            android:screenOrientation="landscape">
+        <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
