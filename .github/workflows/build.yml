@@ -30,7 +30,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.2.0
-          name: v0.2.0 (experiment: Box64 + Wine runtime)
+          name: "v0.2.0 (experiment - Box64 + Wine runtime)"
           prerelease: true
           files: quest-standalone-steam.apk
-          body: Universal arm64 debug APK (phones + Quest). Adds in-app Box64/Wine runtime installer (Winlator v11.2.0 assets), game import, .exe launch with logs, Termux:X11 display. Untested on hardware - see README. App id changed to com.qssteam; uninstall v0.1.0 first.
+          body: "Universal arm64 debug APK (phones + Quest). Adds in-app Box64/Wine runtime installer (Winlator v11.2.0 assets), game import, .exe launch with logs, Termux:X11 display. Untested on hardware - see README. App id changed to com.qssteam; uninstall v0.1.0 first."
