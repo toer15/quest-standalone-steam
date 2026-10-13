@@ -22,15 +22,15 @@ jobs:
           # gradle-wrapper.jar is binary and not committed; regenerate it here
           [ -f gradle/wrapper/gradle-wrapper.jar ] || gradle wrapper --gradle-version 8.7
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :launcher:testDebugUnitTest :app:assembleDebug --no-daemon
           cp app/build/outputs/apk/debug/app-debug.apk quest-standalone-steam.apk
       - uses: actions/upload-artifact@v4
         with: { name: quest-standalone-steam-apk, path: quest-standalone-steam.apk }
-      - name: Publish release v0.2.0
+      - name: Publish release v0.2.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.0
-          name: "v0.2.0 (experiment - Box64 + Wine runtime)"
+          tag_name: v0.2.1
+          name: "v0.2.1 (fix runtime install)"
           prerelease: true
           files: quest-standalone-steam.apk
-          body: "Universal arm64 debug APK (phones + Quest). Adds in-app Box64/Wine runtime installer (Winlator v11.2.0 assets), game import, .exe launch with logs, Termux:X11 display. Untested on hardware - see README. App id changed to com.qssteam; uninstall v0.1.0 first."
+          body: "Fixes Install runtime failing with ZipException invalid LOC header: verified download (size + SHA-256 of Winlator v11.2.0 APK, correct 200/206 resume handling, auto re-download, single install at a time), exec bit fix for box64, clearer logs. Extraction verified on desktop JVM against the real APK; still untested on Quest/phone hardware."

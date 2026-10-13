@@ -94,13 +94,13 @@ class RuntimeActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    RuntimeInstaller(this@RuntimeActivity).install { p ->
+                    RuntimeInstaller(this@RuntimeActivity).install(::appendLog) { p ->
                         runOnUiThread { status.text = "${p.stage} ${(p.fraction * 100).toInt()}%"; progress.progress = (p.fraction * 1000).toInt() }
                     }
                 }
                 appendLog("Runtime installed.")
             } catch (e: Exception) {
-                appendLog("Install failed: $e")
+                appendLog("Install failed: $e"); e.cause?.let { appendLog("  cause: $it") }
             }
             refreshStatus()
         }
