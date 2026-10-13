@@ -1,0 +1,37 @@
+name: Build APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.7' }
+      - name: Build debug APK
+        env:
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+        run: |
+          echo "STEAM_API_KEY=${STEAM_API_KEY}" > local.properties
+          # gradle-wrapper.jar is binary and not committed; regenerate it here
+          [ -f gradle/wrapper/gradle-wrapper.jar ] || gradle wrapper --gradle-version 8.7
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk quest-standalone-steam.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: quest-standalone-steam-apk, path: quest-standalone-steam.apk }
+      - name: Publish release v0.1.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0
+          name: v0.1.0 (experiment)
+          prerelease: true
+          files: quest-standalone-steam.apk
+          body: Universal debug APK for Android phones and Meta Quest. Sideload with adb or SideQuest.
