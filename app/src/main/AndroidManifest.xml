@@ -8,6 +8,7 @@
 
     <application
         android:allowBackup="false"
+        android:extractNativeLibs="true"
         android:label="Quest Standalone Steam"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
 
@@ -21,5 +22,6 @@
         </activity>
         <activity android:name=".LoginActivity" android:exported="false" />
         <activity android:name=".LibraryActivity" android:exported="false" />
+        <activity android:name=".RuntimeActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>
 </manifest>

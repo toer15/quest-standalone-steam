@@ -26,11 +26,11 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk quest-standalone-steam.apk
       - uses: actions/upload-artifact@v4
         with: { name: quest-standalone-steam-apk, path: quest-standalone-steam.apk }
-      - name: Publish release v0.1.0
+      - name: Publish release v0.2.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0
-          name: v0.1.0 (experiment)
+          tag_name: v0.2.0
+          name: v0.2.0 (experiment: Box64 + Wine runtime)
           prerelease: true
           files: quest-standalone-steam.apk
-          body: Universal debug APK for Android phones and Meta Quest. Sideload with adb or SideQuest.
+          body: Universal arm64 debug APK (phones + Quest). Adds in-app Box64/Wine runtime installer (Winlator v11.2.0 assets), game import, .exe launch with logs, Termux:X11 display. Untested on hardware - see README. App id changed to com.qssteam; uninstall v0.1.0 first.
