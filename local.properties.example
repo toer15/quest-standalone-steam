@@ -1,0 +1,4 @@
+# Copy to local.properties (git-ignored) and fill in.
+sdk.dir=/path/to/Android/sdk
+# Get one at https://steamcommunity.com/dev/apikey  -- NEVER commit this.
+STEAM_API_KEY=your_key_here
