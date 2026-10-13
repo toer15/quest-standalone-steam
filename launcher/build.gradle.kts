@@ -18,4 +18,6 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("com.github.luben:zstd-jni:1.5.6-3@aar")
+    implementation("org.apache.commons:commons-compress:1.26.2")
 }

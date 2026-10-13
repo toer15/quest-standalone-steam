@@ -6,59 +6,72 @@ import java.io.File
 data class LaunchResult(val ok: Boolean, val message: String)
 
 /**
- * Pipeline (Winlator-style):
- *   1. Rootfs: a glibc arm64 Linux userland extracted into app files dir (e.g. Winlator's imagefs).
- *   2. Box64 (x86_64 -> arm64) and Box86 (x86 -> arm32/via box64 WOW64) translate CPU instructions.
- *   3. Wine (x86_64 build) runs under Box64 and provides the Windows API.
- *   4. Graphics: DXVK (D3D11 -> Vulkan) on Turnip/Adreno 740 Vulkan driver.
- *   5. VR: openvr_api.dll in the prefix is replaced by our bridge which forwards to Quest OpenXR.
+ * Runs: rootfs/usr/local/bin/box64 rootfs/opt/wine/bin/wine <exe>
+ * Box64 (arm64) translates x86_64 Wine; Wine runs the Windows .exe.
+ *
+ * Display: Wine needs an X11 server. Supported today:
+ *  - Termux:X11 over TCP (DISPLAY=127.0.0.1:0). In Termux run: `termux-x11 :0 -listen tcp -ac`.
+ *  - Headless (no DISPLAY) for console programs (e.g. `cmd /c ver`).
+ * TODO: embed an in-app X server (port of Winlator's Java XServer, LGPL) to drop the Termux dependency.
+ * TODO: OpenXR/VR via openvr-bridge.
  */
-class GameLauncher(private val ctx: Context) {
+class GameLauncher(ctx: Context) {
 
-    val root = File(ctx.filesDir, "runtime")
-    val rootfs = File(root, "rootfs")
-    val box64 = File(rootfs, "usr/local/bin/box64")
-    val wine = File(rootfs, "opt/wine/bin/wine64")
-    val prefix = File(root, "wineprefix")
-    fun gameDir(appId: Int) = File(root, "games/$appId")
+    private val installer = RuntimeInstaller(ctx)
+    val rootfs: File get() = installer.rootfs
+    val isInstalled get() = installer.isInstalled
+    val prefix get() = File(rootfs, "home/xuser/.wine")
+    val gamesDir get() = File(prefix, "drive_c/games")
+    @Volatile var current: Process? = null; private set
 
-    fun launch(appId: Int, name: String): LaunchResult {
-        if (!box64.exists()) return LaunchResult(false, "Runtime not installed yet (see TODO: installRuntime)")
-        val dir = gameDir(appId)
-        if (!dir.exists()) return LaunchResult(false, "$name not downloaded. See docs/DEPOTS.md")
-        val exe = findExe(dir) ?: return LaunchResult(false, "No .exe found in ${dir.path}")
-
-        // TODO(prefix): create prefix on first run: wine64 wineboot -u; install DXVK dlls into system32.
-        // TODO(bridge): copy libopenvr_bridge -> prefix/.../openvr_api.dll override (WINEDLLOVERRIDES).
-        // TODO(display): Wine needs an X server; embed Winlator's XServer view or termux-x11.
-        // TODO(vr): start OpenXR session in a native activity and hand swapchain to the bridge.
-        val pb = ProcessBuilder(box64.path, wine.path, exe.path)
-            .directory(exe.parentFile)
-            .redirectErrorStream(true)
-        pb.environment().apply {
+    fun environment(display: String?): Map<String, String> {
+        val r = rootfs.path
+        return buildMap {
+            put("HOME", "$r/home/xuser")
+            put("USER", "xuser")
+            put("TMPDIR", "$r/tmp")
             put("WINEPREFIX", prefix.path)
-            put("BOX64_LOG", "1")
+            put("WINEDEBUG", "-all,err+all")
+            put("PATH", "$r/usr/local/bin:$r/opt/wine/bin:$r/usr/bin:/system/bin")
+            put("LD_LIBRARY_PATH", "$r/usr/lib:/system/lib64")
+            put("BOX64_LD_LIBRARY_PATH", "$r/usr/lib/x86_64-linux-gnu:$r/opt/wine/lib/wine/x86_64-unix")
+            put("BOX64_PATH", "$r/opt/wine/bin")
             put("BOX64_DYNAREC", "1")
-            put("WINEDLLOVERRIDES", "openvr_api=n;d3d11,dxgi=n")
-            put("DISPLAY", ":0")
-            put("LD_LIBRARY_PATH", File(rootfs, "usr/lib").path)
-            put("SteamAppId", appId.toString())
-            // Flat mode everywhere until the OpenXR bridge works; on Quest this shows as a 2D panel.
+            put("BOX64_LOG", "1")
+            put("WINEDLLOVERRIDES", "openvr_api=n,b;winemenubuilder.exe=d")
             put("QSS_MODE", if (DeviceMode.isQuest) "quest-flat" else "phone-flat")
+            if (!display.isNullOrBlank()) put("DISPLAY", display)
         }
+    }
+
+    /** Starts `box64 wine args...`; streams combined stdout/stderr to [onLine]. */
+    fun runWine(args: List<String>, display: String?, workDir: File? = null, onLine: (String) -> Unit): LaunchResult {
+        if (!installer.isInstalled) return LaunchResult(false, "Runtime not installed")
+        val cmd = listOf(File(rootfs, "usr/local/bin/box64").path, File(rootfs, "opt/wine/bin/wine").path) + args
+        onLine("$ " + cmd.joinToString(" "))
         return try {
-            val p = pb.start()
-            Thread { p.inputStream.bufferedReader().useLines { l -> File(root, "logs/$appId.log").apply { parentFile?.mkdirs() }.printWriter().use { w -> l.forEach(w::println) } } }.start()
-            LaunchResult(true, "Started $name — check runtime/logs/$appId.log")
+            val pb = ProcessBuilder(cmd).directory(workDir ?: prefix).redirectErrorStream(true)
+            pb.environment().putAll(environment(display))
+            val p = pb.start(); current = p
+            Thread {
+                runCatching { p.inputStream.bufferedReader().forEachLine(onLine) }
+                onLine("[process exited with code ${runCatching { p.waitFor() }.getOrDefault(-1)}]")
+            }.start()
+            LaunchResult(true, "Started")
         } catch (e: Exception) {
             LaunchResult(false, "Launch failed: ${e.message}")
         }
     }
 
-    /** TODO(runtime): download + extract rootfs/box64/wine/dxvk tarballs (URLs configurable) into [root]. */
-    fun installRuntime(): LaunchResult = LaunchResult(false, "Not implemented yet")
+    fun launchExe(exe: File, display: String?, onLine: (String) -> Unit) =
+        runWine(listOf(exe.path), display, exe.parentFile, onLine)
 
-    private fun findExe(dir: File): File? = dir.walkTopDown()
-        .filter { it.extension.equals("exe", true) && !it.name.contains("unins", true) && !it.name.contains("crash", true) }
-        .maxByOrNull { it.length() }
+    /** Sanity check that needs no display. */
+    fun smokeTest(onLine: (String) -> Unit) = runWine(listOf("cmd", "/c", "ver"), null, null, onLine)
+
+    fun stop() { current?.destroy(); current = null }
+
+    fun findExes(dir: File): List<File> = dir.walkTopDown()
+        .filter { it.isFile && it.extension.equals("exe", true) && !it.name.contains("unins", true) }
+        .sortedByDescending { it.length() }.toList()
 }
