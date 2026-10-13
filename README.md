@@ -32,6 +32,15 @@ termux-x11 :0 -listen tcp -ac &
 ```
 Keep the launcher's display field at `127.0.0.1:0`. When you run a game the app brings Termux:X11 to the front. On Quest, both apps show as 2D panels.
 
+### v0.2.1 install fix
+v0.2.0's installer could corrupt the downloaded Winlator APK: tapping Install twice ran two downloads into the same file, and resumed downloads weren't verified. Opening the result failed with `ZipException: invalid LOC header`. Now:
+- The download goes to `.part` and is resumed only on HTTP 206 with a matching `Content-Range`. A 200 restarts from zero, and an HTML/text response is rejected.
+- The finished file is checked against size `157549075` and SHA-256 `ea5c81bf0e5b90a6b9ccb8007121ab6738c8646a5a60b341ce0ac2b33f1d100a`. On a mismatch it's deleted and downloaded again (up to 3 tries).
+- Only one install can run at a time, and the log shows HTTP status, bytes and hash.
+- ELF binaries and scripts get the exec bit, because Winlator ships `box64` as 0644.
+- `launcher/src/test/.../RuntimeCoreTest.kt` runs the real install logic on a desktop JVM:
+  `./gradlew :launcher:testDebugUnitTest -Dwinlator.apk=/path/Winlator_11.2.apk -Dwinlator.download=1`
+
 ### Verified vs untested
 - **Verified**: the APK compiles (CI + local) and installs as one arm64 package. The Winlator asset names and URLs exist in v11.2.0. Every hardcoded path in those assets is `/data/data/com.winlator/files/rootfs/...`, so the same-length patch covers them all.
 - **Untested on hardware**: the download/extract flow, Box64 execution under targetSdk 28 on a phone and on Quest (Horizon OS), the Wine prefix booting, the Termux:X11 TCP display, and every game. Winlator itself starts Wine via extra pieces we don't have yet (its own X server, sysvshm server, ALSA/pulse bridges, a Vulkan driver like Turnip), so expect failures. The log view is there to debug them.
