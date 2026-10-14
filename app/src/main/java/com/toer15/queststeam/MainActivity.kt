@@ -87,6 +87,9 @@ import com.toer15.queststeam.steam.OwnedGame
 import com.toer15.queststeam.steam.SessionStore
 import com.toer15.queststeam.steam.SteamAccount
 import com.toer15.queststeam.ui.LocalDeviceUi
+import com.toer15.queststeam.update.UpdateDialog
+import com.toer15.queststeam.update.UpdateUi
+import com.toer15.queststeam.update.UpdateViewModel
 import androidx.compose.foundation.layout.widthIn
 import com.toer15.queststeam.ui.CardActions
 import com.toer15.queststeam.ui.CategoryPopup
@@ -122,8 +125,14 @@ object Categories {
 }
 
 @Composable
-private fun LauncherApp(onSignedOut: () -> Unit, onSteamSignIn: () -> Unit, vm: LibraryViewModel = viewModel()) {
+private fun LauncherApp(
+    onSignedOut: () -> Unit,
+    onSteamSignIn: () -> Unit,
+    vm: LibraryViewModel = viewModel(),
+    updates: UpdateViewModel = viewModel(),
+) {
     val ui = LocalDeviceUi.current
+    val updateState by updates.ui.collectAsState()
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     val games by vm.games.collectAsState()
@@ -181,12 +190,21 @@ private fun LauncherApp(onSignedOut: () -> Unit, onSteamSignIn: () -> Unit, vm: 
                 label = "tabs",
             ) { current ->
                 when (current) {
-                    Tab.Home -> HomeScreen(games, ::stateOf, ::actionsFor, onBrowse = { tab = Tab.Games }, onSync = vm::sync)
+                    Tab.Home -> HomeScreen(games, ::stateOf, ::actionsFor, onBrowse = { tab = Tab.Games }, onSync = vm::sync, onCheckUpdates = updates::check)
                     Tab.Games -> GamesScreen(games, ::stateOf, ::actionsFor)
                 }
             }
         }
     }
+
+    UpdateDialog(
+        state = updateState,
+        onUpdateNow = updates::updateNow,
+        onInstall = { updates.install(it.release, it.apk) },
+        onCancel = updates::cancel,
+        onDismiss = updates::dismiss,
+        onRetry = { (updateState as? UpdateUi.Failed)?.release?.let(updates::updateNow) ?: updates.check() },
+    )
 
     if (showKey) ApiKeyDialog(vm.apiKey.orEmpty(), onSave = { vm.apiKey = it; showKey = false }, onDismiss = { showKey = false })
 
@@ -265,16 +283,26 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String
 
 @Composable
 private fun HomeScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameState, actionsFor: (OwnedGame) -> CardActions,
-                       onBrowse: () -> Unit, onSync: () -> Unit) {
+                       onBrowse: () -> Unit, onSync: () -> Unit, onCheckUpdates: () -> Unit) {
     val installed = games.filter { stateOf(it) is GameState.Installed || stateOf(it) is GameState.Downloading }
     val recent = games.sortedByDescending { it.playtimeMinutes }.take(12)
     val hero = games.maxByOrNull { it.playtimeMinutes }
     val ui = LocalDeviceUi.current
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
         item {
-            Column(Modifier.padding(horizontal = ui.gutter, vertical = 8.dp)) {
-                Text("Welcome back", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = ui.welcomeText, letterSpacing = (-0.4).sp)
-                Text(DeviceMode.label(androidx.compose.ui.platform.LocalContext.current), color = SteamColors.Muted, fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth().padding(horizontal = ui.gutter, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Welcome back", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = ui.welcomeText, letterSpacing = (-0.4).sp)
+                    Text(DeviceMode.label(androidx.compose.ui.platform.LocalContext.current), color = SteamColors.Muted, fontSize = 13.sp)
+                }
+                // Check for updates: opens the update popup.
+                Text(
+                    "⟳  Check for updates",
+                    color = SteamColors.Text, fontSize = if (ui.isQuest) 16.sp else 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.07f))
+                        .clickable(onClick = onCheckUpdates)
+                        .padding(horizontal = if (ui.isQuest) 18.dp else 12.dp, vertical = if (ui.isQuest) 12.dp else 8.dp),
+                )
             }
         }
         if (games.isEmpty()) {

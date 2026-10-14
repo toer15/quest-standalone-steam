@@ -52,12 +52,12 @@ jobs:
           path: |
             quest-steam-quest3.apk
             quest-steam-phone.apk
-      - name: Publish release v0.5.1
+      - name: Publish release v0.6.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.5.1
+          tag_name: v0.6.0
           target_commitish: ${{ github.sha }}
-          name: "v0.5.1: runtime fix (exit code 53), faster app, close button"
+          name: "v0.6.0: in-app updates, runtime fix (exit code 53), faster app"
           prerelease: true
           files: |
             quest-steam-quest3.apk
@@ -67,7 +67,9 @@ jobs:
             - **Meta Quest 3**: `quest-steam-quest3.apk` (large landscape panel, bigger cards and buttons for controllers/hands)
             - **Phone**: `quest-steam-phone.apk` (compact touch layout)
 
-            **v0.5.1:**
+            **v0.6.0:**
+            - **In-app updates:** the app tells you when a new version is out. **Update now** downloads it with progress, size, speed and time left, then installs it over the current app. Home → **Check for updates** opens a popup that checks, or says the latest version is already installed.
+
             - **Fixed the smoke test "process exited with code 53":** Wine couldn't load kernel32.dll because the Wine prefix had no system DLLs. Tap *Install / reinstall runtime* once to update it; your downloaded games are kept. CI now runs the real smoke test (`box64 wine cmd /c ver`) on emulated arm64.
             - **Faster app:** release builds instead of debug builds, no always-running animations, lighter cards, fewer redraws during downloads.
             - **✕ close button** at the top left of the Runtime screen.
