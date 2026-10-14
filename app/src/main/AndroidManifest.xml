@@ -39,6 +39,7 @@
         </receiver>
         <service android:name=".gamepad.ControllerRelay" android:exported="false" />
         <service android:name=".download.DownloadService" android:exported="false" />
+        <service android:name=".display.PlayingService" android:exported="false" />
         <activity android:name=".RuntimeActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>
 </manifest>

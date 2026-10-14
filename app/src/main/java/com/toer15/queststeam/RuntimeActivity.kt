@@ -7,6 +7,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
+import com.toer15.queststeam.display.GameDisplay
+import com.toer15.queststeam.display.GameDisplayRow
+import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
 import com.toer15.queststeam.gamepad.Controllers
 import com.toer15.queststeam.gamepad.GamepadBridge
@@ -134,8 +137,13 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     private var startedPlay = false
 
     var display: String
-        get() = prefs.getString("display", "127.0.0.1:0") ?: "127.0.0.1:0"
+        get() = prefs.getString("display", GameDisplay.DISPLAY) ?: GameDisplay.DISPLAY
         set(v) { prefs.edit().putString("display", v).apply() }
+
+    /** Set when a game can't start because the game display app isn't installed (shows the install popup). */
+    private val _needsDisplay = MutableStateFlow(false)
+    val needsDisplay: StateFlow<Boolean> = _needsDisplay
+    fun dismissDisplayPrompt() { _needsDisplay.value = false }
 
     init { refresh() }
 
@@ -188,6 +196,7 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     fun stop() {
         launcher.stop()
         ControllerRelay.stop(getApplication<Application>())
+        PlayingService.stop(getApplication<Application>())
         appendLog("[stopped]")
     }
 
@@ -231,14 +240,26 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
             if (pads.isEmpty()) appendLog("No controller connected (pair one in Quest Settings → Devices → Bluetooth).")
             else pads.take(GamepadBridge.MAX).forEachIndexed { i, c -> appendLog("Controller ${i + 1}: ${c.model} → game") }
             val inVr = env.containsKey("QSS_VR_SHM")
-            if (disp != null && disp.startsWith("127.0.0.1")) openTermuxX11(ctx)
+            // The game's window: start the display server ourselves (no Termux needed). VR games need it too.
+            val localDisplay = disp != null && (disp.startsWith("127.0.0.1") || disp.startsWith("localhost") || disp.startsWith(":"))
+            if (localDisplay) {
+                if (!GameDisplay.isAppInstalled(ctx)) {
+                    appendLog("The game display app (Termux:X11) isn't installed, so the game would have no window. Tap \"Install game display app\", then Play again.")
+                    _needsDisplay.value = true
+                    return@launch
+                }
+                val problem = withContext(Dispatchers.IO) { GameDisplay.ensureRunning(ctx, launcher.rootfs, ::appendLog) }
+                if (problem != null) { appendLog(problem); return@launch }
+                if (!inVr) GameDisplay.show(ctx)
+            }
             val argv = GameLauncher.splitArgs(args)
             if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
             val result = withContext(Dispatchers.IO) {
-                launcher.launchExe(exe, disp, env, argv, onExit = { ControllerRelay.stop(ctx) }, onLine = ::appendLog)
+                launcher.launchExe(exe, disp, env, argv, onExit = { ControllerRelay.stop(ctx); PlayingService.stop(ctx) }, onLine = ::appendLog)
             }
             appendLog(result.message)
             if (!result.ok) return@launch
+            PlayingService.start(ctx, exe.nameWithoutExtension)
             if (inVr) {
                 delay(2500)
                 VrBridge.enterVr(ctx)
@@ -304,12 +325,6 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
         return if (d.parentFile?.canonicalPath == games) d else exe.parentFile!!
     }
 
-    /** Brings Termux:X11 to the front if installed so the game window is visible. */
-    private fun openTermuxX11(ctx: Context) {
-        val intent = ctx.packageManager.getLaunchIntentForPackage("com.termux.x11")
-        if (intent != null) runCatching { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        else appendLog("Termux:X11 not installed: games need it for their window (see README, Display setup).")
-    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -398,6 +413,13 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                     }
                 }
 
+                // Game window: the bundled display app, installed with one tap.
+                Card {
+                    Text("Game display", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    GameDisplayRow(onMessage = vm::appendLog)
+                }
+
                 // Controllers: the exact model when connected, and the permission for flat games.
                 Card {
                     Text("Controllers", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
@@ -432,7 +454,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                         value = display,
                         onValueChange = { display = it; vm.display = it },
                         singleLine = true,
-                        label = { Text("Game window display (Termux:X11, blank = none)") },
+                        label = { Text("Game window display (default 127.0.0.1:0 = built-in display; blank = none)") },
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -455,6 +477,30 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+
+    // A game was started without the display app: install it here, then play.
+    val needsDisplay by vm.needsDisplay.collectAsState()
+    if (needsDisplay) {
+        val ready = com.toer15.queststeam.display.rememberDisplayInstalled()
+        AlertDialog(
+            onDismissRequest = vm::dismissDisplayPrompt,
+            title = { Text(if (ready) "Game display installed" else "Install the game display") },
+            text = {
+                Column {
+                    Text(
+                        if (ready) "Everything's ready. Tap Play to start ${title ?: "the game"}."
+                        else "Games show their window through the game display app (Termux:X11). It comes with Quest Steam; tap Install and confirm. You don't need the Termux app.",
+                        fontSize = 14.sp, lineHeight = 20.sp,
+                    )
+                    if (!ready) { Spacer(Modifier.height(12.dp)); GameDisplayRow(onMessage = vm::appendLog) }
+                }
+            },
+            confirmButton = {
+                if (ready && exePath != null) TextButton(onClick = { vm.dismissDisplayPrompt(); vm.launchGame(ctx, File(exePath), args, mode) }) { Text("Play") }
+            },
+            dismissButton = { TextButton(onClick = vm::dismissDisplayPrompt) { Text("Close") } },
+        )
     }
 
     if (confirmDelete) {

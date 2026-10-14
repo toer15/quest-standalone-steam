@@ -130,13 +130,16 @@ object Updater {
     }
 
     /** Hands the APK to Android's package installer; the system shows its confirmation screen. */
-    fun install(ctx: Context, apk: File) {
-        installResult.value = null
+    fun install(ctx: Context, apk: File) = installPackage(ctx, apk, selfUpdate = true)
+
+    /** Installs [apk]: this app's update ([selfUpdate]) or another app we ship (the game display). */
+    fun installPackage(ctx: Context, apk: File, selfUpdate: Boolean) {
+        if (selfUpdate) installResult.value = null
         // The new version opens the app again by itself once installed (UpdatedReceiver).
-        ctx.getSharedPreferences("updates", Context.MODE_PRIVATE).edit().putBoolean(UpdatedReceiver.PREF_RELAUNCH, true).commit()
+        if (selfUpdate) ctx.getSharedPreferences("updates", Context.MODE_PRIVATE).edit().putBoolean(UpdatedReceiver.PREF_RELAUNCH, true).commit()
         val installer = ctx.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-        params.setAppPackageName(ctx.packageName)
+        if (selfUpdate) params.setAppPackageName(ctx.packageName)
         val id = installer.createSession(params)
         installer.openSession(id).use { s ->
             s.openWrite("update.apk", 0, apk.length()).use { o ->

@@ -222,6 +222,11 @@ fun PlayDialog(
             } else {
                 ModeTile("▶  Play", "On a big screen in your headset. Play with your controller.", enabled = true, modifier = Modifier.focusRequester(first)) { onPlay(PlayMode.FLAT) }
             }
+            // No game window without the display app: offer the one-tap install right here.
+            if (!com.toer15.queststeam.display.rememberDisplayInstalled()) {
+                Spacer(Modifier.height(14.dp))
+                com.toer15.queststeam.display.GameDisplayRow()
+            }
             Spacer(Modifier.height(18.dp))
             Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.Black.copy(alpha = 0.22f)).padding(14.dp)) {
                 ControllerStatus()
