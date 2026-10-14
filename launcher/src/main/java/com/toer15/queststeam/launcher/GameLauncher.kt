@@ -30,7 +30,9 @@ class GameLauncher(ctx: Context) {
 
     /** Starts `box64 wine args...`; streams combined stdout/stderr to [onLine]. */
     fun runWine(args: List<String>, display: String?, workDir: File? = null, extraEnv: Map<String, String> = emptyMap(), onLine: (String) -> Unit): LaunchResult {
-        if (!installer.isInstalled) return LaunchResult(false, if (installer.needsUpdate) "Runtime needs an update: tap Install / reinstall runtime (games are kept)." else "Runtime not installed")
+        if (!installer.isInstalled) return LaunchResult(false, "Runtime not downloaded yet: tap Download runtime.")
+        if (RuntimeCore.repairPrefix(rootfs)) onLine("Repaired the Wine prefix (linked Wine's system DLLs, fixes exit code 53).")
+        if (!RuntimeCore.prefixHealthy(rootfs)) return LaunchResult(false, "Wine prefix is broken: delete the runtime and download it again.")
         val cmd = listOf(File(rootfs, "usr/local/bin/box64").path, File(rootfs, "opt/wine/bin/wine").path) + args
         onLine("$ " + cmd.joinToString(" "))
         return try {

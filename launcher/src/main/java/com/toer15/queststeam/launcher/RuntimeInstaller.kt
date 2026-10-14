@@ -22,10 +22,29 @@ class RuntimeInstaller(private val ctx: Context) {
 
     val rootfs = File(ctx.filesDir, "rootfs")
     private val marker = File(rootfs, ".qss-installed")
-    val isInstalled get() = marker.exists() && File(rootfs, "usr/local/bin/box64").exists() &&
-        marker.readText().trim() == installedTag
-    /** An older runtime layout is installed (e.g. before Wine DLLs were linked into the prefix). */
-    val needsUpdate get() = marker.exists() && !isInstalled
+    /** Downloaded and extracted (any version). */
+    val isInstalled get() = marker.exists() && File(rootfs, "usr/local/bin/box64").exists()
+    /** Installed by an older app version: works (the prefix is repaired on launch) but lacks newer parts like Turnip. */
+    val needsUpdate get() = isInstalled && runCatching { marker.readText().trim() }.getOrNull() != installedTag
+    /** Bytes used by the runtime, excluding downloaded games. */
+    fun sizeOnDisk(): Long = rootfs.walkTopDown().onEnter { it.canonicalPath != File(rootfs, GAMES_SUBDIR).canonicalPath }
+        .filter { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) }.sumOf { it.length() }
+
+    /**
+     * Deletes the runtime and the cached Winlator download. Downloaded games are moved aside and come
+     * back when the runtime is downloaded again.
+     */
+    fun delete(log: (String) -> Unit) {
+        if (running.get()) { log("Install is running; wait for it to finish."); return }
+        val games = File(rootfs, GAMES_SUBDIR)
+        val kept = File(ctx.filesDir, "games-keep")
+        if (games.isDirectory && (games.list()?.isNotEmpty() == true)) { kept.deleteRecursively(); games.renameTo(kept) }
+        rootfs.deleteRecursively()
+        val dir = ctx.getExternalFilesDir(null) ?: ctx.cacheDir
+        File(dir, "Winlator_11.2.apk").delete()
+        File(dir, "Winlator_11.2.apk.part").delete()
+        log("Runtime deleted.")
+    }
     private val installedTag = "${RuntimeCore.WINLATOR_VERSION}/layout${RuntimeCore.LAYOUT_VERSION}"
 
     fun install(log: (String) -> Unit, onProgress: (Progress) -> Unit) {

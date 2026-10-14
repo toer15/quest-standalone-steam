@@ -18,53 +18,25 @@ android {
 
     defaultConfig {
         // Short id: same length as "com.winlator" path (+pad) so Winlator binaries can be byte-patched.
-        // Both flavors keep it (a suffix would break the patch); each flavor targets a different device.
         applicationId = "com.qssteam"
         minSdk = 29
         // 28: Android 10+ forbids exec() of files in app data for targetSdk>=29 (same as Winlator/Termux).
         @Suppress("ExpiredTargetSdkVersion")
         targetSdk = 28
-        versionCode = 10
-        versionName = "0.6.0"
+        versionCode = 11
+        versionName = "0.6.1"
         ndk { abiFilters += "arm64-v8a" }
         val key = localProps.getProperty("STEAM_API_KEY", "")
         buildConfigField("String", "STEAM_API_KEY", "\"$key\"")
     }
 
-    // Two apps from one codebase: a Meta Quest 3 panel build and a phone build.
+    // Meta Quest 3 app (the phone build was dropped). The flavor keeps the quest source set.
     flavorDimensions += "device"
     productFlavors {
         create("quest") {
             dimension = "device"
-            versionNameSuffix = "-quest"
             buildConfigField("boolean", "QUEST_BUILD", "true")
             resValue("string", "app_name", "Quest Steam")
-        }
-        create("phone") {
-            dimension = "device"
-            versionNameSuffix = "-phone"
-            buildConfigField("boolean", "QUEST_BUILD", "false")
-            resValue("string", "app_name", "Quest Steam (Phone)")
-        }
-    }
-
-    // One fixed key for sideloaded builds, so a new version installs over the old one (keeping games).
-    // It is public on purpose: this is a personal sideload project, not a store release.
-    signingConfigs {
-        create("sideload") {
-            storeFile = file("sideload.jks")
-            storePassword = "queststeam"
-            keyAlias = "qss"
-            keyPassword = "queststeam"
-        }
-    }
-    buildTypes {
-        getByName("debug") { signingConfig = signingConfigs.getByName("sideload") }
-        // Release = not debuggable, so ART fully compiles the app; Compose UI is far faster than in debug.
-        getByName("release") {
-            isMinifyEnabled = false
-            isDebuggable = false
-            signingConfig = signingConfigs.getByName("sideload")
         }
     }
 

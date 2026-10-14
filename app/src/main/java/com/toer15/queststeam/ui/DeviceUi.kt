@@ -5,12 +5,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.toer15.queststeam.BuildConfig
 
-/**
- * Per-app design: the Quest 3 build is a large landscape panel aimed at with controllers or
- * hands (bigger cards, text and hit targets); the phone build is compact for a touch screen.
- */
+/** Quest 3 design: a large landscape panel aimed at with controllers or hands (big cards, text and hit targets). */
 data class DeviceUi(
     val isQuest: Boolean,
     val gutter: Dp,
@@ -39,14 +35,7 @@ data class DeviceUi(
             heroHeight = 320.dp, heroTitle = 38.sp, welcomeText = 34.sp,
             popupMaxWidth = 760.dp, letterCell = 56.dp,
         )
-        val Phone = DeviceUi(
-            isQuest = false, gutter = 14.dp, contentMaxWidth = 900.dp,
-            tabText = 14.sp, tabPadH = 12.dp, tabPadV = 6.dp, avatar = 38.dp, iconButton = 40.dp,
-            gridCardMin = 156.dp, shelfCardWidth = 240.dp, cardGap = 10.dp, cardTitle = 14.sp, buttonHeight = 40.dp,
-            heroHeight = 190.dp, heroTitle = 22.sp, welcomeText = 24.sp,
-            popupMaxWidth = 420.dp, letterCell = 40.dp,
-        )
-        val Current: DeviceUi get() = if (BuildConfig.QUEST_BUILD) Quest else Phone
+        val Current: DeviceUi get() = Quest
     }
 }
 

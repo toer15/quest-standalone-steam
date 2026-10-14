@@ -6,17 +6,10 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 2. Get the games' Windows depots (SteamCMD / DepotDownloader with *your* credentials — see [docs/DEPOTS.md](docs/DEPOTS.md)).
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
-## Download: two apps
-| Device | Download |
-|---|---|
-| **Meta Quest 3** (also 3S / 2 / Pro) | [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.6.0/quest-steam-quest3.apk) |
-| **Android phone** (Android 10+) | [quest-steam-phone.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.6.0/quest-steam-phone.apk) |
+## Download
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.6.1/quest-steam-quest3.apk)
 
-Both are built by GitHub Actions from the same code ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). They share the app id `com.qssteam`, which the Wine runtime needs, so install one per device.
-- **Quest 3 version**: a large landscape 2D panel (1400×860 dp). Cards, text, tabs and buttons are bigger so controllers and hand pointers hit them easily. Declares head tracking and hand tracking (optional) and the Quest device list. The QR sign-in opens first, because you can scan it with your phone while wearing the headset.
-- **Phone version**: a compact touch layout with smaller cards (2+ per row), tighter spacing and the password sign-in first. It has no VR manifest entries.
-
-On Quest: sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources.
+Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
 
 ## v0.5.0: SteamVR games in the headset (Quest 3 app)
 On a Quest, **Play in VR** on a downloaded SteamVR game:

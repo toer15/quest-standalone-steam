@@ -208,6 +208,19 @@ object RuntimeCore {
         }
     }
 
+    /** True when Wine's core DLLs are in the prefix (else wine exits with code 53, "could not load kernel32.dll"). */
+    fun prefixHealthy(rootfs: File) =
+        File(rootfs, "home/xuser/.wine/drive_c/windows/system32/kernel32.dll").exists() &&
+            File(rootfs, "home/xuser/.wine/drive_c/windows/system32/ntdll.dll").exists()
+
+    /** Repairs a prefix from an older install by linking Wine's DLLs in. Returns true if it changed anything. */
+    fun repairPrefix(rootfs: File): Boolean {
+        if (prefixHealthy(rootfs) || !File(rootfs, "opt/wine/lib/wine/x86_64-windows/kernel32.dll").exists()) return false
+        installWineDlls(rootfs)
+        File(rootfs, "tmp").mkdirs()
+        return prefixHealthy(rootfs)
+    }
+
     fun untarZstd(input: InputStream, dest: File, from: ByteArray, to: ByteArray) {
         val destPath = dest.canonicalPath
         TarArchiveInputStream(ZstdInputStream(BufferedInputStream(input, 1 shl 16))).use { tar ->

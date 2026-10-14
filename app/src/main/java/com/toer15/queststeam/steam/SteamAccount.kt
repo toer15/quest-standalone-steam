@@ -2,7 +2,6 @@ package com.toer15.queststeam.steam
 
 import android.content.Context
 import android.os.Build
-import com.toer15.queststeam.BuildConfig
 import com.toer15.queststeam.steamclient.LoginStore
 import com.toer15.queststeam.steamclient.SavedLogin
 import com.toer15.queststeam.steamclient.SteamDownloader
@@ -40,6 +39,6 @@ class SteamAccount private constructor(ctx: Context) {
         }
     }
 
-    val session = SteamSession(store, deviceName = (if (BuildConfig.QUEST_BUILD) "Quest Steam" else "Quest Steam Phone") + " (${Build.MODEL})")
+    val session = SteamSession(store, deviceName = "Quest Steam (${Build.MODEL})")
     val downloader = SteamDownloader(session)
 }

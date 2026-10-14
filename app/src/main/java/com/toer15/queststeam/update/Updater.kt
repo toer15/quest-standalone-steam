@@ -20,14 +20,14 @@ import java.net.URL
 data class Release(val version: String, val tag: String, val notes: String, val apkUrl: String, val apkSize: Long)
 
 /**
- * In-app updates from this project's GitHub Releases: finds the newest release with this
- * device's APK (Quest 3 or phone), downloads it with progress, and hands it to Android's
+ * In-app updates from this project's GitHub Releases: finds the newest release with the
+ * Quest 3 APK, downloads it with progress, and hands it to Android's
  * package installer. Builds are signed with one fixed key, so the update installs over the
  * current app and keeps downloaded games.
  */
 object Updater {
     const val REPO = "toer15/quest-standalone-steam"
-    val assetName get() = if (BuildConfig.QUEST_BUILD) "quest-steam-quest3.apk" else "quest-steam-phone.apk"
+    const val assetName = "quest-steam-quest3.apk"
 
     /** "0.5.1-quest" -> "0.5.1" */
     val currentVersion: String get() = BuildConfig.VERSION_NAME.substringBefore('-')
