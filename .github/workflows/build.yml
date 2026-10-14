@@ -63,17 +63,19 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.9.1
+      - name: Publish release v0.9.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.1
+          tag_name: v0.9.2
           target_commitish: ${{ github.sha }}
-          name: "v0.9.1: app reopens after updating, controller on game cards, Store tab, reliable downloads"
+          name: "v0.9.2: app reopens after updating, controller on game cards, Store tab, reliable downloads"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.9.2:** Store tab fix: browsing and searching now list every Steam game page after page (Steam's search answers with a different format than expected).
 
             **v0.9.1:**
             - **The app opens again by itself after an in-app update** (or shows "Quest Steam updated · tap to open" if the headset doesn't allow that).

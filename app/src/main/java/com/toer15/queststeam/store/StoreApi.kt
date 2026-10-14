@@ -83,15 +83,33 @@ object StoreApi {
 
     private val APP_IN_URL = Regex("/apps/(\\d+)/")
 
-    /** search/results?json=1: {"items":[{"name":"…","logo":"…/apps/620980/capsule_sm_120.jpg"}]} (bundles have no app id). */
+    private val ROW_APPID = Regex("data-ds-appid=\"(\\d+)\"")
+    private val ROW_TITLE = Regex("<span class=\"title\">(.*?)</span>", RegexOption.DOT_MATCHES_ALL)
+
+    /**
+     * search/results?json=1&infinite=1: {"success":1,"results_html":"<a … data-ds-appid=\"620980\" …>
+     * … <span class=\"title\">Beat Saber</span> …"} (one <a> row per game; bundles list several ids and are skipped).
+     * Older form: {"items":[{"name":"…","logo":"…/apps/620980/…"}]}.
+     */
     fun parseSearch(json: String): List<StoreItem> {
-        val items = JSONObject(json).optJSONArray("items") ?: return emptyList()
+        val root = JSONObject(json)
+        root.optString("results_html").takeIf { it.isNotBlank() }?.let { html ->
+            return html.split("<a ").drop(1).mapNotNull { row ->
+                val id = ROW_APPID.find(row)?.groupValues?.get(1)?.toIntOrNull() ?: return@mapNotNull null
+                val name = ROW_TITLE.find(row)?.groupValues?.get(1)?.let(::unescape)?.trim().orEmpty()
+                StoreItem(id, name.ifBlank { "App $id" })
+            }.distinctBy { it.appId }
+        }
+        val items = root.optJSONArray("items") ?: return emptyList()
         return (0 until items.length()).mapNotNull { i ->
             val o = items.getJSONObject(i)
             val id = APP_IN_URL.find(o.optString("logo"))?.groupValues?.get(1)?.toIntOrNull() ?: return@mapNotNull null
             StoreItem(id, o.optString("name"))
         }.distinctBy { it.appId }
     }
+
+    private fun unescape(s: String) = s.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
+        .replace("&lt;", "<").replace("&gt;", ">").replace("&trade;", "™").replace("&reg;", "®")
 
     /** api/storesearch: {"items":[{"type":"app","id":620980,"name":"Beat Saber"}]} */
     fun parseStoreSearch(json: String): List<StoreItem> {

@@ -15,6 +15,13 @@ class StoreApiTest {
         assertEquals("Beat Saber", items[0].name)
     }
 
+    @Test fun parsesSearchResultsHtml() {
+        // Shape of the real response (checked in CI).
+        val json = """{"success":1,"results_html":"\n<!-- List Items -->\n\n\t\t\t\t<a href=\"https:\/\/store.steampowered.com\/app\/620980\/Beat_Saber\/?snr=1\"\n\t\t\t data-ds-appid=\"620980\" data-ds-itemkey=\"App_620980\" class=\"search_result_row\">\n <div class=\"search_capsule\"><img src=\"x.jpg\"><\/div>\n <div class=\"search_name ellipsis\">\n <span class=\"title\">Beat Saber<\/span>\n <\/div><\/a>\n<a href=\"https:\/\/store.steampowered.com\/bundle\/1\/\" data-ds-bundleid=\"1\" data-ds-appid=\"1,2\"><span class=\"title\">A Bundle<\/span><\/a>\n<a href=\"x\" data-ds-appid=\"546560\"><span class=\"title\">Half-Life: Alyx &amp; More<\/span><\/a>","total_count":2}"""
+        val items = StoreApi.parseSearch(json)
+        assertEquals(listOf(StoreItem(620980, "Beat Saber"), StoreItem(546560, "Half-Life: Alyx & More")), items)
+    }
+
     @Test fun parsesStoreSearch() {
         val json = """{"total":2,"items":[{"type":"app","name":"Half-Life: Alyx","id":546560},{"type":"sub","name":"Pack","id":9}]}"""
         assertEquals(listOf(StoreItem(546560, "Half-Life: Alyx")), StoreApi.parseStoreSearch(json))
