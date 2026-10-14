@@ -24,6 +24,8 @@ class RuntimeInstaller(private val ctx: Context) {
     private val marker = File(rootfs, ".qss-installed")
     val isInstalled get() = marker.exists() && File(rootfs, "usr/local/bin/box64").exists() &&
         marker.readText().trim() == installedTag
+    /** An older runtime layout is installed (e.g. before Wine DLLs were linked into the prefix). */
+    val needsUpdate get() = marker.exists() && !isInstalled
     private val installedTag = "${RuntimeCore.WINLATOR_VERSION}/layout${RuntimeCore.LAYOUT_VERSION}"
 
     fun install(log: (String) -> Unit, onProgress: (Progress) -> Unit) {

@@ -12,6 +12,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
 
+/** Stable for Compose: equality covers every field, and lists are re-emitted after changes. */
+@androidx.compose.runtime.Stable
 data class OwnedGame(
     val appId: Int,
     val name: String,

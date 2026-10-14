@@ -140,7 +140,10 @@ private fun LauncherApp(onSignedOut: () -> Unit, onSteamSignIn: () -> Unit, vm: 
         if (uri != null && id != null) vm.downloads.download(id, FolderImportSource(uri))
     }
 
-    fun actionsFor(g: OwnedGame) = CardActions(
+    // One CardActions per game, so cards don't recompose just because new lambdas were created.
+    val actionsCache = remember { HashMap<Int, CardActions>() }
+    fun actionsFor(g: OwnedGame) = actionsCache.getOrPut(g.appId) { newActions(g) }
+    fun newActions(g: OwnedGame) = CardActions(
         onDownload = { vm.downloads.download(g.appId) },
         onImport = { pendingImport = g.appId; pickFolder.launch(null) },
         onCancel = { vm.downloads.cancel(g.appId) },
@@ -195,16 +198,23 @@ private fun LauncherApp(onSignedOut: () -> Unit, onSteamSignIn: () -> Unit, vm: 
     }
 }
 
+/** Spins only while syncing; an always-running infinite animation would redraw the app every frame. */
 @Composable
-private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String?, syncing: Boolean, steamClient: Boolean,
-                   onSync: () -> Unit, onSettings: () -> Unit, onSignOut: () -> Unit, onSteamSignIn: () -> Unit, onApiKey: () -> Unit) {
-    val ui = LocalDeviceUi.current
-    var menu by remember { mutableStateOf(false) }
+private fun SyncIcon(syncing: Boolean) {
+    if (!syncing) { Icon(Icons.Filled.Refresh, "Sync Steam account", tint = SteamColors.Text); return }
     val spin by rememberInfiniteTransition(label = "sync").animateFloat(
         initialValue = 0f, targetValue = 360f,
         animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
         label = "syncSpin",
     )
+    Icon(Icons.Filled.Refresh, "Syncing", tint = SteamColors.Text, modifier = Modifier.graphicsLayer { rotationZ = spin })
+}
+
+@Composable
+private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String?, syncing: Boolean, steamClient: Boolean,
+                   onSync: () -> Unit, onSettings: () -> Unit, onSignOut: () -> Unit, onSteamSignIn: () -> Unit, onApiKey: () -> Unit) {
+    val ui = LocalDeviceUi.current
+    var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().background(SteamColors.Glass)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = ui.gutter - 4.dp, vertical = if (ui.isQuest) 12.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -225,7 +235,7 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onSync, enabled = !syncing, modifier = Modifier.size(ui.iconButton)) {
-                Icon(Icons.Filled.Refresh, "Sync Steam account", tint = SteamColors.Text, modifier = Modifier.graphicsLayer { if (syncing) rotationZ = spin })
+                SyncIcon(syncing)
             }
             if (ui.isQuest) IconButton(onClick = onSettings, modifier = Modifier.size(ui.iconButton)) { Icon(Icons.Filled.Settings, "Runtime settings", tint = SteamColors.Text) }
             Box {
@@ -347,12 +357,19 @@ private fun GamesScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameStat
     var query by rememberSaveable { mutableStateOf("") }
     var letters by rememberSaveable { mutableStateOf("") } // "" = all, "A" or "A-F"
     var popup by remember { mutableStateOf(false) }
-    val genres = remember(games.map { it.genres }) { games.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
-    val cats = listOf(Categories.ALL, Categories.VR, Categories.INSTALLED) + genres
-    val shown = games.filter {
-        Categories.matches(category, it, stateOf(it) is GameState.Installed) &&
-            (query.isBlank() || it.name.contains(query, ignoreCase = true)) &&
-            LetterFilter.matches(letters, it.name)
+    // Only the installed set matters for filtering, not every download-progress tick.
+    val installed = games.filter { stateOf(it) is GameState.Installed }.mapTo(HashSet()) { it.appId }
+    val genres = remember(games) { games.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
+    val cats = remember(genres) { listOf(Categories.ALL, Categories.VR, Categories.INSTALLED) + genres }
+    val counts = remember(games, installed, cats) {
+        cats.associateWith { c -> games.count { Categories.matches(c, it, it.appId in installed) } }
+    }
+    val shown = remember(games, installed, category, query, letters) {
+        games.filter {
+            Categories.matches(category, it, it.appId in installed) &&
+                (query.isBlank() || it.name.contains(query, ignoreCase = true)) &&
+                LetterFilter.matches(letters, it.name)
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -365,7 +382,7 @@ private fun GamesScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameStat
             )
             LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(cats) { c ->
-                    val count = games.count { Categories.matches(c, it, stateOf(it) is GameState.Installed) }
+                    val count = counts[c] ?: 0
                     Box(Modifier.combinedClickable(onClick = { category = c }, onLongClick = { popup = true })) {
                         PillFilter(selected = c == category, onClick = { category = c }, label = "$c ($count)")
                     }

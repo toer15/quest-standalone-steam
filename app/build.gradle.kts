@@ -24,8 +24,8 @@ android {
         // 28: Android 10+ forbids exec() of files in app data for targetSdk>=29 (same as Winlator/Termux).
         @Suppress("ExpiredTargetSdkVersion")
         targetSdk = 28
-        versionCode = 8
-        versionName = "0.5.0"
+        versionCode = 9
+        versionName = "0.5.1"
         ndk { abiFilters += "arm64-v8a" }
         val key = localProps.getProperty("STEAM_API_KEY", "")
         buildConfigField("String", "STEAM_API_KEY", "\"$key\"")
@@ -45,6 +45,26 @@ android {
             versionNameSuffix = "-phone"
             buildConfigField("boolean", "QUEST_BUILD", "false")
             resValue("string", "app_name", "Quest Steam (Phone)")
+        }
+    }
+
+    // One fixed key for sideloaded builds, so a new version installs over the old one (keeping games).
+    // It is public on purpose: this is a personal sideload project, not a store release.
+    signingConfigs {
+        create("sideload") {
+            storeFile = file("sideload.jks")
+            storePassword = "queststeam"
+            keyAlias = "qss"
+            keyPassword = "queststeam"
+        }
+    }
+    buildTypes {
+        getByName("debug") { signingConfig = signingConfigs.getByName("sideload") }
+        // Release = not debuggable, so ART fully compiles the app; Compose UI is far faster than in debug.
+        getByName("release") {
+            isMinifyEnabled = false
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("sideload")
         }
     }
 

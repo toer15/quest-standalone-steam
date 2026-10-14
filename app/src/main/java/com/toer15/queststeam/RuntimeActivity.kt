@@ -53,18 +53,48 @@ class RuntimeActivity : AppCompatActivity() {
         launcher = GameLauncher(this)
         val prefs = getSharedPreferences("runtime", MODE_PRIVATE)
 
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
-        fun btn(label: String, onClick: () -> Unit) = Button(this).apply { text = label; setOnClickListener { onClick() } }.also { root.addView(it) }
+        window.statusBarColor = 0xFF0E141B.toInt()
+        window.navigationBarColor = 0xFF070B10.toInt()
+        val dp = resources.displayMetrics.density
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt())
+            setBackgroundColor(0xFF0E141B.toInt())
+        }
+        fun btn(label: String, onClick: () -> Unit) = Button(this).apply { text = label; isAllCaps = false; setOnClickListener { onClick() } }.also { root.addView(it) }
 
-        root.addView(TextView(this).apply { textSize = 20f; text = "Runtime (Box64 + Wine) — ${DeviceMode.label(this@RuntimeActivity)}" })
-        status = TextView(this).also { root.addView(it) }
+        // Top bar: X (back to the library) on the left, then the title.
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        bar.addView(TextView(this).apply {
+            text = "✕"
+            textSize = 26f
+            setTextColor(0xFFE8F0F6.toInt())
+            contentDescription = "Close"
+            gravity = android.view.Gravity.CENTER
+            val size = (52 * dp).toInt()
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            isClickable = true
+            isFocusable = true
+            setBackgroundResource(android.R.drawable.list_selector_background)
+            setOnClickListener { finish() }
+        })
+        bar.addView(TextView(this).apply {
+            textSize = 20f
+            setTextColor(0xFFFFFFFF.toInt())
+            text = intent.getStringExtra(EXTRA_TITLE) ?: "Runtime & settings"
+            setPadding((8 * dp).toInt(), 0, 0, 0)
+        })
+        root.addView(bar)
+        root.addView(TextView(this).apply { setTextColor(0xFF8F98A0.toInt()); text = "Box64 + Wine · ${DeviceMode.label(this@RuntimeActivity)}" })
+        status = TextView(this).apply { setTextColor(0xFFE8F0F6.toInt()) }.also { root.addView(it) }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }.also { root.addView(it) }
 
         btn("Install / reinstall runtime (downloads ~157 MB)") { install() }
         btn("Smoke test: wine cmd /c ver (no display needed)") { launcher.smokeTest(::appendLog).also { appendLog(it.message) } }
 
-        root.addView(TextView(this).apply { text = "X display (Termux:X11 TCP, blank = none):" })
+        root.addView(TextView(this).apply { setTextColor(0xFF8F98A0.toInt()); text = "X display (Termux:X11 TCP, blank = none):" })
         displayField = EditText(this).apply {
+            setTextColor(0xFFE8F0F6.toInt())
             inputType = InputType.TYPE_CLASS_TEXT
             setText(prefs.getString("display", "127.0.0.1:0"))
         }.also { root.addView(it) }
@@ -78,7 +108,7 @@ class RuntimeActivity : AppCompatActivity() {
         }
 
         logScroll = ScrollView(this)
-        logView = TextView(this).apply { textSize = 12f; setTextIsSelectable(true); typeface = android.graphics.Typeface.MONOSPACE }
+        logView = TextView(this).apply { setTextColor(0xFFC8D2DA.toInt()); textSize = 12f; setTextIsSelectable(true); typeface = android.graphics.Typeface.MONOSPACE }
         logScroll.addView(logView)
         root.addView(logScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
@@ -99,7 +129,11 @@ class RuntimeActivity : AppCompatActivity() {
     }
 
     private fun refreshStatus() {
-        status.text = if (launcher.isInstalled) "Runtime installed at ${launcher.rootfs.path}" else "Runtime not installed"
+        status.text = when {
+            launcher.isInstalled -> "Runtime installed at ${launcher.rootfs.path}"
+            launcher.needsUpdate -> "Runtime update available (GPU driver + smoke test fix): tap Install. Your games are kept."
+            else -> "Runtime not installed"
+        }
     }
 
     private fun appendLog(line: String) = runOnUiThread {

@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <jni.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -86,7 +87,11 @@ App g;
 // ------------------------------------------------------------------ shared memory
 
 bool OpenShm(const char* dir) {
-    std::string path = std::string(dir) + "/vrbridge.shm";
+    // Same file the app creates (VrBridge.shmFile): inside the runtime's /tmp so Wine can reach it.
+    std::string tmp = std::string(dir) + "/rootfs/tmp";
+    mkdir((std::string(dir) + "/rootfs").c_str(), 0700);
+    mkdir(tmp.c_str(), 0700);
+    std::string path = tmp + "/vrbridge.shm";
     int fd = open(path.c_str(), O_RDWR | O_CREAT, 0600);
     if (fd < 0) { LOG("open %s failed", path.c_str()); return false; }
     if (ftruncate(fd, QSS_VR_SHM_SIZE) != 0) { LOG("ftruncate failed"); close(fd); return false; }

@@ -23,25 +23,43 @@ void Log(const char* fmt, ...) {
     OutputDebugStringA(buf);
 }
 
-typedef char* (CDECL* WineGetDosFileName)(const char*);
+// Returns a heap-allocated wide DOS path (free with HeapFree).
+typedef WCHAR* (CDECL* WineGetDosFileName)(const char*);
+
+static HANDLE TryOpen(const char* path) {
+    HANDLE h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) Log("  tried %s: error %lu", path, GetLastError());
+    else Log("  opened %s", path);
+    return h;
+}
 
 static HANDLE OpenUnixPath(const char* unixPath) {
-    // Wine converts a unix path to a DOS path via kernel32!wine_get_dos_file_name.
+    // 1) Wine's own unix -> DOS conversion (kernel32!wine_get_dos_file_name).
     HMODULE k32 = GetModuleHandleA("kernel32.dll");
     auto toDos = k32 ? (WineGetDosFileName)GetProcAddress(k32, "wine_get_dos_file_name") : nullptr;
     if (toDos) {
-        if (char* dos = toDos(unixPath)) {
-            HANDLE h = CreateFileA(dos, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+        if (WCHAR* dos = toDos(unixPath)) {
+            HANDLE h = CreateFileW(dos, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            Log("  wine_get_dos_file_name: %ls -> %s", dos, h == INVALID_HANDLE_VALUE ? "failed" : "opened");
             HeapFree(GetProcessHeap(), 0, dos);
             if (h != INVALID_HANDLE_VALUE) return h;
         }
     }
-    // Fallback: Wine maps Z: to the unix root by default.
-    std::string z = std::string("Z:") + unixPath;
-    for (auto& c : z) if (c == '/') c = '\\';
-    return CreateFileA(z.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    // 2) Wine's "\\?\unix\..." form reaches any unix path.
+    std::string unix = std::string("\\\\?\\unix") + unixPath;
+    for (auto& c : unix) if (c == '/') c = '\\';
+    HANDLE h = TryOpen(unix.c_str());
+    if (h != INVALID_HANDLE_VALUE) return h;
+    // 3) Winlator maps Z: to its rootfs; plain Wine maps it to "/". The app puts the file in <rootfs>/tmp.
+    const char* tmp = strstr(unixPath, "/rootfs/");
+    for (std::string z : {std::string("Z:") + (tmp ? tmp + 7 : unixPath), std::string("Z:") + unixPath}) {
+        for (auto& c : z) if (c == '/') c = '\\';
+        h = TryOpen(z.c_str());
+        if (h != INVALID_HANDLE_VALUE) return h;
+    }
+    return INVALID_HANDLE_VALUE;
 }
 
 bool Shm::Open() {

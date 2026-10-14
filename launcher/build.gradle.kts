@@ -13,7 +13,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    testOptions { unitTests.all { it.systemProperty("winlator.apk", System.getProperty("winlator.apk") ?: ""); it.systemProperty("winlator.download", System.getProperty("winlator.download") ?: ""); it.maxHeapSize = "1g" } }
+    testOptions { unitTests.all { it.systemProperty("winlator.apk", System.getProperty("winlator.apk") ?: ""); it.systemProperty("winlator.download", System.getProperty("winlator.download") ?: ""); it.systemProperty("winlator.smoke", System.getProperty("winlator.smoke") ?: ""); it.maxHeapSize = "1g" } }
     // TODO(native): once openvr-bridge builds, wire it in:
     // externalNativeBuild { cmake { path = file("../openvr-bridge/CMakeLists.txt") } }
 }

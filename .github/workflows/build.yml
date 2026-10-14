@@ -14,6 +14,16 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.7' }
+      - uses: docker/setup-qemu-action@v3
+        with: { platforms: arm64 }
+      - uses: actions/cache@v4
+        with: { path: ~/.cache/qss, key: winlator-11.2.0 }
+      - name: Fetch Winlator runtime (cached) for the real runtime smoke test
+        run: |
+          mkdir -p ~/.cache/qss
+          [ -f ~/.cache/qss/Winlator_11.2.apk ] || curl -sSfL -o ~/.cache/qss/Winlator_11.2.apk https://github.com/brunodev85/winlator/releases/download/v11.2.0/Winlator_11.2.apk
+          # The runtime is installed at the app's real path, like on the device.
+          sudo mkdir -p /data/data/com.qssteam/files && sudo chown -R "$USER" /data
       - name: Build the SteamVR bridge DLL (mingw) and test it under Wine
         run: |
           sudo apt-get update -q
@@ -29,21 +39,22 @@ jobs:
           [ -f gradle/wrapper/gradle-wrapper.jar ] || gradle wrapper --gradle-version 8.7
           chmod +x gradlew
           ./gradlew :steamclient:test :launcher:testDebugUnitTest :app:testQuestDebugUnitTest \
-            :app:assembleQuestDebug :app:assemblePhoneDebug --no-daemon
-          cp app/build/outputs/apk/quest/debug/app-quest-debug.apk quest-steam-quest3.apk
-          cp app/build/outputs/apk/phone/debug/app-phone-debug.apk quest-steam-phone.apk
+            -Dwinlator.apk=$HOME/.cache/qss/Winlator_11.2.apk -Dwinlator.smoke=1 \
+            :app:assembleQuestRelease :app:assemblePhoneRelease --no-daemon
+          cp app/build/outputs/apk/quest/release/app-quest-release.apk quest-steam-quest3.apk
+          cp app/build/outputs/apk/phone/release/app-phone-release.apk quest-steam-phone.apk
       - uses: actions/upload-artifact@v4
         with:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
             quest-steam-phone.apk
-      - name: Publish release v0.5.0
+      - name: Publish release v0.5.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.5.0
+          tag_name: v0.5.1
           target_commitish: ${{ github.sha }}
-          name: "v0.5.0: SteamVR games in the Quest 3 headset (OpenVR bridge)"
+          name: "v0.5.1: runtime fix (exit code 53), faster app, close button"
           prerelease: true
           files: |
             quest-steam-quest3.apk
@@ -53,6 +64,13 @@ jobs:
             - **Meta Quest 3**: `quest-steam-quest3.apk` (large landscape panel, bigger cards and buttons for controllers/hands)
             - **Phone**: `quest-steam-phone.apk` (compact touch layout)
 
-            **New in v0.5.0, SteamVR bridge (Quest 3 app):** Play in VR swaps the game's openvr_api.dll for our bridge. The bridge sends the game's frames into the headset through Meta's OpenXR runtime, and sends head and Touch controller tracking back to the game. Supported: 64-bit D3D11 SteamVR games, SteamVR Input action manifests and legacy input. The runtime now includes the Turnip Vulkan driver and DXVK, so 3D games have a GPU path. Expect low frame rates on the first try. The bridge passes an end-to-end Wine test in CI. The headset side is untested on hardware.
+            **v0.5.1:**
+            - **Fixed the smoke test "process exited with code 53":** Wine couldn't load kernel32.dll because the Wine prefix had no system DLLs. Tap *Install / reinstall runtime* once to update it; your downloaded games are kept. CI now runs the real smoke test (`box64 wine cmd /c ver`) on emulated arm64.
+            - **Faster app:** release builds instead of debug builds, no always-running animations, lighter cards, fewer redraws during downloads.
+            - **✕ close button** at the top left of the Runtime screen.
+            - Fixed the VR bridge not finding its shared memory inside Winlator's Wine prefix.
+            - Builds now use one fixed signing key, so later versions install over this one. **One-time step:** uninstall the old app before installing v0.5.1, because older builds used random debug keys.
+
+            **v0.5.0, SteamVR bridge (Quest 3 app):** Play in VR swaps the game's openvr_api.dll for our bridge. The bridge sends the game's frames into the headset through Meta's OpenXR runtime, and sends head and Touch controller tracking back to the game. Supported: 64-bit D3D11 SteamVR games, SteamVR Input action manifests and legacy input. The runtime now includes the Turnip Vulkan driver and DXVK, so 3D games have a GPU path. Expect low frame rates on the first try. The bridge passes an end-to-end Wine test in CI. The headset side is untested on hardware.
 
             From v0.4.0: sign in to Steam in the app (account + password with Steam Guard, or a QR code scanned in the Steam mobile app). Your games sync automatically from Steam's servers, including private profiles. Download now fetches the game's Windows files from Steam's CDN, with progress and time left, and resumes after a failure. Play installs the Box64 + Wine runtime on first use.

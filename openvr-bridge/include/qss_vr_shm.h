@@ -1,6 +1,6 @@
 // Shared memory between the game (Windows openvr_api.dll inside Wine/Box64, x86_64)
 // and the Quest app's OpenXR activity (Android arm64). Both map the same file:
-//   <app files dir>/vrbridge.shm   (path passed to the game in QSS_VR_SHM)
+//   <app files dir>/rootfs/tmp/vrbridge.shm   (path passed to the game in QSS_VR_SHM)
 // Plain fixed-size C types only; layout must match on both sides.
 //
 // Flow per frame:

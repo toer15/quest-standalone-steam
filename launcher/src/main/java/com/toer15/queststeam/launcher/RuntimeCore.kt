@@ -41,7 +41,36 @@ object RuntimeCore {
     )
 
     /** Bumped when [ASSETS] change so existing installs are redone. */
-    const val LAYOUT_VERSION = 2
+    const val LAYOUT_VERSION = 3
+
+    /** Environment for `box64 wine ...` in the installed runtime at [r] (pure, so tests use the same one). */
+    fun wineEnvironment(r: String, display: String?, mode: String, extra: Map<String, String> = emptyMap()): Map<String, String> =
+        buildMap {
+            put("HOME", "$r/home/xuser")
+            put("USER", "xuser")
+            put("TMPDIR", "$r/tmp")
+            put("WINEPREFIX", "$r/home/xuser/.wine")
+            put("WINEDEBUG", "-all,err+all")
+            put("PATH", "$r/usr/local/bin:$r/opt/wine/bin:$r/usr/bin:/system/bin")
+            put("LD_LIBRARY_PATH", "$r/usr/lib:/system/lib64")
+            put("BOX64_LD_LIBRARY_PATH", "$r/usr/lib/x86_64-linux-gnu:$r/opt/wine/lib/wine/x86_64-unix")
+            put("BOX64_PATH", "$r/opt/wine/bin")
+            put("BOX64_DYNAREC", "1")
+            put("BOX64_LOG", "0")
+            // DXVK (installed into the prefix) for Direct3D 9/10/11, the game's own openvr_api.dll (our bridge).
+            put("WINEDLLOVERRIDES", "d3d11,dxgi,d3d10core,d3d9=n,b;openvr_api=n,b;winemenubuilder.exe=d")
+            // Turnip: Mesa's Vulkan driver for Adreno GPUs (Quest 3 = Adreno 740), from Winlator.
+            put("VK_ICD_FILENAMES", "$r/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json")
+            put("TU_OVERRIDE_HEAP_SIZE", "4096")
+            put("MESA_VK_WSI_PRESENT_MODE", "mailbox")
+            put("MESA_SHADER_CACHE_DIR", "$r/tmp/mesa-cache")
+            put("vblank_mode", "0")
+            put("DXVK_LOG_LEVEL", "warn")
+            put("DXVK_STATE_CACHE_PATH", "$r/tmp")
+            put("QSS_MODE", mode)
+            if (!display.isNullOrBlank()) put("DISPLAY", display)
+            putAll(extra)
+        }
 
     /** "/data/data/<pkg>" padded with '/' to the same length as [FROM_PREFIX]. */
     fun replacementPrefix(packageName: String): String {
@@ -146,11 +175,37 @@ object RuntimeCore {
                 dest.mkdirs()
                 CountingStream(zip.getInputStream(e), e.compressedSize.coerceAtLeast(e.size)) { progress(a.label, it) }
                     .use { untarZstd(it, dest, from, to) }
+                // The prefix template has an empty system32: Winlator fills it from Wine when it creates a
+                // container. Without this Wine exits with "could not load kernel32.dll" (exit code 53).
+                if (a.zipEntry == "assets/container_pattern.tzst") installWineDlls(rootfs)
                 progress(a.label, 1f)
             }
         }
         File(rootfs, "tmp/shm").mkdirs()
         File(rootfs, "home/xuser/.wine/drive_c/games").mkdirs()
+    }
+
+    /**
+     * Links Wine's builtin Windows binaries into the prefix: x86_64-windows -> system32 and
+     * i386-windows -> syswow64. Symlinks save ~280 MB; DXVK, extracted later, replaces its own DLLs.
+     */
+    fun installWineDlls(rootfs: File) {
+        val wineLib = File(rootfs, "opt/wine/lib/wine")
+        val windows = File(rootfs, "home/xuser/.wine/drive_c/windows")
+        for ((src, dst) in listOf("x86_64-windows" to "system32", "i386-windows" to "syswow64")) {
+            val from = File(wineLib, src)
+            val to = File(windows, dst).apply { mkdirs() }
+            from.listFiles()?.forEach { f ->
+                if (!f.isFile) return@forEach
+                val out = File(to, f.name)
+                if (out.exists()) return@forEach
+                try {
+                    Files.createSymbolicLink(out.toPath(), f.toPath())
+                } catch (e: Exception) {
+                    f.copyTo(out)
+                }
+            }
+        }
     }
 
     fun untarZstd(input: InputStream, dest: File, from: ByteArray, to: ByteArray) {

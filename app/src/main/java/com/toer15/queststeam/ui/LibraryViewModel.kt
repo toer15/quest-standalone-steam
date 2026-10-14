@@ -115,7 +115,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 downloads.refresh(owned.map { it.appId })
                 var n = 0
                 SteamApi.enrich(getApplication(), owned) {
-                    n++; if (n % 10 == 0) { _status.value = "Loading genres $n/${owned.size}"; _games.value = owned.toList() }
+                    n++; if (n % 50 == 0) { _status.value = "Loading genres $n/${owned.size}"; _games.value = owned.toList() }
                 }
                 _games.value = owned.toList()
                 saveCache(owned)

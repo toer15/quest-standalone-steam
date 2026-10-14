@@ -24,7 +24,8 @@ object VrBridge {
     const val REC_WIDTH = 1216
     const val REC_HEIGHT = 1280
 
-    fun shmFile(ctx: Context) = File(ctx.filesDir, "vrbridge.shm")
+    /** Inside the runtime's /tmp so Wine (Z: = rootfs in Winlator's prefix) can always reach it. */
+    fun shmFile(ctx: Context) = File(ctx.filesDir, "rootfs/tmp/vrbridge.shm").apply { parentFile?.mkdirs() }
 
     /** Quest build with the bridge DLL packaged. */
     fun isAvailable(ctx: Context): Boolean =

@@ -20,43 +20,17 @@ class GameLauncher(ctx: Context) {
     private val installer = RuntimeInstaller(ctx)
     val rootfs: File get() = installer.rootfs
     val isInstalled get() = installer.isInstalled
+    val needsUpdate get() = installer.needsUpdate
     val prefix get() = File(rootfs, "home/xuser/.wine")
     val gamesDir get() = File(prefix, "drive_c/games")
     @Volatile var current: Process? = null; private set
 
-    fun environment(display: String?, extra: Map<String, String> = emptyMap()): Map<String, String> {
-        val r = rootfs.path
-        return buildMap {
-            put("HOME", "$r/home/xuser")
-            put("USER", "xuser")
-            put("TMPDIR", "$r/tmp")
-            put("WINEPREFIX", prefix.path)
-            put("WINEDEBUG", "-all,err+all")
-            put("PATH", "$r/usr/local/bin:$r/opt/wine/bin:$r/usr/bin:/system/bin")
-            put("LD_LIBRARY_PATH", "$r/usr/lib:/system/lib64")
-            put("BOX64_LD_LIBRARY_PATH", "$r/usr/lib/x86_64-linux-gnu:$r/opt/wine/lib/wine/x86_64-unix")
-            put("BOX64_PATH", "$r/opt/wine/bin")
-            put("BOX64_DYNAREC", "1")
-            put("BOX64_LOG", "1")
-            // DXVK (installed into the prefix) for Direct3D 9/10/11, the game's own openvr_api.dll (our bridge).
-            put("WINEDLLOVERRIDES", "d3d11,dxgi,d3d10core,d3d9=n,b;openvr_api=n,b;winemenubuilder.exe=d")
-            // Turnip: Mesa's Vulkan driver for Adreno GPUs (Quest 3 = Adreno 740), from Winlator.
-            put("VK_ICD_FILENAMES", "$r/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json")
-            put("TU_OVERRIDE_HEAP_SIZE", "4096")
-            put("MESA_VK_WSI_PRESENT_MODE", "mailbox")
-            put("MESA_SHADER_CACHE_DIR", "$r/tmp/mesa-cache")
-            put("vblank_mode", "0")
-            put("DXVK_LOG_LEVEL", "warn")
-            put("DXVK_STATE_CACHE_PATH", "$r/tmp")
-            put("QSS_MODE", if (DeviceMode.isQuest) "quest-flat" else "phone-flat")
-            if (!display.isNullOrBlank()) put("DISPLAY", display)
-            putAll(extra)
-        }
-    }
+    fun environment(display: String?, extra: Map<String, String> = emptyMap()): Map<String, String> =
+        RuntimeCore.wineEnvironment(rootfs.path, display, if (DeviceMode.isQuest) "quest" else "phone", extra)
 
     /** Starts `box64 wine args...`; streams combined stdout/stderr to [onLine]. */
     fun runWine(args: List<String>, display: String?, workDir: File? = null, extraEnv: Map<String, String> = emptyMap(), onLine: (String) -> Unit): LaunchResult {
-        if (!installer.isInstalled) return LaunchResult(false, "Runtime not installed")
+        if (!installer.isInstalled) return LaunchResult(false, if (installer.needsUpdate) "Runtime needs an update: tap Install / reinstall runtime (games are kept)." else "Runtime not installed")
         val cmd = listOf(File(rootfs, "usr/local/bin/box64").path, File(rootfs, "opt/wine/bin/wine").path) + args
         onLine("$ " + cmd.joinToString(" "))
         return try {

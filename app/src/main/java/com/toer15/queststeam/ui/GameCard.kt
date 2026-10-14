@@ -1,11 +1,6 @@
 package com.toer15.queststeam.ui
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,7 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -79,7 +73,7 @@ fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: 
                 scaleY = scale
                 rotationY = rotation
                 cameraDistance = 18f * density
-                shadowElevation = 18.dp.toPx()
+                shadowElevation = 6.dp.toPx()
                 shape = CardShape
                 clip = false
                 spotShadowColor = Color.Black.copy(alpha = 0.45f)
@@ -105,24 +99,10 @@ fun SteamArt(url: String, contentDescription: String, modifier: Modifier = Modif
     )
 }
 
+/** Static placeholder while art loads (an animated shimmer per card kept the whole grid redrawing). */
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val x by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1200f,
-        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart),
-        label = "shimmerX",
-    )
-    Box(
-        modifier.background(
-            Brush.linearGradient(
-                listOf(Color(0xFF1A2836), Color(0xFF3D5C73), Color(0xFF1A2836)),
-                start = Offset(x - 500f, 0f),
-                end = Offset(x, 280f),
-            ),
-        ),
-    )
+    Box(modifier.background(Brush.linearGradient(listOf(Color(0xFF1A2836), Color(0xFF2A4256), Color(0xFF1A2836)))))
 }
 
 @Composable

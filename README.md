@@ -9,8 +9,8 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 ## Download: two apps
 | Device | Download |
 |---|---|
-| **Meta Quest 3** (also 3S / 2 / Pro) | [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.5.0/quest-steam-quest3.apk) |
-| **Android phone** (Android 10+) | [quest-steam-phone.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.5.0/quest-steam-phone.apk) |
+| **Meta Quest 3** (also 3S / 2 / Pro) | [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.5.1/quest-steam-quest3.apk) |
+| **Android phone** (Android 10+) | [quest-steam-phone.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.5.1/quest-steam-phone.apk) |
 
 Both are built by GitHub Actions from the same code ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). They share the app id `com.qssteam`, which the Wine runtime needs, so install one per device.
 - **Quest 3 version**: a large landscape 2D panel (1400×860 dp). Cards, text, tabs and buttons are bigger so controllers and hand pointers hit them easily. Declares head tracking and hand tracking (optional) and the Quest device list. The QR sign-in opens first, because you can scan it with your phone while wearing the headset.
