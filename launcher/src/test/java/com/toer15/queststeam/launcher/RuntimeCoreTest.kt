@@ -66,10 +66,12 @@ class RuntimeCoreTest {
             assertFalse("DXVK d3d11.dll should be a real file", Files.isSymbolicLink(d3d11))
             assertTrue(File(rootfs, "usr/lib/libvulkan_freedreno.so").isFile)
             // No leftover hardcoded paths anywhere
-            val leftovers = rootfs.walkTopDown().filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }
+            // Don't follow links: dosdevices/z: points at the real runtime path, which another test rewrites.
+            val leftovers = rootfs.walkTopDown().onEnter { !Files.isSymbolicLink(it.toPath()) }
+                .filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }
                 .count { f -> String(f.readBytes(), Charsets.ISO_8859_1).contains("/data/data/com.winlator/") }
             assertEquals(0, leftovers)
-            println("Extracted files: " + rootfs.walkTopDown().count())
+            println("Extracted files: " + rootfs.walkTopDown().onEnter { !Files.isSymbolicLink(it.toPath()) }.count())
         } finally {
             rootfs.deleteRecursively()
         }
