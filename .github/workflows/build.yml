@@ -44,7 +44,9 @@ jobs:
           # Short summary of compiler errors / failed tests at the end of the log.
           grep -E "^e: |^w: .*error|FAILED|Test.*>" build.log | grep -v "^w: " | sort -u | head -60 || true
           [ "$status" -eq 0 ] || exit "$status"
-          cp app/build/outputs/apk/quest/release/app-quest-release.apk quest-steam-quest3.apk
+          apk=$(find app/build/outputs/apk -name "*release*.apk" | head -1)
+          echo "built $apk"
+          cp "$apk" quest-steam-quest3.apk
       - uses: actions/upload-artifact@v4
         with:
           name: quest-steam-apks
