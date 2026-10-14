@@ -39,6 +39,8 @@ with zipfile.ZipFile(apk) as z:
     driver = z.read("assets/graphics_driver/vortek-2.1.tzst")
     # DXVK 2.x needs Vulkan 1.3; the app picks 1.10.3 when the headset's driver is older.
     dxvk = {v: z.read(f"assets/dxwrapper/dxvk-{v}.tzst") for v in ("1.10.3", "2.4.1")}
+    # Box64's per-game settings (Steam, Unity/JVM fixes…), written to <rootfs>/etc/config.box64rc.
+    box64rc = z.read("assets/box64/default.box64rc")
 
 renderer = replace(renderer, b"libwinlator.so\0", b"libwlvortek.so\0", 1)
 helpers = replace(helpers, b"libwinlator.so\0", b"libwlvortek.so\0", 1)
@@ -56,4 +58,6 @@ with open(os.path.join(assetdir, "vortek-2.1.tzst"), "wb") as f:
 for v, data in dxvk.items():
     with open(os.path.join(assetdir, f"dxvk-{v}.tzst"), "wb") as f:
         f.write(data)
+with open(os.path.join(assetdir, "default.box64rc"), "wb") as f:
+    f.write(box64rc)
 print(f"vortek: renderer {len(renderer)} B, helpers {len(helpers)} B, guest driver {len(driver)} B")

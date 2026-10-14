@@ -136,7 +136,15 @@ fun LaunchOverlay(stage: LaunchStage, appId: Int, log: String, onShowGame: () ->
                                         .background(Color.Black.copy(alpha = 0.4f)).verticalScroll(rememberScrollState()).padding(10.dp),
                                 )
                                 Spacer(Modifier.height(12.dp))
-                                OverlayButton("Close", primary = true, onClick = onDismiss)
+                                val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                                var copied by remember { mutableStateOf(false) }
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    OverlayButton(if (copied) "✓ Copied" else "Copy log", primary = false) {
+                                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(GameRunner.logForSharing()))
+                                        copied = true
+                                    }
+                                    OverlayButton("Close", primary = true, onClick = onDismiss)
+                                }
                             }
                             LaunchStage.Idle -> {}
                         }

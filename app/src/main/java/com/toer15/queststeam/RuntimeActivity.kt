@@ -437,7 +437,14 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                 Card {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Log", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        SecondaryButton("Clear log", enabled = log.isNotBlank()) { GameRunner.clearLog() }
+                        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                        var copied by remember { mutableStateOf(false) }
+                        SecondaryButton(if (copied) "✓ Copied" else "Copy log", enabled = log.isNotBlank()) {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(GameRunner.logForSharing()))
+                            copied = true
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        SecondaryButton("Clear log", enabled = log.isNotBlank()) { GameRunner.clearLog(); copied = false }
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(

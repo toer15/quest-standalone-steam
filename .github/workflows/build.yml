@@ -82,7 +82,7 @@ jobs:
           "$bt/aapt2" dump badging quest-steam-quest3.apk | head -3
           # The game's GPU path: our X server (libwinlator) + Vortek (renderer, helpers, guest driver, DXVK).
           for f in lib/arm64-v8a/libwinlator.so lib/arm64-v8a/libvortekrenderer.so lib/arm64-v8a/libwlvortek.so lib/arm64-v8a/libmain_hook.so lib/arm64-v8a/libhook_impl.so \
-                   assets/graphics/vortek-2.1.tzst assets/graphics/dxvk-1.10.3.tzst assets/graphics/dxvk-2.4.1.tzst; do
+                   assets/graphics/vortek-2.1.tzst assets/graphics/default.box64rc assets/graphics/dxvk-1.10.3.tzst assets/graphics/dxvk-2.4.1.tzst; do
             unzip -l quest-steam-quest3.apk "$f" | grep -q "$f" || { echo "missing in APK: $f"; exit 1; }
           done
           "$bt/aapt2" dump badging app/src/quest/assets/display/termux-x11.apk | head -1 | tee /dev/stderr | grep -q "name='com.termux.x11'"
@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.2
+      - name: Publish release v0.12.3
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.2
+          tag_name: v0.12.3
           target_commitish: ${{ github.sha }}
-          name: "v0.12.2: DXVK picked from the real GPU driver, no more out-of-memory crash"
+          name: "v0.12.3: Winlator's Box64/Wine settings, Copy log, clearer crash info"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.3:**
+            - **Copy log** button (Runtime screen → Log, and on the "game didn't start" screen): copies the whole log so it can be pasted into a message.
+            - Games run with Winlator's own Box64 and Wine settings: its per-game fixes file, the safer "Intermediate" Box64 preset (helps games that crash on start, like Unity games), and Winlator's Wine settings (no DXGI device manager).
+            - Crash info that means something: Unity's crash stack noise ("SymGetModuleInfo64 … DLL initialization failed") is filtered out of the game log, the Vulkan loader's chatter is gone, and DXVK's own log files (which GPU it found, why D3D11 failed) are added.
 
             **v0.12.2:**
             - **"Failed to initialize player / Failed to initialize graphics" (Unity, DirectX 11):** the app asked Android for the Quest's Vulkan version, which says 1.1, so it installed the old DXVK 1.10.3. It now asks the GPU driver itself (like Winlator) and uses DXVK 2.4.1 when the driver supports Vulkan 1.3.

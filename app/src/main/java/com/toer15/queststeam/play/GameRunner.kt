@@ -62,6 +62,12 @@ object GameRunner {
 
     fun clearLog() { _log.value = "" }
 
+    /** The whole log for pasting into a message: app version first, at most the last 60k characters. */
+    fun logForSharing(): String {
+        val head = "Quest Steam ${com.toer15.queststeam.BuildConfig.VERSION_NAME} log\n"
+        return head + _log.value.takeLast(60_000)
+    }
+
     private val important = Regex("err:|warn:|Found device|Driver:|error|fail|DXVK|Vortek|Vulkan|exited with code|D3D|wine:|X Error|\\[android log\\]|\\b[EF]/[A-Za-z]", RegexOption.IGNORE_CASE)
 
     /** The log lines that explain a failure (Wine/DXVK errors, GPU driver, exit code), newest last. */
@@ -120,11 +126,18 @@ object GameRunner {
         val l = launcher ?: GameLauncher(ctx.applicationContext).also { launcher = it }
         gameStartedAt = System.currentTimeMillis()
         withContext(Dispatchers.IO) {
+            // Box64's per-game settings from Winlator (bundled as an asset by CI).
+            runCatching {
+                val rc = File(l.rootfs, "etc/config.box64rc")
+                val bytes = ctx.assets.open("graphics/default.box64rc").use { it.readBytes() }
+                if (!rc.isFile || !rc.readBytes().contentEquals(bytes)) { rc.parentFile?.mkdirs(); rc.writeBytes(bytes) }
+            }
             val k = l.killLeftovers()
             if (k > 0) appendLog("Closed $k Wine process(es) left over from the last game.")
         }
         val disp = display(ctx)
         val gameDir = gameRoot(l, exe)
+        lastGameDir = exe.parentFile
         val env = mutableMapOf<String, String>()
         val wantVr = mode == RuntimeActivity.MODE_VR
         _stage.value = LaunchStage.Working(title, "Preparing ${if (wantVr) "VR" else "flat screen"} mode…")
@@ -291,7 +304,7 @@ object GameRunner {
         nativeLogShownUntil = System.currentTimeMillis()
         val keep = Regex("vortek|Vortek|VORTEK|vulkan|Vulkan|adreno|Adreno|AHardwareBuffer|linker|DEBUG|libc|FATAL|AndroidRuntime|UnsatisfiedLink|JNI|kgsl", RegexOption.IGNORE_CASE)
         // The Adreno driver prints a long info dump for every Vulkan device; only warnings/errors matter.
-        val noise = Regex("\\bI/Adreno|W/Adreno-AppProfiles|I/AdrenoVK")
+        val noise = Regex("\\bI/Adreno|W/Adreno-AppProfiles|I/AdrenoVK|Searching for layers|already have|I/vulkan")
         val picked = lines.filter { keep.containsMatchIn(it) && !noise.containsMatchIn(it) && !it.contains("logcat") }.takeLast(40)
         if (picked.isNotEmpty()) {
             appendLog("[android log]")
@@ -310,10 +323,32 @@ object GameRunner {
         val logs = users.listFiles().orEmpty().mapNotNull { File(it, "AppData/LocalLow").takeIf(File::isDirectory) }
             .flatMap { low -> low.walkTopDown().maxDepth(3).filter { it.name == "Player.log" && it.lastModified() >= since - 5_000 }.toList() }
         val log = logs.maxByOrNull { it.lastModified() } ?: return
-        val keep = Regex("d3d|dxgi|direct3d|vulkan|gfxdevice|graphics|error|fail|exception|gpu|renderer|adapter", RegexOption.IGNORE_CASE)
-        val lines = runCatching { log.readLines() }.getOrDefault(emptyList()).filter { it.isNotBlank() && keep.containsMatchIn(it) }.takeLast(15)
+        val keep = Regex("d3d|dxgi|direct3d|vulkan|gfxdevice|graphics|error|fail|exception|gpu|renderer|adapter|crash|signal|access violation|Version:|Vendor:|VRAM|Driver:|Initialize engine", RegexOption.IGNORE_CASE)
+        // A crash dumps hundreds of symbol lookups that fail under Wine; they say nothing.
+        val noise = Regex("SymGet|SymInit|SymFrom|SymLoad|\\(0x[0-9A-Fa-f]+\\) \\(|^\\s*0x[0-9A-Fa-f]+ ")
+        val all = runCatching { log.readLines() }.getOrDefault(emptyList()).filter { it.isNotBlank() && !noise.containsMatchIn(it) }
+        val lines = all.filter { keep.containsMatchIn(it) }.let { if (it.size > 25) it.take(12) + it.takeLast(13) else it }
         if (lines.isNotEmpty()) {
             appendLog("[game log: ${log.parentFile?.name}/Player.log]")
+            lines.forEach { appendLog("  " + it.take(300)) }
+        }
+        appendDxvkLogs()
+    }
+
+    @Volatile var lastGameDir: File? = null
+
+    /** DXVK writes <game>_d3d11.log / <game>_dxgi.log next to the game: which GPU it found and why it failed. */
+    private fun appendDxvkLogs() {
+        val dir = lastGameDir ?: return
+        val since = gameStartedAt
+        val logs = dir.walkTopDown().maxDepth(3)
+            .filter { it.isFile && (it.name.endsWith("_d3d11.log") || it.name.endsWith("_dxgi.log") || it.name.endsWith("_d3d9.log")) && it.lastModified() >= since - 5_000 }
+            .toList()
+        val keep = Regex("err:|warn:|DXVK:|Found device|Driver:|Vulkan:|Required|not supported|Failed|Feature level", RegexOption.IGNORE_CASE)
+        for (f in logs) {
+            val lines = runCatching { f.readLines() }.getOrDefault(emptyList()).filter { keep.containsMatchIn(it) }.takeLast(20)
+            if (lines.isEmpty()) continue
+            appendLog("[DXVK log: ${f.name}]")
             lines.forEach { appendLog("  " + it.take(300)) }
         }
     }

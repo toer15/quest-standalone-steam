@@ -57,6 +57,26 @@ object RuntimeCore {
             put("BOX64_PATH", "$r/opt/wine/bin")
             put("BOX64_DYNAREC", "1")
             put("BOX64_LOG", "0")
+            put("BOX64_NOBANNER", "1")
+            put("BOX64_DYNACACHE", "0")
+            // Winlator's "Intermediate" Box64 preset: safer flags/rounding than "Performance" for
+            // games that crash on start (Unity), still fast. Per-game fixes come from Winlator's rc file.
+            put("BOX64_DYNAREC_SAFEFLAGS", "2")
+            put("BOX64_DYNAREC_FASTNAN", "1")
+            put("BOX64_DYNAREC_FASTROUND", "0")
+            put("BOX64_DYNAREC_X87DOUBLE", "1")
+            put("BOX64_DYNAREC_BIGBLOCK", "2")
+            put("BOX64_DYNAREC_STRONGMEM", "0")
+            put("BOX64_DYNAREC_FORWARD", "128")
+            put("BOX64_DYNAREC_CALLRET", "0")
+            put("BOX64_DYNAREC_WAIT", "1")
+            put("BOX64_DYNAREC_NATIVEFLAGS", "0")
+            put("BOX64_DYNAREC_WEAKBARRIER", "2")
+            put("BOX64_RCFILE", "$r/etc/config.box64rc")
+            // Same as Winlator: no DXGI device manager (crashes some games under Wine), quiet Mesa.
+            put("WINE_DO_NOT_CREATE_DXGI_DEVICE_MANAGER", "1")
+            put("MESA_DEBUG", "silent")
+            put("MESA_NO_ERROR", "1")
             // DXVK (installed into the prefix) for Direct3D 9/10/11, the game's own openvr_api.dll (our bridge),
             // and our XInput DLLs (the player's Bluetooth controller, written by the app into QSS_PAD_SHM).
             put("WINEDLLOVERRIDES", "d3d11,dxgi,d3d10core,d3d9=n,b;openvr_api=n,b;xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;winemenubuilder.exe=d")
