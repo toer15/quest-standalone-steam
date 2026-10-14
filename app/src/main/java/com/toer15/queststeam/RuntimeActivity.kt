@@ -11,6 +11,9 @@ import com.toer15.queststeam.display.GameDisplay
 import com.toer15.queststeam.display.GameDisplayRow
 import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
+import com.toer15.queststeam.play.GameRunner
+import com.toer15.queststeam.play.LaunchStage
+import com.toer15.queststeam.play.LaunchOverlay
 import com.toer15.queststeam.gamepad.Controllers
 import com.toer15.queststeam.gamepad.GamepadBridge
 import com.toer15.queststeam.ui.ControllerStatus
@@ -95,6 +98,8 @@ class RuntimeActivity : ComponentActivity() {
         const val EXTRA_MODE = "mode"
         const val MODE_VR = "vr"
         const val MODE_FLAT = "flat"
+        /** Steam app id, for the game's picture on the loading screen. */
+        const val EXTRA_APPID = "appid"
     }
 
     private val vm by lazy { androidx.lifecycle.ViewModelProvider(this)[RuntimeViewModel::class.java] }
@@ -114,7 +119,8 @@ class RuntimeActivity : ComponentActivity() {
         val title = intent.getStringExtra(EXTRA_TITLE)
         val args = intent.getStringExtra(EXTRA_ARGS).orEmpty()
         val mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_VR
-        setContent { SteamTheme { RuntimeScreen(title, exe, args, mode, onClose = { finish() }) } }
+        val appId = intent.getIntExtra(EXTRA_APPID, 0)
+        setContent { SteamTheme { RuntimeScreen(title, exe, args, mode, appId, onClose = { finish() }) } }
     }
 }
 
@@ -124,8 +130,8 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     private val installer = RuntimeInstaller(app)
     private val prefs = app.getSharedPreferences("runtime", 0)
 
-    private val _log = MutableStateFlow("")
-    val log: StateFlow<String> = _log
+    /** Shared with the game starter (GameRunner), so the VR panel and this screen show the same log. */
+    val log: StateFlow<String> = GameRunner.log
     private val _installed = MutableStateFlow(installer.isInstalled)
     val installed: StateFlow<Boolean> = _installed
     private val _needsUpdate = MutableStateFlow(installer.needsUpdate)
@@ -135,22 +141,19 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     private val _size = MutableStateFlow(-1L)
     val size: StateFlow<Long> = _size
     private var startedPlay = false
+    val stage: StateFlow<LaunchStage> = GameRunner.stage
 
     var display: String
         get() = prefs.getString("display", GameDisplay.DISPLAY) ?: GameDisplay.DISPLAY
         set(v) { prefs.edit().putString("display", v).apply() }
 
     /** Set when a game can't start because the game display app isn't installed (shows the install popup). */
-    private val _needsDisplay = MutableStateFlow(false)
-    val needsDisplay: StateFlow<Boolean> = _needsDisplay
-    fun dismissDisplayPrompt() { _needsDisplay.value = false }
+    val needsDisplay: StateFlow<Boolean> = GameRunner.needsDisplay
+    fun dismissDisplayPrompt() = GameRunner.dismissDisplayPrompt()
 
     init { refresh() }
 
-    fun appendLog(line: String) {
-        val s = _log.value + line + "\n"
-        _log.value = if (s.length > 120_000) s.takeLast(100_000) else s
-    }
+    fun appendLog(line: String) = GameRunner.appendLog(line)
 
     fun refresh() {
         _installed.value = installer.isInstalled
@@ -193,95 +196,21 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun stop() {
-        launcher.stop()
-        ControllerRelay.stop(getApplication<Application>())
-        PlayingService.stop(getApplication<Application>())
-        appendLog("[stopped]")
-    }
+    fun stop() = GameRunner.stop(getApplication<Application>())
 
     /** True while a started game's process is alive. */
-    val gameRunning get() = launcher.current?.isAlive == true
+    val gameRunning get() = GameRunner.isRunning
 
-    /**
-     * Starts a game. [mode] comes from the Play popup: in VR a SteamVR game gets the OpenVR bridge
-     * (its openvr_api.dll is swapped for ours, the shared memory is created, and the headset
-     * switches to the immersive VR view); flat runs the game on a screen with the game's original files.
-     * Either way the player's Bluetooth controller is passed to the game as an XInput controller.
-     */
-    fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR) {
-        viewModelScope.launch {
-            val disp = display.trim().ifBlank { null }
-            val gameDir = gameRoot(exe)
-            val env = mutableMapOf<String, String>()
-            val wantVr = mode == RuntimeActivity.MODE_VR
-            withContext(Dispatchers.IO) {
-                runCatching { env["QSS_PAD_SHM"] = GamepadBridge.prepare(ctx, launcher.rootfs, ::appendLog).path }
-                    .onFailure { appendLog("Controller bridge unavailable: $it") }
-                val vrGame = VrBridge.isVrGame(gameDir)
-                if (wantVr && vrGame && VrBridge.canPlayInVr(ctx)) {
-                    val n = VrBridge.install(ctx, gameDir, ::appendLog)
-                    if (n > 0) {
-                        env["QSS_VR_SHM"] = VrBridge.prepareShm(ctx).path
-                        appendLog("SteamVR game: starting in VR (bridge in $n place(s)). The headset view opens in a moment.")
-                    } else {
-                        appendLog("This game's openvr_api.dll is 32-bit; VR needs a 64-bit game for now. Starting flat.")
-                    }
-                } else if (wantVr && vrGame && !VrBridge.isAvailable(ctx)) {
-                    appendLog("VR bridge DLL is missing from this build; starting flat.")
-                } else if (wantVr && !vrGame) {
-                    appendLog("This game doesn't use SteamVR (OpenVR), so it starts flat.")
-                } else {
-                    if (vrGame) VrBridge.uninstall(gameDir)
-                    appendLog("Flat mode: the game runs on a screen.")
-                }
-            }
-            val pads = Controllers.connected.value
-            if (pads.isEmpty()) appendLog("No controller connected (pair one in Quest Settings → Devices → Bluetooth).")
-            else pads.take(GamepadBridge.MAX).forEachIndexed { i, c -> appendLog("Controller ${i + 1}: ${c.model} → game") }
-            val inVr = env.containsKey("QSS_VR_SHM")
-            // The game's window: start the display server ourselves (no Termux needed). VR games need it too.
-            val localDisplay = disp != null && (disp.startsWith("127.0.0.1") || disp.startsWith("localhost") || disp.startsWith(":"))
-            if (localDisplay) {
-                if (!GameDisplay.isAppInstalled(ctx)) {
-                    appendLog("The game display app (Termux:X11) isn't installed, so the game would have no window. Tap \"Install game display app\", then Play again.")
-                    _needsDisplay.value = true
-                    return@launch
-                }
-                val problem = withContext(Dispatchers.IO) { GameDisplay.ensureRunning(ctx, launcher.rootfs, ::appendLog) }
-                if (problem != null) { appendLog(problem); return@launch }
-                if (!inVr) GameDisplay.show(ctx)
-            }
-            val argv = GameLauncher.splitArgs(args)
-            if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
-            val result = withContext(Dispatchers.IO) {
-                launcher.launchExe(exe, disp, env, argv, onExit = { ControllerRelay.stop(ctx); PlayingService.stop(ctx) }, onLine = ::appendLog)
-            }
-            appendLog(result.message)
-            if (!result.ok) return@launch
-            PlayingService.start(ctx, exe.nameWithoutExtension)
-            if (inVr) {
-                delay(2500)
-                VrBridge.enterVr(ctx)
-            } else if (pads.isNotEmpty() && disp != null) {
-                // The game window (Termux:X11) gets focus; the relay badge keeps the controller going to the game.
-                if (ControllerRelay.canOverlay(ctx)) { delay(1500); ControllerRelay.start(ctx) }
-                else appendLog("To use the controller while the game window is in front, allow \"Display over other apps\" for Quest Steam (Play popup → Allow), or keep this screen selected.")
-            }
-        }
-    }
+    /** Starts a game (see GameRunner): the loading screen follows [stage]. */
+    fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR, title: String = exe.nameWithoutExtension) =
+        GameRunner.play(ctx, exe, args, mode, title)
 
-    /** Play from a game card: downloads the runtime first if needed, once. */
-    fun playOnce(ctx: Context, exePath: String, args: String, mode: String) {
+    /** Play from a game card: once per screen (rotating the panel doesn't start it again). */
+    fun playOnce(ctx: Context, exePath: String, args: String, mode: String, title: String?) {
         if (startedPlay) return
         startedPlay = true
         val exe = File(exePath)
-        if (installer.isInstalled) {
-            launchGame(ctx, exe, args, mode)
-        } else {
-            appendLog("First launch: downloading the Windows runtime (Box64 + Wine, ~157 MB)…")
-            install { launchGame(ctx, exe, args, mode) }
-        }
+        launchGame(ctx, exe, args, mode, title ?: exe.nameWithoutExtension)
     }
 
     fun importGame(ctx: Context, uri: Uri, isTree: Boolean) {
@@ -317,19 +246,12 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun importedExes(): List<File> = launcher.findExes(launcher.gamesDir)
 
-    /** The game's install folder: <games>/<appId>/..., or the exe's folder for loose imports. */
-    private fun gameRoot(exe: File): File {
-        val games = launcher.gamesDir.canonicalPath
-        var d = exe.parentFile ?: return exe
-        while (d.parentFile != null && d.parentFile!!.canonicalPath != games) d = d.parentFile ?: break
-        return if (d.parentFile?.canonicalPath == games) d else exe.parentFile!!
-    }
 
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: String, onClose: () -> Unit, vm: RuntimeViewModel = viewModel()) {
+private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: String, appId: Int, onClose: () -> Unit, vm: RuntimeViewModel = viewModel()) {
     val ctx = LocalContext.current
     val ui = LocalDeviceUi.current
     val installed by vm.installed.collectAsState()
@@ -349,7 +271,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
     }
 
     LaunchedEffect(exePath) {
-        if (exePath != null) vm.playOnce(ctx, exePath, args, mode)
+        if (exePath != null) vm.playOnce(ctx, exePath, args, mode, title)
         else if (title != null) vm.appendLog("No .exe found for this game.")
     }
 
@@ -445,7 +367,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                         SecondaryButton("Import game folder…") { pickFolder.launch(null) }
                         SecondaryButton("Import single .exe…") { pickExe.launch(arrayOf("*/*")) }
                         SecondaryButton("Stop game") { vm.stop() }
-                        SecondaryButton("Enter VR view (SteamVR bridge)") {
+                        SecondaryButton("Open the app in VR") {
                             if (VrBridge.isAvailable(ctx)) VrBridge.enterVr(ctx) else vm.appendLog("VR bridge DLL is missing from this build.")
                         }
                     }
@@ -479,6 +401,15 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
         }
     }
 
+    // Loading screen: "Loading…" until the game's window is up, then "Opening game now", then the game.
+    val stage by vm.stage.collectAsState()
+    LaunchOverlay(
+        stage = stage, appId = appId, log = log,
+        onShowGame = { GameDisplay.show(ctx) },
+        onStop = { vm.stop() },
+        onDismiss = { GameRunner.dismissFailure() },
+    )
+
     // A game was started without the display app: install it here, then play.
     val needsDisplay by vm.needsDisplay.collectAsState()
     if (needsDisplay) {
@@ -497,7 +428,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                 }
             },
             confirmButton = {
-                if (ready && exePath != null) TextButton(onClick = { vm.dismissDisplayPrompt(); vm.launchGame(ctx, File(exePath), args, mode) }) { Text("Play") }
+                if (ready && exePath != null) TextButton(onClick = { vm.dismissDisplayPrompt(); vm.launchGame(ctx, File(exePath), args, mode, title ?: File(exePath).nameWithoutExtension) }) { Text("Play") }
             },
             dismissButton = { TextButton(onClick = vm::dismissDisplayPrompt) { Text("Close") } },
         )

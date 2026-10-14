@@ -10,6 +10,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import com.toer15.queststeam.gamepad.PadNav
+import com.toer15.queststeam.play.GameRunner
 import com.toer15.queststeam.store.StoreActivity
 import com.toer15.queststeam.store.StoreApi
 import com.toer15.queststeam.store.StoreGameDialog
@@ -158,9 +159,11 @@ object Categories {
 }
 
 @Composable
-private fun LauncherApp(
+internal fun LauncherApp(
     onSignedOut: () -> Unit,
     onSteamSignIn: () -> Unit,
+    /** Shown as the panel inside the VR view: VR games start right there, without leaving VR. */
+    inVr: Boolean = false,
     vm: LibraryViewModel = viewModel(),
     updates: UpdateViewModel = viewModel(),
 ) {
@@ -234,12 +237,18 @@ private fun LauncherApp(
     fun play(g: OwnedGame, mode: PlayMode) {
         val vr = mode == PlayMode.VR
         val exe = vm.downloads.mainExe(g.appId, vr)
+        if (inVr && vr && exe != null) {
+            // Already in the headset view: start the game here; the panel shows the loading screen.
+            GameRunner.play(ctx, exe, vm.downloads.launchArgs(g.appId, true), RuntimeActivity.MODE_VR, g.name)
+            return
+        }
         ctx.startActivity(
             Intent(ctx, RuntimeActivity::class.java)
                 .putExtra(RuntimeActivity.EXTRA_EXE, exe?.path)
                 .putExtra(RuntimeActivity.EXTRA_ARGS, vm.downloads.launchArgs(g.appId, vr))
                 .putExtra(RuntimeActivity.EXTRA_TITLE, g.name)
                 .putExtra(RuntimeActivity.EXTRA_MODE, if (vr) RuntimeActivity.MODE_VR else RuntimeActivity.MODE_FLAT)
+                .putExtra(RuntimeActivity.EXTRA_APPID, g.appId)
         )
     }
 
@@ -252,6 +261,7 @@ private fun LauncherApp(
                 steamClient = vm.steamClientSignedIn,
                 onSync = vm::sync,
                 onSettings = { ctx.startActivity(Intent(ctx, RuntimeActivity::class.java)) },
+                onEnterVr = if (!inVr && VrBridge.canPlayInVr(ctx)) ({ VrBridge.enterVr(ctx) }) else null,
                 onSignOut = { vm.signOut(); onSignedOut() },
                 onSteamSignIn = onSteamSignIn,
                 onApiKey = { showKey = true })
@@ -316,7 +326,9 @@ private fun LauncherApp(
         }
     }
 
-    UpdateDialog(
+    // Platform dialogs need an Activity window; the VR panel is a virtual display, so it skips these
+    // (updates and crash reports show in the 2D app) and confirms Uninstall inside the panel.
+    if (!inVr) UpdateDialog(
         state = updateState,
         onUpdateNow = updates::updateNow,
         onInstall = { updates.install(it.release, it.apk) },
@@ -325,7 +337,7 @@ private fun LauncherApp(
         onRetry = { (updateState as? UpdateUi.Failed)?.release?.let(updates::updateNow) ?: updates.check() },
     )
 
-    lastCrash?.let { report ->
+    if (!inVr) lastCrash?.let { report ->
         val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
         AlertDialog(
             onDismissRequest = { CrashGuard.clearLastCrash(); lastCrash = null },
@@ -347,9 +359,27 @@ private fun LauncherApp(
         )
     }
 
-    if (showKey) ApiKeyDialog(vm.apiKey.orEmpty(), onSave = { vm.apiKey = it; showKey = false }, onDismiss = { showKey = false })
+    if (showKey && !inVr) ApiKeyDialog(vm.apiKey.orEmpty(), onSave = { vm.apiKey = it; showKey = false }, onDismiss = { showKey = false })
 
-    confirmUninstall?.let { g ->
+    if (inVr) confirmUninstall?.let { g ->
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable { confirmUninstall = null },
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                Modifier.clip(RoundedCornerShape(24.dp)).background(SteamColors.Panel).clickable {}.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("Uninstall ${g.name}?", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Text("Deletes the game's files from this device.", color = SteamColors.Muted, fontSize = 14.sp)
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextButton(onClick = { confirmUninstall = null }) { Text("Cancel") }
+                    TextButton(onClick = { vm.downloads.uninstall(g.appId); confirmUninstall = null }) { Text("Uninstall", color = SteamColors.Danger) }
+                }
+            }
+        }
+    } else confirmUninstall?.let { g ->
         AlertDialog(onDismissRequest = { confirmUninstall = null },
             title = { Text("Uninstall ${g.name}?") }, text = { Text("Deletes the game's files from this device.") },
             confirmButton = { TextButton(onClick = { vm.downloads.uninstall(g.appId); confirmUninstall = null }) { Text("Uninstall") } },
@@ -371,7 +401,7 @@ private fun SyncIcon(syncing: Boolean) {
 
 @Composable
 private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, homeFocus: FocusRequester, avatar: String?, name: String?, syncing: Boolean, steamClient: Boolean,
-                   onSync: () -> Unit, onSettings: () -> Unit, onSignOut: () -> Unit, onSteamSignIn: () -> Unit, onApiKey: () -> Unit) {
+                   onSync: () -> Unit, onSettings: () -> Unit, onEnterVr: (() -> Unit)?, onSignOut: () -> Unit, onSteamSignIn: () -> Unit, onApiKey: () -> Unit) {
     val ui = LocalDeviceUi.current
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().background(SteamColors.Glass)) {
@@ -397,6 +427,12 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, homeFocus: FocusRequester, av
             Spacer(Modifier.weight(1f))
             // Connected controller (exact model) or "No controller".
             ControllerChip(Modifier.padding(end = 8.dp))
+            // The app in the headset view (library, downloads and VR games, with the Touch controllers).
+            if (onEnterVr != null) Text(
+                "🥽 VR", color = SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                modifier = Modifier.padding(end = 6.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.07f))
+                    .focusRing().clickable(onClick = onEnterVr).padding(horizontal = 14.dp, vertical = 9.dp),
+            )
             IconButton(onClick = onSync, enabled = !syncing, modifier = Modifier.focusRing().size(ui.iconButton)) {
                 SyncIcon(syncing)
             }

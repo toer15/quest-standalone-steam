@@ -14,6 +14,9 @@ import java.util.Locale
 class QssApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // First start of a new version: delete what older versions left behind (before the crash
+        // guard reads last-crash.txt, which belongs to the old version).
+        com.toer15.queststeam.update.AppCleanup.runIfUpdated(this)
         CrashGuard.install(this)
         com.toer15.queststeam.gamepad.Controllers.start(this)
     }

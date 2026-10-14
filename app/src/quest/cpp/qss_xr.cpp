@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,19 @@ struct App {
              secondaryTouch = XR_NULL_HANDLE, menu = XR_NULL_HANDLE, haptic = XR_NULL_HANDLE;
     Hand hands[2];
 
+    // The app itself as a panel in VR (XR_KHR_android_surface_swapchain): Java draws the library
+    // into an Android Surface, shown as a quad in front of the player; Touch controllers point at it.
+    JNIEnv* env = nullptr;
+    bool surfaceExt = false;
+    XrSwapchain panelSwapchain = XR_NULL_HANDLE;
+    jmethodID onPanelPointer = nullptr;
+    XrPosef panelPose{{0, 0, 0, 1}, {0, 0, 0}};
+    bool panelPlaced = false;
+    bool pointerDown = false, pointerWasHit = false, recenterHeld = false;
+    int activeHand = 1;
+    double lastGameFrame = -100.0;
+    QssPoseState lastPose{};
+
     QssVrShm* shm = nullptr;
     uint64_t frameId = 0;
     uint64_t shownFrameSeq = 0;
@@ -83,6 +97,25 @@ struct App {
 };
 
 App g;
+
+constexpr int kPanelPxW = 1920, kPanelPxH = 1200;   // 1600 x 1000 dp at 192 dpi
+constexpr float kPanelW = 1.6f, kPanelH = 1.0f;      // metres
+constexpr float kPanelDistance = 1.5f;
+
+double NowSeconds() {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
+void Rotate(const XrQuaternionf& q, const float v[3], float out[3]) {
+    float tx = 2 * (q.y * v[2] - q.z * v[1]), ty = 2 * (q.z * v[0] - q.x * v[2]), tz = 2 * (q.x * v[1] - q.y * v[0]);
+    out[0] = v[0] + q.w * tx + (q.y * tz - q.z * ty);
+    out[1] = v[1] + q.w * ty + (q.z * tx - q.x * tz);
+    out[2] = v[2] + q.w * tz + (q.x * ty - q.y * tx);
+}
+
+float Dot(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 
 // ------------------------------------------------------------------ shared memory
 
@@ -241,7 +274,14 @@ bool InitXr() {
         initLoader((const XrLoaderInitInfoBaseHeaderKHR*)&li);
     }
 
-    const char* exts[] = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME, XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME};
+    std::vector<const char*> exts = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME, XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME};
+    uint32_t extCount = 0;
+    xrEnumerateInstanceExtensionProperties(nullptr, 0, &extCount, nullptr);
+    std::vector<XrExtensionProperties> props(extCount, {XR_TYPE_EXTENSION_PROPERTIES});
+    xrEnumerateInstanceExtensionProperties(nullptr, extCount, &extCount, props.data());
+    for (auto& p : props) if (strcmp(p.extensionName, XR_KHR_ANDROID_SURFACE_SWAPCHAIN_EXTENSION_NAME) == 0) g.surfaceExt = true;
+    if (g.surfaceExt) exts.push_back(XR_KHR_ANDROID_SURFACE_SWAPCHAIN_EXTENSION_NAME);
+    LOG("app panel in VR: %s", g.surfaceExt ? "yes" : "no (XR_KHR_android_surface_swapchain missing)");
     XrInstanceCreateInfoAndroidKHR android{XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
     android.applicationVM = g.android->activity->vm;
     android.applicationActivity = g.android->activity->clazz;
@@ -251,8 +291,8 @@ bool InitXr() {
     ci.applicationInfo.applicationVersion = 1;
     strcpy(ci.applicationInfo.engineName, "QSS");
     ci.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 34);
-    ci.enabledExtensionCount = 2;
-    ci.enabledExtensionNames = exts;
+    ci.enabledExtensionCount = (uint32_t)exts.size();
+    ci.enabledExtensionNames = exts.data();
     CHECK_XR(xrCreateInstance(&ci, &g.instance));
 
     XrSystemGetInfo sg{XR_TYPE_SYSTEM_GET_INFO};
@@ -316,6 +356,87 @@ bool InitXr() {
     }
     LOG("OpenXR ready: swapchains %dx%d, format 0x%llx", g.eyes[0].width, g.eyes[0].height, (unsigned long long)format);
     return InitActions();
+}
+
+/** Creates the app panel's Android Surface swapchain and hands the Surface to QssXrActivity. */
+void InitPanel() {
+    if (!g.surfaceExt || !g.env) return;
+    PFN_xrCreateSwapchainAndroidSurfaceKHR create = nullptr;
+    if (XR_FAILED(xrGetInstanceProcAddr(g.instance, "xrCreateSwapchainAndroidSurfaceKHR", (PFN_xrVoidFunction*)&create)) || !create) return;
+    XrSwapchainCreateInfo sc{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    sc.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+    sc.sampleCount = 1;
+    sc.width = kPanelPxW;
+    sc.height = kPanelPxH;
+    sc.faceCount = 1;
+    sc.arraySize = 1;
+    sc.mipCount = 1;
+    jobject surface = nullptr;
+    XrResult r = create(g.session, &sc, &g.panelSwapchain, &surface);
+    if (XR_FAILED(r) || !surface) { LOG("panel surface swapchain failed: %d", (int)r); g.panelSwapchain = XR_NULL_HANDLE; return; }
+    JNIEnv* env = g.env;
+    jobject activity = g.android->activity->clazz;
+    jclass cls = env->GetObjectClass(activity);
+    jmethodID onSurface = env->GetMethodID(cls, "onPanelSurface", "(Landroid/view/Surface;II)V");
+    g.onPanelPointer = env->GetMethodID(cls, "onPanelPointer", "(FFZZF)V");
+    if (env->ExceptionCheck()) { env->ExceptionClear(); LOG("QssXrActivity has no panel callbacks"); return; }
+    env->CallVoidMethod(activity, onSurface, surface, (jint)kPanelPxW, (jint)kPanelPxH);
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    LOG("app panel ready (%dx%d)", kPanelPxW, kPanelPxH);
+}
+
+/** Puts the panel 1.5 m in front of the player, at eye height, facing them. */
+void PlacePanel(const QssPose& head) {
+    float fwd0[3] = {0, 0, -1}, f[3];
+    XrQuaternionf hq{head.rot[0], head.rot[1], head.rot[2], head.rot[3]};
+    if (hq.x == 0 && hq.y == 0 && hq.z == 0 && hq.w == 0) return;
+    Rotate(hq, fwd0, f);
+    float len = sqrtf(f[0] * f[0] + f[2] * f[2]);
+    if (len < 1e-3f) return;
+    f[0] /= len; f[2] /= len;
+    float yaw = atan2f(-f[0], -f[2]);
+    g.panelPose.orientation = {0, sinf(yaw / 2), 0, cosf(yaw / 2)};
+    g.panelPose.position = {head.pos[0] + f[0] * kPanelDistance, head.pos[1] - 0.1f, head.pos[2] + f[2] * kPanelDistance};
+    g.panelPlaced = true;
+}
+
+/** Controller ray -> panel (u, v); trigger = touch. Sent to Java every frame while it points at the panel. */
+void UpdatePanelPointer() {
+    if (!g.onPanelPointer || !g.env || !g.panelPlaced) return;
+    const XrQuaternionf& pq = g.panelPose.orientation;
+    float p0[3] = {g.panelPose.position.x, g.panelPose.position.y, g.panelPose.position.z};
+    float z[3] = {0, 0, 1}, x[3] = {1, 0, 0}, y[3] = {0, 1, 0}, n[3], right[3], up[3];
+    Rotate(pq, z, n); Rotate(pq, x, right); Rotate(pq, y, up);
+    // The hand pressing the trigger takes over the pointer.
+    for (int h = 0; h < 2; ++h) if (g.lastPose.hand[h].trigger > 0.6f && h != g.activeHand && !g.pointerDown) g.activeHand = h;
+    float u = 0, v = 0;
+    bool hit = false;
+    const QssController& c = g.lastPose.hand[g.activeHand];
+    if (c.valid) {
+        XrQuaternionf aq{c.aim_pose.rot[0], c.aim_pose.rot[1], c.aim_pose.rot[2], c.aim_pose.rot[3]};
+        float o[3] = {c.aim_pose.pos[0], c.aim_pose.pos[1], c.aim_pose.pos[2]}, fwd[3] = {0, 0, -1}, d[3];
+        Rotate(aq, fwd, d);
+        float denom = Dot(d, n);
+        if (fabsf(denom) > 1e-4f) {
+            float diff[3] = {p0[0] - o[0], p0[1] - o[1], p0[2] - o[2]};
+            float t = Dot(diff, n) / denom;
+            if (t > 0) {
+                float rel[3] = {o[0] + d[0] * t - p0[0], o[1] + d[1] * t - p0[1], o[2] + d[2] * t - p0[2]};
+                u = Dot(rel, right) / kPanelW + 0.5f;
+                v = 0.5f - Dot(rel, up) / kPanelH;
+                hit = u >= 0 && u <= 1 && v >= 0 && v <= 1;
+            }
+        }
+    }
+    bool down = g.pointerDown ? c.trigger > 0.35f : c.trigger > 0.6f;
+    if (!hit && !g.pointerDown) down = false;
+    float scroll = fabsf(c.stick[1]) > 0.25f ? c.stick[1] : 0.0f;
+    if (hit || g.pointerWasHit || down != g.pointerDown) {
+        g.env->CallVoidMethod(g.android->activity->clazz, g.onPanelPointer, u, v, (jboolean)hit, (jboolean)down, scroll);
+        if (g.env->ExceptionCheck()) g.env->ExceptionClear();
+    }
+    g.pointerDown = down;
+    g.pointerWasHit = hit;
 }
 
 // ------------------------------------------------------------------ per frame
@@ -401,6 +522,7 @@ void WritePose(XrTime time) {
         c.buttons = btn;
     }
 
+    g.lastPose = st;
     // Seqlock publish: odd while writing.
     QssVrShm* s = g.shm;
     __atomic_add_fetch(&s->pose_seqlock, 1, __ATOMIC_ACQ_REL);
@@ -503,13 +625,25 @@ void RenderFrame() {
             UploadEye(1, qss_vr_pixels(s, b, 1), info);
             g.shown = info;
             g.haveFrame = true;
+            g.lastGameFrame = NowSeconds();
         }
         s->quest_reading = 0;
         g.shownFrameSeq = seq;
     } else if (!g.haveFrame && (g.frameId % 36) == 1) {
-        // Dark blue = bridge running, waiting for the game; teal = game connected but no frame yet.
-        if (s->game_connected) ClearEyes(0.0f, 0.12f, 0.12f);
-        else ClearEyes(0.02f, 0.03f, 0.10f);
+        // Dark backdrop behind the app panel (slightly teal once a game has connected).
+        if (s->game_connected) ClearEyes(0.02f, 0.07f, 0.08f);
+        else ClearEyes(0.03f, 0.04f, 0.06f);
+    }
+
+    // The app panel shows whenever no game frames are coming in (library, downloads, loading screen).
+    bool gameLive = g.haveFrame && NowSeconds() - g.lastGameFrame < 1.5;
+    bool showPanel = g.panelSwapchain != XR_NULL_HANDLE && !gameLive;
+    if (showPanel) {
+        // Thumbstick click puts the panel back in front of you.
+        bool recenter = (g.lastPose.hand[0].buttons | g.lastPose.hand[1].buttons) & QSS_BTN_STICK;
+        if (!g.panelPlaced || (recenter && !g.recenterHeld)) PlacePanel(g.lastPose.head);
+        g.recenterHeld = recenter;
+        UpdatePanelPointer();
     }
 
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
@@ -527,12 +661,20 @@ void RenderFrame() {
     layer.space = g.stage;
     layer.viewCount = 2;
     layer.views = pv;
-    const XrCompositionLayerBaseHeader* layers[] = {(XrCompositionLayerBaseHeader*)&layer};
+    XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    quad.space = g.stage;
+    quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    quad.subImage.swapchain = g.panelSwapchain;
+    quad.subImage.imageRect = {{0, 0}, {kPanelPxW, kPanelPxH}};
+    quad.pose = g.panelPose;
+    quad.size = {kPanelW, kPanelH};
+    const XrCompositionLayerBaseHeader* layers[] = {(XrCompositionLayerBaseHeader*)&layer, (XrCompositionLayerBaseHeader*)&quad};
     bool submit = fs.shouldRender && g.frameId > 1;
     XrFrameEndInfo fei{XR_TYPE_FRAME_END_INFO};
     fei.displayTime = fs.predictedDisplayTime;
     fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-    fei.layerCount = submit ? 1 : 0;
+    fei.layerCount = submit ? ((showPanel && g.panelPlaced) ? 2 : 1) : 0;
     fei.layers = layers;
     xrEndFrame(g.session, &fei);
 }
@@ -573,8 +715,10 @@ void android_main(android_app* app) {
     app->onAppCmd = OnAppCmd;
     JNIEnv* env = nullptr;
     app->activity->vm->AttachCurrentThread(&env, nullptr);
+    g.env = env;
 
     bool ok = OpenShm(app->activity->internalDataPath) && InitXr();
+    if (ok) InitPanel();
     if (!ok) LOG("VR bridge failed to start; see messages above");
 
     while (!app->destroyRequested) {

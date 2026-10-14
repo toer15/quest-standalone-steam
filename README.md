@@ -7,9 +7,20 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.9.3/quest-steam-quest3.apk)
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.10.0/quest-steam-quest3.apk)
 
 Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
+
+## v0.10.0: loading screen, the app in VR, cleanup after updates
+
+- **Play → Flat**: a loading screen ("Loading R.E.P.O.… 12s") stays up until the game has really opened its
+  window (checked over X11 with `launcher/XProbe.kt`), then "Opening game now…" and the game's window.
+  Starting games lives in `play/GameRunner.kt` (used by the Runtime screen and the VR panel).
+- **VR view** shows the app itself (library, downloads, Store, VR games) on a panel: an OpenXR quad layer
+  backed by an Android Surface (`XR_KHR_android_surface_swapchain`), rendered by a private virtual display
+  (`vr/VrPanel.kt`). Touch controller ray = pointer, trigger = tap, thumbstick = scroll, thumbstick click = recenter.
+- **After an update** the first start deletes what older versions left (`update/AppCleanup.kt`); games,
+  sign-in and the runtime are kept.
 
 ## v0.9.3: built-in game display
 

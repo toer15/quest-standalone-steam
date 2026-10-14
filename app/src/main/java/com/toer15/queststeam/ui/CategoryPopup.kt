@@ -7,6 +7,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -39,8 +42,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.toer15.queststeam.steam.OwnedGame
 
 /** Letter filter: "" = all, "A" = single letter, "A-F" = range, "#" = non-letters. */
@@ -79,7 +80,12 @@ fun CategoryPopup(
     val pill = RoundedCornerShape(50)
     val ui = LocalDeviceUi.current
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    // Drawn inside the screen (not a separate dialog window), so it also works on the VR panel.
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
         Column(
             Modifier
                 .padding(16.dp)
@@ -89,6 +95,7 @@ fun CategoryPopup(
                 .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(24.dp))
                 .animateContentSize(tween(260))
                 .widthIn(min = 300.dp, max = if (expanded) ui.popupMaxWidth else 340.dp)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .padding(20.dp)
                 .verticalScroll(rememberScrollState())
         ) {

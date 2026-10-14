@@ -75,17 +75,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.9.3
+      - name: Publish release v0.10.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.3
+          tag_name: v0.10.0
           target_commitish: ${{ github.sha }}
-          name: "v0.9.3: built-in game display (no Termux needed), controllers, Store tab, reliable downloads"
+          name: "v0.10.0: loading screen into the game, the app inside VR, cleanup after updates"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.10.0:**
+            - **Play a game flat:** Play → choose **Play flat** → a loading screen with the game's picture shows what's happening ("Starting the game display…", "Loading R.E.P.O.… 12s"), then **Opening game now…**, then the game opens in its window. While playing: **Back to game** / **Stop game**. If a game fails to start, the screen says why and shows the log.
+            - **VR view is no longer just blue:** it shows the app itself in front of you — library, downloads, Store, and VR games start right there. Point with a Touch controller, pull the trigger to tap, thumbstick to scroll, click the thumbstick to bring the panel in front of you. **🥽 VR** in the top bar opens it; **Exit VR** closes it.
+            - **Old files are deleted after every update:** the first start of a new version removes old update downloads, caches, logs and temp files from older versions. Your games, sign-in and settings stay.
 
             **v0.9.3:**
             - **Games get their window without Termux.** The game display app (Termux:X11) now comes with Quest Steam: Runtime screen or the Play popup → **Install game display app** (one tap). Quest Steam starts the display by itself before every game, so "nodrv_CreateWindow … The graphics driver is missing" (game closing right after start) is fixed.
