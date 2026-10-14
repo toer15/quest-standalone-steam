@@ -31,6 +31,7 @@ dependencies {
 
 tasks.test {
     timeout.set(Duration.ofMinutes(15))
+    maxHeapSize = "2g"
     systemProperty("steam.live", System.getProperty("steam.live") ?: "")
     testLogging { showStandardStreams = true; events("passed", "failed", "skipped") }
 }

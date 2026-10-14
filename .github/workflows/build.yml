@@ -42,7 +42,8 @@ jobs:
             -Dwinlator.apk=$HOME/.cache/qss/Winlator_11.2.apk -Dwinlator.smoke=1 -Dsteam.live=1 \
             :app:assembleQuestRelease --no-daemon 2>&1 | tee build.log; status=${PIPESTATUS[0]}
           # Short summary of compiler errors / failed tests at the end of the log.
-          grep -E "^e: |^w: .*error|FAILED|Test.*>" build.log | grep -v "^w: " | sort -u | head -60 || true
+          grep -E "^e: |FAILED|Test.*>|OutOfMemory|Gradle .* disappeared|exit value" build.log | sort -u | head -60 || true
+          grep -A15 "What went wrong" build.log | grep -vE "^\s+at " | head -60 || true
           [ "$status" -eq 0 ] || exit "$status"
           apk=app/build/outputs/apk/quest/release/app-quest-release.apk
           [ -f "$apk" ] || { echo "Signed release APK missing (unsigned build?):"; find app/build/outputs/apk -name "*.apk"; exit 1; }
