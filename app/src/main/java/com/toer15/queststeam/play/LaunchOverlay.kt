@@ -90,10 +90,21 @@ fun LaunchOverlay(stage: LaunchStage, appId: Int, log: String, onShowGame: () ->
                                 Spacer(Modifier.height(14.dp))
                                 Text("Loading…", color = SteamColors.Accent, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
                                 Text(stage.step, color = SteamColors.Text, fontSize = 17.sp, textAlign = TextAlign.Center)
+                                stage.detail?.let {
+                                    Spacer(Modifier.height(10.dp))
+                                    Text(
+                                        it, color = Color(0xFFAEB9C3), fontSize = 11.sp, fontFamily = FontFamily.Monospace, lineHeight = 14.sp, maxLines = 4,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.Black.copy(alpha = 0.35f)).padding(10.dp),
+                                    )
+                                }
                                 Spacer(Modifier.height(14.dp))
                                 Text("The first start of a game takes longest: Windows code is translated for the headset.", color = SteamColors.Muted, fontSize = 13.sp, textAlign = TextAlign.Center)
                                 Spacer(Modifier.height(14.dp))
-                                OverlayButton("Cancel", primary = false, onClick = onStop)
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    if (stage.canShowWindow) OverlayButton("Show game window", primary = true, onClick = onShowGame)
+                                    OverlayButton("Cancel", primary = false, onClick = onStop)
+                                }
                             }
                             is LaunchStage.Opening -> {
                                 Text("✓", color = SteamColors.GreenBright, fontSize = 44.sp, fontWeight = FontWeight.Bold)

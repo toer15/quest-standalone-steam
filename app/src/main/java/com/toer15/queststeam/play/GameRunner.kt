@@ -26,7 +26,13 @@ import java.io.File
 sealed interface LaunchStage {
     data object Idle : LaunchStage
     /** Loading: [step] says what's happening; [progress] 0..1 when known. */
-    data class Working(val title: String, val step: String, val progress: Float? = null) : LaunchStage
+    data class Working(
+        val title: String, val step: String, val progress: Float? = null,
+        /** The game's latest output lines, so you can see it's working (and what went wrong). */
+        val detail: String? = null,
+        /** After a while the game's display can be opened by hand while it loads. */
+        val canShowWindow: Boolean = false,
+    ) : LaunchStage
     /** The game's window is up: "Opening game now". */
     data class Opening(val title: String) : LaunchStage
     data class Running(val title: String, val vr: Boolean) : LaunchStage
@@ -159,13 +165,24 @@ object GameRunner {
         if (localDisplay) {
             // Loading screen until the game really has a window (Unity/Unreal games take a while under Box64).
             val started = System.currentTimeMillis()
+            var lastNote = 0L
             while (true) {
                 if (!isRunning) return // onGameExit reports it
                 val secs = (System.currentTimeMillis() - started) / 1000
-                val windows = withContext(Dispatchers.IO) { XProbe.visibleWindows()?.size ?: 0 }
-                if (windows > baseline) break
-                if (secs >= WINDOW_TIMEOUT_S) { appendLog("No game window after ${secs}s; showing the display anyway."); break }
-                _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s")
+                val windows = withContext(Dispatchers.IO) { XProbe.visibleWindows() }
+                if ((windows?.size ?: 0) > baseline) {
+                    appendLog("Game window is open (${windows!!.joinToString { "${it.width}x${it.height}" }}).")
+                    break
+                }
+                if (secs - lastNote >= 15) {
+                    lastNote = secs
+                    appendLog(
+                        if (windows == null) "[waiting ${secs}s] can't ask the game display for windows: ${XProbe.lastError}"
+                        else "[waiting ${secs}s] the game hasn't opened its window yet (${windows.size} on the display)"
+                    )
+                }
+                if (secs >= WINDOW_TIMEOUT_S) { appendLog("No game window detected after ${secs}s; showing the game display."); break }
+                _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s", detail = logTail(3), canShowWindow = secs >= 20)
                 delay(700)
             }
             _stage.value = LaunchStage.Opening(title)
@@ -209,5 +226,8 @@ object GameRunner {
         return if (d.parentFile?.canonicalPath == games) d else exe.parentFile!!
     }
 
-    private const val WINDOW_TIMEOUT_S = 240
+    /** After this, show the game's display even if no window was detected (it may be there after all). */
+    private const val WINDOW_TIMEOUT_S = 90
+
+    private fun logTail(n: Int) = _log.value.trimEnd().lines().filter { it.isNotBlank() }.takeLast(n).joinToString("\n")
 }

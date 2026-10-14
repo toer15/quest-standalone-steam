@@ -16,8 +16,11 @@ import java.nio.ByteOrder
 object XProbe {
     data class Window(val id: Int, val width: Int, val height: Int)
 
+    /** Why the last [visibleWindows] call returned null (for the log). */
+    @Volatile var lastError: String? = null
+
     /** Visible top-level windows on 127.0.0.1:6000+[display]; null if the X server can't be reached. */
-    fun visibleWindows(display: Int = 0, minSize: Int = 64, host: String = "127.0.0.1"): List<Window>? = runCatching {
+    fun visibleWindows(display: Int = 0, minSize: Int = 32, host: String = "127.0.0.1"): List<Window>? = runCatching {
         Socket().use { s ->
             s.connect(InetSocketAddress(host, 6000 + display), 1000)
             s.soTimeout = 2000
@@ -51,7 +54,7 @@ object XProbe {
                 if (width < minSize || height < minSize) null else Window(w, width, height)
             }
         }
-    }.getOrNull()
+    }.onSuccess { lastError = null }.onFailure { lastError = it.toString() }.getOrNull()
 
     /** Connection setup; returns the first screen's root window. */
     private fun handshake(out: OutputStream, inp: DataInputStream): Int {

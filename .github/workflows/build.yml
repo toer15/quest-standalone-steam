@@ -80,17 +80,21 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.10.1
+      - name: Publish release v0.10.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.10.1
+          tag_name: v0.10.2
           target_commitish: ${{ github.sha }}
-          name: "v0.10.1: game display starts (keyboard data), loading screen into the game, the app inside VR"
+          name: "v0.10.2: loading screen always ends in the game window"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.10.2:**
+            - The loading screen no longer waits forever: after at most 90 seconds it opens the game's window anyway, and from 20 seconds a **Show game window** button lets you look at the game while it's still starting.
+            - The loading screen shows the game's latest output lines, and the log says every 15 seconds what it's waiting for, so a stuck start can be diagnosed from a photo.
 
             **v0.10.1:** fixes the game display stopping at once with "$XKB_CONFIG_ROOT is not set" (display server exited with code 1), so games never got a window. The keyboard layout data it needs is now included and set up automatically.
 
