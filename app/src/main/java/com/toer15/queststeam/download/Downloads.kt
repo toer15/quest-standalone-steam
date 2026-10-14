@@ -168,19 +168,28 @@ class DownloadManager private constructor(private val ctx: Context) {
     fun uninstall(appId: Int) { cancel(appId) }
 
     /** The .exe Steam itself starts (saved at download time), else the largest .exe in the game folder. */
-    fun mainExe(appId: Int): File? {
+    /** The .exe Steam starts for this game; [vr] picks Steam's separate "Launch in VR" entry when there is one. */
+    fun mainExe(appId: Int, vr: Boolean = false): File? {
         val dir = dirFor(appId)
-        launchLines(appId)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let { rel ->
-            val f = File(dir, rel)
+        val lines = launchLines(appId)
+        val rel = (if (vr) lines?.getOrNull(3) else null)?.takeIf { it.isNotBlank() } ?: lines?.firstOrNull()
+        rel?.takeIf { it.isNotBlank() }?.let { r ->
+            val f = File(dir, r)
             if (f.isFile) return f
             // Steam paths are case-insensitive on Windows.
-            dir.walkTopDown().firstOrNull { it.isFile && it.relativeTo(dir).path.equals(rel, ignoreCase = true) }?.let { return it }
+            dir.walkTopDown().firstOrNull { it.isFile && it.relativeTo(dir).path.equals(r, ignoreCase = true) }?.let { return it }
         }
         return launcher.findExes(dir).firstOrNull()
     }
 
     /** Launch arguments Steam uses for this game ("" if none). */
-    fun launchArgs(appId: Int): String = launchLines(appId)?.getOrNull(1).orEmpty()
+    fun launchArgs(appId: Int, vr: Boolean = false): String {
+        val lines = launchLines(appId)
+        return if (vr && !lines?.getOrNull(3).isNullOrBlank()) lines?.getOrNull(4).orEmpty() else lines?.getOrNull(1).orEmpty()
+    }
+
+    /** True if Steam lists a separate VR launch entry for this game. */
+    fun hasVrLaunch(appId: Int) = !launchLines(appId)?.getOrNull(3).isNullOrBlank()
 
     private fun launchLines(appId: Int): List<String>? =
         File(dirFor(appId), com.toer15.queststeam.steamclient.SteamDownloader.LAUNCH_FILE).takeIf { it.isFile }?.readLines()

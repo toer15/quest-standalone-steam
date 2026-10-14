@@ -76,10 +76,12 @@ class SteamClientLogicTest {
                     children.add(entry("1", "bin\\win64\\Game.exe", os = "windows", type = "default"))
                     children.add(entry("2", "Game_beta.exe", os = "windows", beta = "beta"))
                     children.add(entry("3", "Tools.exe", os = "windows", type = "option2"))
+                    children.add(entry("4", "bin\\win64\\GameVR.exe", os = "windows", type = "vr"))
                 })
             })
         }
         assertEquals("bin/win64/Game.exe", PicsParse.windowsLaunch(app)?.executable)
+        assertEquals("bin/win64/GameVR.exe", PicsParse.windowsVrLaunch(app)?.executable)
         assertNull(PicsParse.windowsLaunch(KeyValue("empty")))
     }
 

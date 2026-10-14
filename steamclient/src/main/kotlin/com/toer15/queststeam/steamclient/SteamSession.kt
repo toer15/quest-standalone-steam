@@ -307,14 +307,18 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
         fromService.ifEmpty { ownedFromLicenses(c) }
     }
 
-    /** The Windows launch option Steam uses for [appId] (executable + arguments), from PICS app info. */
-    suspend fun launchOption(appId: Int): PicsParse.Launch? = withContext(Dispatchers.IO) {
+    /** The Windows launch options Steam has for [appId] (normal and VR), from PICS app info. */
+    suspend fun launchOptions(appId: Int): PicsParse.LaunchOptions = withContext(Dispatchers.IO) {
         val c = ensureOnline()
         val apps = c.getHandler(SteamApps::class.java)!!
         val token = runCatching { withTimeout(PICS_TIMEOUT_MS) { apps.picsGetAccessTokens(listOf(appId), emptyList()).await() }.appTokens[appId] }.getOrNull() ?: 0L
         val rs = withTimeout(PICS_TIMEOUT_MS) { apps.picsGetProductInfo(listOf(PICSRequest(appId, token)), emptyList()).await() }
-        rs.results.firstNotNullOfOrNull { it.apps[appId] }?.let { PicsParse.windowsLaunch(it.keyValues) }
+        val kv = rs.results.firstNotNullOfOrNull { it.apps[appId] }?.keyValues
+        if (kv == null) PicsParse.LaunchOptions(null, null) else PicsParse.LaunchOptions(PicsParse.windowsLaunch(kv), PicsParse.windowsVrLaunch(kv))
     }
+
+    /** The Windows launch option Steam uses for [appId] (executable + arguments). */
+    suspend fun launchOption(appId: Int): PicsParse.Launch? = launchOptions(appId).flat
 
     private suspend fun ownedFromLicenses(c: SteamClient): List<OwnedApp> {
         val apps = c.getHandler(SteamApps::class.java)!!
@@ -386,21 +390,27 @@ object PicsParse {
 
     data class Launch(val executable: String, val arguments: String, val workingDir: String)
 
+    /** [flat]: what Steam runs normally; [vr]: Steam's separate VR entry, if any. */
+    data class LaunchOptions(val flat: Launch?, val vr: Launch?)
+
     /**
      * Picks the launch entry Steam would use on Windows: config/launch/<n> with oslist containing
      * "windows" (or no oslist), preferring the default type and skipping betas and tool entries.
      */
-    fun windowsLaunch(app: KeyValue): Launch? {
-        val entries = app["config"]["launch"].children.mapNotNull { e ->
+    fun windowsLaunch(app: KeyValue): Launch? =
+        windowsEntries(app).minByOrNull { (type, _) -> when (type) { "", "default", "none" -> 0; "option1" -> 1; "vr" -> 2; else -> 3 } }?.second
+
+    /** Steam's "Launch in VR" entry (type "vr"), if the game has a separate one. */
+    fun windowsVrLaunch(app: KeyValue): Launch? = windowsEntries(app).firstOrNull { it.first == "vr" }?.second
+
+    private fun windowsEntries(app: KeyValue): List<Pair<String, Launch>> =
+        app["config"]["launch"].children.mapNotNull { e ->
             val exe = e["executable"].asString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val os = e["config"]["oslist"].asString().orEmpty()
             if (os.isNotBlank() && !os.split(',').any { it.trim() == "windows" }) return@mapNotNull null
             if (e["config"]["betakey"].asString()?.isNotBlank() == true) return@mapNotNull null
             if (!exe.endsWith(".exe", true) && !exe.endsWith(".bat", true)) return@mapNotNull null
-            val type = e["type"].asString().orEmpty().lowercase()
-            val rank = when (type) { "", "default", "none" -> 0; "option1" -> 1; "vr" -> 2; else -> 3 }
-            rank to Launch(exe.replace('\\', '/'), e["arguments"].asString().orEmpty(), e["workingdir"].asString().orEmpty().replace('\\', '/'))
+            e["type"].asString().orEmpty().lowercase() to
+                Launch(exe.replace('\\', '/'), e["arguments"].asString().orEmpty(), e["workingdir"].asString().orEmpty().replace('\\', '/'))
         }
-        return entries.minByOrNull { it.first }?.second
-    }
 }

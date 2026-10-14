@@ -3,9 +3,11 @@ package com.toer15.queststeam.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -64,7 +66,8 @@ fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: 
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val hovered by interaction.collectIsHoveredAsState()
-    val scale by animateFloatAsState(if (pressed) 0.97f else if (hovered) 1.025f else 1f, tween(140), label = "press")
+    val focused by interaction.collectIsFocusedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.97f else if (hovered || focused) 1.025f else 1f, tween(140), label = "press")
     Box(
         modifier
             .aspectRatio(1.42f)
@@ -79,6 +82,8 @@ fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: 
                 spotShadowColor = Color.Black.copy(alpha = 0.45f)
             }
             .clip(CardShape)
+            // Controller focus: a bright outline on the selected card.
+            .border(if (focused) 3.dp else 0.dp, if (focused) SteamColors.Accent else Color.Transparent, CardShape)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null) { flipped = !flipped }
     ) {
@@ -167,16 +172,16 @@ private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
                 )
                 if (state.total > 0 && state.note != null) Text(state.note, fontSize = if (ui.isQuest) 12.sp else 10.sp, color = SteamColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(6.dp))
-                OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50), modifier = Modifier.height(ui.buttonHeight)) { Text("Cancel") }
+                OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50), modifier = Modifier.focusRing().height(ui.buttonHeight)) { Text("Cancel") }
             }
             is GameState.Installed -> {
-                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = btn) { Text(if (ui.isQuest && game.isVr) "Play in VR" else "Play Game", fontWeight = FontWeight.Bold) }
+                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = btn.focusRing()) { Text("Play Game", fontWeight = FontWeight.Bold) }
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = a.onUninstall, shape = RoundedCornerShape(50), modifier = btn) { Text("Uninstall") }
+                OutlinedButton(onClick = a.onUninstall, shape = RoundedCornerShape(50), modifier = btn.focusRing()) { Text("Uninstall") }
             }
             else -> {
                 if (state is GameState.Failed) Text(state.message, fontSize = 11.sp, color = SteamColors.Danger, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = btn) { Text(if (state is GameState.Failed) "Retry download" else "Download", fontWeight = FontWeight.Bold) }
+                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = btn.focusRing()) { Text(if (state is GameState.Failed) "Retry download" else "Download", fontWeight = FontWeight.Bold) }
                 Text("Import from folder", color = SteamColors.Accent, fontSize = 13.sp, modifier = Modifier.clickable(onClick = a.onImport).padding(6.dp))
             }
         }

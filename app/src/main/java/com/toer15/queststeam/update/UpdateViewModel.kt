@@ -32,18 +32,30 @@ class UpdateViewModel(app: Application) : AndroidViewModel(app) {
     private var job: Job? = null
     @Volatile private var cancelled = false
 
+    private var lastQuietCheck = 0L
+
     init {
-        // Quietly check on launch; only pop up when there is something new the player hasn't dismissed.
-        viewModelScope.launch {
-            val r = runCatching { withContext(Dispatchers.IO) { Updater.fetchLatest() } }.getOrNull() ?: return@launch
-            if (Updater.isNewer(r) && prefs.getString("dismissed", null) != r.version && _ui.value == UpdateUi.Hidden) {
-                _ui.value = UpdateUi.Available(r)
-            }
-        }
+        checkQuietly()
         viewModelScope.launch {
             Updater.installResult.collect { msg ->
                 val cur = _ui.value
                 if (msg != null && msg != "Installed" && cur is UpdateUi.Installing) _ui.value = UpdateUi.Failed(msg, cur.release)
+            }
+        }
+    }
+
+    /**
+     * Background check on launch and whenever the app comes back to the front (at most every
+     * 30 minutes): pops up "Update available" only when there is something new the player hasn't dismissed.
+     */
+    fun checkQuietly() {
+        val now = System.currentTimeMillis()
+        if (now - lastQuietCheck < 30 * 60_000L) return
+        lastQuietCheck = now
+        viewModelScope.launch {
+            val r = runCatching { withContext(Dispatchers.IO) { Updater.fetchLatest() } }.getOrNull() ?: return@launch
+            if (Updater.isNewer(r) && prefs.getString("dismissed", null) != r.version && _ui.value == UpdateUi.Hidden) {
+                _ui.value = UpdateUi.Available(r)
             }
         }
     }

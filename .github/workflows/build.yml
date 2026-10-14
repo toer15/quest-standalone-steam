@@ -24,12 +24,15 @@ jobs:
           [ -f ~/.cache/qss/Winlator_11.2.apk ] || curl -sSfL -o ~/.cache/qss/Winlator_11.2.apk https://github.com/brunodev85/winlator/releases/download/v11.2.0/Winlator_11.2.apk
           # The runtime is installed at the app's real path, like on the device.
           sudo mkdir -p /data/data/com.qssteam/files && sudo chown -R "$USER" /data
-      - name: Build the SteamVR bridge DLL (mingw) and test it under Wine
+      - name: Build the SteamVR + controller bridge DLLs (mingw) and test them under Wine
         run: |
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends mingw-w64 wine64 xvfb libgl1-mesa-dri
           openvr-bridge/win/build.sh app/src/quest/assets/vrbridge/openvr_api.dll
           openvr-bridge/test/run_wine_test.sh app/src/quest/assets/vrbridge/openvr_api.dll
+          # Controller bridge: XInput DLLs (64 + 32-bit), tested with a fake controller under Wine.
+          openvr-bridge/win/build_xinput.sh app/src/quest/assets/gamepad
+          openvr-bridge/test/run_pad_test.sh app/src/quest/assets/gamepad/xinput64.dll
       - name: Build the Quest 3 APK
         env:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
@@ -60,17 +63,25 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.7.0
+      - name: Publish release v0.8.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.7.0
+          tag_name: v0.8.0
           target_commitish: ${{ github.sha }}
-          name: "v0.7.0: downloads no longer close the app, Home filters, play with Steam launch options"
+          name: "v0.8.0: Bluetooth controllers in games and in the app, VR or flat Play popup"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.8.0:**
+            - **Bluetooth controllers in games:** pair an Xbox, PlayStation (DualSense / DualShock), Switch Pro or 8BitDo controller with the Quest and Windows games see it as an Xbox (XInput) controller, with rumble. Works in flat games and in VR games.
+            - **The app shows your controller:** the top bar shows the exact model (for example "DualSense Wireless Controller (PS5)") when it's connected, or "No controller".
+            - **Play popup like Steam:** before a game starts, choose **Play in VR** (in the headset) or **Play flat** (on a big screen with your controller), and see the controller status.
+            - **Use the app like a console:** D-pad or left stick moves between cards and buttons, A selects, B goes back, LB/RB switch tabs, Y opens Filters, X syncs, Start checks for updates.
+            - **Update popup** also checks again whenever you come back to the app, not just when it starts.
+            - Flat games: allow "Display over other apps" (Play popup → Allow) so the controller keeps working while the game window is in front.
 
             **v0.7.0:**
             - **Download no longer closes the app.** An error while downloading now stops that download and shows the reason on the card, with **Retry download**. If the app ever does close unexpectedly, the next start shows the crash report with a **Copy** button.

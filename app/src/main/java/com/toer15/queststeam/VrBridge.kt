@@ -76,9 +76,9 @@ object VrBridge {
         return f
     }
 
-    /** Opens the immersive headset view (android.app.NativeActivity running libqssxr.so). */
+    /** Opens the immersive headset view (QssXrActivity: NativeActivity running libqssxr.so). */
     fun enterVr(ctx: Context) {
-        val i = Intent().setClassName(ctx.packageName, "android.app.NativeActivity")
+        val i = Intent().setClassName(ctx, "com.toer15.queststeam.QssXrActivity")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ctx.startActivity(i)
     }

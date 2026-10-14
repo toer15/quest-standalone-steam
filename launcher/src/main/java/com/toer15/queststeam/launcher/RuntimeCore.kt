@@ -57,8 +57,9 @@ object RuntimeCore {
             put("BOX64_PATH", "$r/opt/wine/bin")
             put("BOX64_DYNAREC", "1")
             put("BOX64_LOG", "0")
-            // DXVK (installed into the prefix) for Direct3D 9/10/11, the game's own openvr_api.dll (our bridge).
-            put("WINEDLLOVERRIDES", "d3d11,dxgi,d3d10core,d3d9=n,b;openvr_api=n,b;winemenubuilder.exe=d")
+            // DXVK (installed into the prefix) for Direct3D 9/10/11, the game's own openvr_api.dll (our bridge),
+            // and our XInput DLLs (the player's Bluetooth controller, written by the app into QSS_PAD_SHM).
+            put("WINEDLLOVERRIDES", "d3d11,dxgi,d3d10core,d3d9=n,b;openvr_api=n,b;xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;winemenubuilder.exe=d")
             // Turnip: Mesa's Vulkan driver for Adreno GPUs (Quest 3 = Adreno 740), from Winlator.
             put("VK_ICD_FILENAMES", "$r/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json")
             put("TU_OVERRIDE_HEAP_SIZE", "4096")

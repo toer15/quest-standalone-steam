@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- In-app updates: hand the downloaded APK to Android's installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Controllers: rumble, and passing the controller to a flat game while its window is in front. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:name=".QssApp"
@@ -21,6 +25,7 @@
         </activity>
         <activity android:name=".LoginActivity" android:exported="false" />
         <receiver android:name=".update.InstallResultReceiver" android:exported="false" />
+        <service android:name=".gamepad.ControllerRelay" android:exported="false" />
         <activity android:name=".RuntimeActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>
 </manifest>

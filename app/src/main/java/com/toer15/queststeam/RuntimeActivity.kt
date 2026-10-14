@@ -5,6 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
+import com.toer15.queststeam.gamepad.ControllerRelay
+import com.toer15.queststeam.gamepad.Controllers
+import com.toer15.queststeam.gamepad.GamepadBridge
+import com.toer15.queststeam.ui.ControllerStatus
+import com.toer15.queststeam.ui.rememberOverlayAllowed
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -81,7 +88,20 @@ class RuntimeActivity : ComponentActivity() {
         const val EXTRA_EXE = "exe"
         const val EXTRA_TITLE = "title"
         const val EXTRA_ARGS = "args"
+        /** [MODE_VR] or [MODE_FLAT], from the Play popup. */
+        const val EXTRA_MODE = "mode"
+        const val MODE_VR = "vr"
+        const val MODE_FLAT = "flat"
     }
+
+    private val vm by lazy { androidx.lifecycle.ViewModelProvider(this)[RuntimeViewModel::class.java] }
+
+    // While a game runs and this screen is in front, the controller goes to the game.
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        (vm.gameRunning && GamepadBridge.onKey(event)) || super.dispatchKeyEvent(event)
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
+        (vm.gameRunning && GamepadBridge.onMotion(event)) || super.dispatchGenericMotionEvent(event)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,7 +110,8 @@ class RuntimeActivity : ComponentActivity() {
         val exe = intent.getStringExtra(EXTRA_EXE)
         val title = intent.getStringExtra(EXTRA_TITLE)
         val args = intent.getStringExtra(EXTRA_ARGS).orEmpty()
-        setContent { SteamTheme { RuntimeScreen(title, exe, args, onClose = { finish() }) } }
+        val mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_VR
+        setContent { SteamTheme { RuntimeScreen(title, exe, args, mode, onClose = { finish() }) } }
     }
 }
 
@@ -166,20 +187,30 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() {
         launcher.stop()
+        ControllerRelay.stop(getApplication<Application>())
         appendLog("[stopped]")
     }
 
+    /** True while a started game's process is alive. */
+    val gameRunning get() = launcher.current?.isAlive == true
+
     /**
-     * Starts a game. On Quest, a SteamVR game gets the OpenVR bridge: its openvr_api.dll is swapped
-     * for ours, the shared memory is created, and the headset switches to the immersive VR view.
+     * Starts a game. [mode] comes from the Play popup: in VR a SteamVR game gets the OpenVR bridge
+     * (its openvr_api.dll is swapped for ours, the shared memory is created, and the headset
+     * switches to the immersive VR view); flat runs the game on a screen with the game's original files.
+     * Either way the player's Bluetooth controller is passed to the game as an XInput controller.
      */
-    fun launchGame(ctx: Context, exe: File, args: String = "") {
+    fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR) {
         viewModelScope.launch {
             val disp = display.trim().ifBlank { null }
             val gameDir = gameRoot(exe)
             val env = mutableMapOf<String, String>()
+            val wantVr = mode == RuntimeActivity.MODE_VR
             withContext(Dispatchers.IO) {
-                if (VrBridge.canPlayInVr(ctx) && VrBridge.isVrGame(gameDir)) {
+                runCatching { env["QSS_PAD_SHM"] = GamepadBridge.prepare(ctx, launcher.rootfs, ::appendLog).path }
+                    .onFailure { appendLog("Controller bridge unavailable: $it") }
+                val vrGame = VrBridge.isVrGame(gameDir)
+                if (wantVr && vrGame && VrBridge.canPlayInVr(ctx)) {
                     val n = VrBridge.install(ctx, gameDir, ::appendLog)
                     if (n > 0) {
                         env["QSS_VR_SHM"] = VrBridge.prepareShm(ctx).path
@@ -187,32 +218,48 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         appendLog("This game's openvr_api.dll is 32-bit; VR needs a 64-bit game for now. Starting flat.")
                     }
-                } else if (VrBridge.isVrGame(gameDir) && !VrBridge.isAvailable(ctx)) {
+                } else if (wantVr && vrGame && !VrBridge.isAvailable(ctx)) {
                     appendLog("VR bridge DLL is missing from this build; starting flat.")
+                } else if (wantVr && !vrGame) {
+                    appendLog("This game doesn't use SteamVR (OpenVR), so it starts flat.")
+                } else {
+                    if (vrGame) VrBridge.uninstall(gameDir)
+                    appendLog("Flat mode: the game runs on a screen.")
                 }
             }
+            val pads = Controllers.connected.value
+            if (pads.isEmpty()) appendLog("No controller connected (pair one in Quest Settings → Devices → Bluetooth).")
+            else pads.take(GamepadBridge.MAX).forEachIndexed { i, c -> appendLog("Controller ${i + 1}: ${c.model} → game") }
+            val inVr = env.containsKey("QSS_VR_SHM")
             if (disp != null && disp.startsWith("127.0.0.1")) openTermuxX11(ctx)
             val argv = GameLauncher.splitArgs(args)
             if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
-            val result = withContext(Dispatchers.IO) { launcher.launchExe(exe, disp, env, argv, onLine = ::appendLog) }
+            val result = withContext(Dispatchers.IO) {
+                launcher.launchExe(exe, disp, env, argv, onExit = { ControllerRelay.stop(ctx) }, onLine = ::appendLog)
+            }
             appendLog(result.message)
-            if (result.ok && env.containsKey("QSS_VR_SHM")) {
+            if (!result.ok) return@launch
+            if (inVr) {
                 delay(2500)
                 VrBridge.enterVr(ctx)
+            } else if (pads.isNotEmpty() && disp != null) {
+                // The game window (Termux:X11) gets focus; the relay badge keeps the controller going to the game.
+                if (ControllerRelay.canOverlay(ctx)) { delay(1500); ControllerRelay.start(ctx) }
+                else appendLog("To use the controller while the game window is in front, allow \"Display over other apps\" for Quest Steam (Play popup → Allow), or keep this screen selected.")
             }
         }
     }
 
     /** Play from a game card: downloads the runtime first if needed, once. */
-    fun playOnce(ctx: Context, exePath: String, args: String) {
+    fun playOnce(ctx: Context, exePath: String, args: String, mode: String) {
         if (startedPlay) return
         startedPlay = true
         val exe = File(exePath)
         if (installer.isInstalled) {
-            launchGame(ctx, exe, args)
+            launchGame(ctx, exe, args, mode)
         } else {
             appendLog("First launch: downloading the Windows runtime (Box64 + Wine, ~157 MB)…")
-            install { launchGame(ctx, exe, args) }
+            install { launchGame(ctx, exe, args, mode) }
         }
     }
 
@@ -267,7 +314,7 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RuntimeScreen(title: String?, exePath: String?, args: String, onClose: () -> Unit, vm: RuntimeViewModel = viewModel()) {
+private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: String, onClose: () -> Unit, vm: RuntimeViewModel = viewModel()) {
     val ctx = LocalContext.current
     val ui = LocalDeviceUi.current
     val installed by vm.installed.collectAsState()
@@ -287,7 +334,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, onClos
     }
 
     LaunchedEffect(exePath) {
-        if (exePath != null) vm.playOnce(ctx, exePath, args)
+        if (exePath != null) vm.playOnce(ctx, exePath, args, mode)
         else if (title != null) vm.appendLog("No .exe found for this game.")
     }
 
@@ -348,6 +395,24 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, onClos
                                 PrimaryButton("Download runtime") { vm.install() }
                             }
                         }
+                    }
+                }
+
+                // Controllers: the exact model when connected, and the permission for flat games.
+                Card {
+                    Text("Controllers", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    ControllerStatus()
+                    val overlay = rememberOverlayAllowed()
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (overlay) "Flat games: the controller keeps working while the game window is in front (\"🎮 → game\" badge; tap it to give the keyboard back)."
+                        else "Flat games: allow \"Display over other apps\" so the controller keeps working while the game window is in front. If the button does nothing, run on a PC: adb shell appops set com.qssteam SYSTEM_ALERT_WINDOW allow",
+                        color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+                    )
+                    if (!overlay) {
+                        Spacer(Modifier.height(8.dp))
+                        SecondaryButton("Allow display over other apps") { if (!ControllerRelay.requestOverlay(ctx)) vm.appendLog("This headset has no settings page for that; use the adb command above.") }
                     }
                 }
 

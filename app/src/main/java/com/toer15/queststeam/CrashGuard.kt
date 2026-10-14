@@ -15,6 +15,7 @@ class QssApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashGuard.install(this)
+        com.toer15.queststeam.gamepad.Controllers.start(this)
     }
 }
 

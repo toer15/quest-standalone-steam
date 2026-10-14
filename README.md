@@ -7,9 +7,21 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.7.0/quest-steam-quest3.apk)
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.8.0/quest-steam-quest3.apk)
 
 Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
+
+## v0.8.0: Bluetooth controllers
+
+- Pair an Xbox, PlayStation (DualSense / DualShock), Switch Pro or 8BitDo controller in Quest Settings → Devices → Bluetooth.
+  The top bar shows the exact model when it's connected, or "No controller".
+- **In games:** the app writes the controller's state into `<rootfs>/tmp/gamepad.shm`; our XInput DLLs
+  (`openvr-bridge/win/xinput.cpp`, installed as `xinput1_1`…`xinput1_4` / `xinput9_1_0` in the Wine prefix) give it to the
+  game as an Xbox controller, with rumble. VR view: `QssXrActivity` passes the controller through; flat games: the
+  "🎮 → game" badge (needs "Display over other apps", or `adb shell appops set com.qssteam SYSTEM_ALERT_WINDOW allow`).
+  Games that only use DirectInput don't see it yet.
+- **In the app:** D-pad / left stick moves, A selects, B back, LB/RB tabs, Y filters, X sync, Start checks for updates.
+- **Play popup:** choose Play in VR or Play flat before a game starts.
 
 ## v0.5.0: SteamVR games in the headset (Quest 3 app)
 On a Quest, **Play in VR** on a downloaded SteamVR game:

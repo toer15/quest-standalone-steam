@@ -24,7 +24,7 @@
 
         <!-- Immersive SteamVR bridge view: OpenXR (Meta runtime) in libqssxr.so. -->
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".QssXrActivity"
             android:exported="false"
             android:launchMode="singleTask"
             android:taskAffinity="com.qssteam.vr"

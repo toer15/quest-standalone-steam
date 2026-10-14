@@ -29,7 +29,7 @@ class GameLauncher(ctx: Context) {
         RuntimeCore.wineEnvironment(rootfs.path, display, if (DeviceMode.isQuest) "quest" else "phone", extra)
 
     /** Starts `box64 wine args...`; streams combined stdout/stderr to [onLine]. */
-    fun runWine(args: List<String>, display: String?, workDir: File? = null, extraEnv: Map<String, String> = emptyMap(), onLine: (String) -> Unit): LaunchResult {
+    fun runWine(args: List<String>, display: String?, workDir: File? = null, extraEnv: Map<String, String> = emptyMap(), onExit: (Int) -> Unit = {}, onLine: (String) -> Unit): LaunchResult {
         if (!installer.isInstalled) return LaunchResult(false, "Runtime not downloaded yet: tap Download runtime.")
         if (RuntimeCore.repairPrefix(rootfs)) onLine("Repaired the Wine prefix (linked Wine's system DLLs, fixes exit code 53).")
         if (!RuntimeCore.prefixHealthy(rootfs)) return LaunchResult(false, "Wine prefix is broken: delete the runtime and download it again.")
@@ -42,7 +42,9 @@ class GameLauncher(ctx: Context) {
             val p = pb.start(); current = p
             Thread {
                 runCatching { p.inputStream.bufferedReader().forEachLine(onLine) }
-                onLine("[process exited with code ${runCatching { p.waitFor() }.getOrDefault(-1)}]")
+                val code = runCatching { p.waitFor() }.getOrDefault(-1)
+                onLine("[process exited with code $code]")
+                runCatching { onExit(code) }
             }.start()
             LaunchResult(true, "Started")
         } catch (e: Exception) {
@@ -50,8 +52,8 @@ class GameLauncher(ctx: Context) {
         }
     }
 
-    fun launchExe(exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), args: List<String> = emptyList(), onLine: (String) -> Unit) =
-        runWine(listOf(exe.path) + args, display, exe.parentFile, extraEnv, onLine)
+    fun launchExe(exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), args: List<String> = emptyList(), onExit: (Int) -> Unit = {}, onLine: (String) -> Unit) =
+        runWine(listOf(exe.path) + args, display, exe.parentFile, extraEnv, onExit, onLine)
 
     companion object {
         /** Splits a Steam launch-arguments string, keeping "quoted parts" together. */

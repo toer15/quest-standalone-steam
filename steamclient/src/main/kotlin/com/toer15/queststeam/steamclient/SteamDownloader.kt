@@ -115,14 +115,15 @@ class SteamDownloader(private val session: SteamSession) {
             withContext(Dispatchers.IO) { runCatching { dd.close() } }
         }
         // Remember how Steam starts this game, so Play runs the right .exe (not just the biggest one).
-        runCatching { session.launchOption(appId) }.getOrNull()?.let { l ->
-            File(dest, LAUNCH_FILE).writeText("${l.executable}\n${l.arguments}\n${l.workingDir}\n")
+        runCatching { session.launchOptions(appId) }.getOrNull()?.let { o ->
+            val lines = listOfNotNull(o.flat ?: o.vr, o.vr).flatMap { listOf(it.executable, it.arguments, it.workingDir) }
+            if (lines.isNotEmpty()) File(dest, LAUNCH_FILE).writeText(lines.joinToString("\n", postfix = "\n"))
         }
     }
 
     companion object {
         const val STALL_MS = 3 * 60_000L
-        /** Written into the game folder: executable, arguments, working dir (one per line). */
+        /** Written into the game folder: executable, arguments, working dir (one per line); then the same for the VR entry, if any. */
         const val LAUNCH_FILE = ".qss-launch"
     }
 }
