@@ -40,7 +40,10 @@ jobs:
           chmod +x gradlew
           ./gradlew :steamclient:test :launcher:testDebugUnitTest :app:testQuestDebugUnitTest \
             -Dwinlator.apk=$HOME/.cache/qss/Winlator_11.2.apk -Dwinlator.smoke=1 \
-            :app:assembleQuestRelease :app:assemblePhoneRelease --no-daemon
+            :app:assembleQuestRelease :app:assemblePhoneRelease --no-daemon 2>&1 | tee build.log; status=${PIPESTATUS[0]}
+          # Short summary of compiler errors / failed tests at the end of the log.
+          grep -E "^e: |^w: .*error|FAILED|Test.*>" build.log | grep -v "^w: " | sort -u | head -60 || true
+          [ "$status" -eq 0 ] || exit "$status"
           cp app/build/outputs/apk/quest/release/app-quest-release.apk quest-steam-quest3.apk
           cp app/build/outputs/apk/phone/release/app-phone-release.apk quest-steam-phone.apk
       - uses: actions/upload-artifact@v4

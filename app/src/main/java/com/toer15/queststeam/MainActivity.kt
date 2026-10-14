@@ -142,7 +142,6 @@ private fun LauncherApp(onSignedOut: () -> Unit, onSteamSignIn: () -> Unit, vm: 
 
     // One CardActions per game, so cards don't recompose just because new lambdas were created.
     val actionsCache = remember { HashMap<Int, CardActions>() }
-    fun actionsFor(g: OwnedGame) = actionsCache.getOrPut(g.appId) { newActions(g) }
     fun newActions(g: OwnedGame) = CardActions(
         onDownload = { vm.downloads.download(g.appId) },
         onImport = { pendingImport = g.appId; pickFolder.launch(null) },
@@ -153,6 +152,7 @@ private fun LauncherApp(onSignedOut: () -> Unit, onSteamSignIn: () -> Unit, vm: 
         },
         onUninstall = { confirmUninstall = g },
     )
+    fun actionsFor(g: OwnedGame) = actionsCache.getOrPut(g.appId) { newActions(g) }
     fun stateOf(g: OwnedGame) = states[g.appId] ?: vm.downloads.stateOf(g.appId)
 
     Box(Modifier.fillMaxSize().steamBackdrop(), contentAlignment = Alignment.TopCenter) {
