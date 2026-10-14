@@ -96,7 +96,7 @@ jobs:
         with:
           tag_name: v0.12.3
           target_commitish: ${{ github.sha }}
-          name: "v0.12.3: Winlator's Box64/Wine settings, Copy log, clearer crash info"
+          name: "v0.12.3: Share/Copy log, Winlator's Box64/Wine settings, clearer crash info"
           prerelease: true
           files: |
             quest-steam-quest3.apk
@@ -104,7 +104,8 @@ jobs:
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
 
             **v0.12.3:**
-            - **Copy log** button (Runtime screen → Log, and on the "game didn't start" screen): copies the whole log so it can be pasted into a message.
+            - **Share log** button (Runtime screen → Log, and on the "game didn't start" screen): opens Android's share menu so the log can go straight to Messenger, Discord, email, Drive… The whole log is attached as a .txt file, with the important lines as the message text.
+            - **Copy log** button next to it: copies the whole log so it can be pasted into a message.
             - Games run with Winlator's own Box64 and Wine settings: its per-game fixes file, the safer "Intermediate" Box64 preset (helps games that crash on start, like Unity games), and Winlator's Wine settings (no DXGI device manager).
             - Crash info that means something: Unity's crash stack noise ("SymGetModuleInfo64 … DLL initialization failed") is filtered out of the game log, the Vulkan loader's chatter is gone, and DXVK's own log files (which GPU it found, why D3D11 failed) are added.
 

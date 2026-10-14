@@ -143,6 +143,8 @@ fun LaunchOverlay(stage: LaunchStage, appId: Int, log: String, onShowGame: () ->
                                         clipboard.setText(androidx.compose.ui.text.AnnotatedString(GameRunner.logForSharing()))
                                         copied = true
                                     }
+                                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                                    OverlayButton("Share log", primary = false) { runCatching { LogShare.share(ctx) } }
                                     OverlayButton("Close", primary = true, onClick = onDismiss)
                                 }
                             }

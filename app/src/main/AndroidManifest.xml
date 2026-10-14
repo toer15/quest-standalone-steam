@@ -42,5 +42,14 @@
         <service android:name=".download.DownloadService" android:exported="false" />
         <service android:name=".display.PlayingService" android:exported="false" />
         <activity android:name=".RuntimeActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shared_files" />
+        </provider>
     </application>
 </manifest>

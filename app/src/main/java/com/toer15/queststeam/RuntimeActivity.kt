@@ -444,6 +444,10 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                             copied = true
                         }
                         Spacer(Modifier.width(10.dp))
+                        SecondaryButton("Share log", enabled = log.isNotBlank()) {
+                            runCatching { com.toer15.queststeam.play.LogShare.share(ctx) }.onFailure { vm.appendLog("Couldn't share the log: ${it.message}") }
+                        }
+                        Spacer(Modifier.width(10.dp))
                         SecondaryButton("Clear log", enabled = log.isNotBlank()) { GameRunner.clearLog(); copied = false }
                     }
                     Spacer(Modifier.height(8.dp))
