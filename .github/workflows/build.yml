@@ -44,25 +44,34 @@ jobs:
           # Short summary of compiler errors / failed tests at the end of the log.
           grep -E "^e: |^w: .*error|FAILED|Test.*>" build.log | grep -v "^w: " | sort -u | head -60 || true
           [ "$status" -eq 0 ] || exit "$status"
-          apk=$(find app/build/outputs/apk -name "*release*.apk" | head -1)
-          echo "built $apk"
+          apk=app/build/outputs/apk/quest/release/app-quest-release.apk
+          [ -f "$apk" ] || { echo "Signed release APK missing (unsigned build?):"; find app/build/outputs/apk -name "*.apk"; exit 1; }
           cp "$apk" quest-steam-quest3.apk
+          # Never publish an APK Android would refuse: check the signature and that the package parses.
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$bt/apksigner" verify --verbose --print-certs quest-steam-quest3.apk | grep -E "Verified using|Signer #1 certificate SHA-256"
+          want=$(keytool -list -v -keystore app/sideload.jks -storepass queststeam -alias qss | sed -n 's/.*SHA256: //p' | tr -d ': ' | tr 'A-F' 'a-f')
+          "$bt/apksigner" verify --print-certs quest-steam-quest3.apk | grep -qi "SHA-256 digest: $want" \
+            || { echo "APK is not signed with the sideload key ($want)"; exit 1; }
+          "$bt/aapt2" dump badging quest-steam-quest3.apk | head -3
       - uses: actions/upload-artifact@v4
         with:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.6.1
+      - name: Publish release v0.6.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.6.1
+          tag_name: v0.6.2
           target_commitish: ${{ github.sha }}
-          name: "v0.6.1: runtime self-repair, delete runtime, Quest-only"
+          name: "v0.6.2: fixes install failure (unsigned APK)"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.6.2:** fixes "Install failed … pm install exited with code 1": v0.6.1 was published unsigned by mistake. This build is signed again (and CI now refuses to publish an unsigned APK).
 
             **v0.6.1:**
             - **"wine: could not load kernel32.dll" (exit code 53) fixed for every install:** before each launch the app now checks the Wine prefix and repairs it automatically, so a runtime downloaded by an older version works without reinstalling.
