@@ -20,6 +20,9 @@ object AppCleanup {
         val current = BuildConfig.VERSION_CODE
         if (prefs.getInt(KEY, -1) == current) return 0
         val freed = runCatching { clean(ctx) }.getOrDefault(0L)
+        // v0.11: games use the display built into the app; switch the old Termux:X11 default over.
+        val rt = ctx.getSharedPreferences("runtime", Context.MODE_PRIVATE)
+        if (rt.getString("display", null) == "127.0.0.1:0") rt.edit().putString("display", ":0").apply()
         prefs.edit().putInt(KEY, current).apply()
         return freed
     }

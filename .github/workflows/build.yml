@@ -80,17 +80,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.10.4
+      - name: Publish release v0.11.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.10.4
+          tag_name: v0.11.0
           target_commitish: ${{ github.sha }}
-          name: "v0.10.4: game window connects before the game starts, landscape 1280x720"
+          name: "v0.11.0: games play inside the app's own window (built-in display)"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.11.0:**
+            - **Games play inside the app's own window.** Press Play → the loading screen → the same window turns into the game. No second app, no separate window, nothing to install. When you leave the game (**✕ Leave game** or Back → **Leave game**), or the game closes, you're back in the app.
+            - The game display is now built into the app (Winlator's X server, made for the same Windows runtime and GPU driver), which is faster than going through the Termux:X11 app.
+            - In the game: point and pull the trigger to click, thumbstick/mouse wheel to scroll, two fingers for right click; Bluetooth controllers go straight to the game.
 
             **v0.10.4:**
             - The game window (Termux:X11) now opens and connects to the display **before** the game starts (it showed only its "X" logo, i.e. it never connected), then the loading screen comes back in front.

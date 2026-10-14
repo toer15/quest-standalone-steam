@@ -3,6 +3,7 @@ package com.toer15.queststeam.play
 import android.content.Context
 import com.toer15.queststeam.RuntimeActivity
 import com.toer15.queststeam.VrBridge
+import com.toer15.queststeam.display.BuiltInDisplay
 import com.toer15.queststeam.display.GameDisplay
 import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
@@ -69,7 +70,14 @@ object GameRunner {
 
     /** The display games use (Runtime screen setting; default = the built-in game display). */
     fun display(ctx: Context): String? =
-        (ctx.getSharedPreferences("runtime", 0).getString("display", GameDisplay.DISPLAY) ?: GameDisplay.DISPLAY).trim().ifBlank { null }
+        (ctx.getSharedPreferences("runtime", 0).getString("display", BuiltInDisplay.DISPLAY) ?: BuiltInDisplay.DISPLAY).trim().ifBlank { null }
+
+    @Volatile private var showNow = false
+
+    /** "Show game window" on the loading screen: switch to the game right away. */
+    fun showGameNow(ctx: Context) {
+        if (BuiltInDisplay.isRunning) showNow = true else GameDisplay.show(ctx)
+    }
 
     fun dismissFailure() { if (_stage.value is LaunchStage.Failed) _stage.value = LaunchStage.Idle }
 
@@ -131,12 +139,17 @@ object GameRunner {
         else pads.take(GamepadBridge.MAX).forEachIndexed { i, c -> appendLog("Controller ${i + 1}: ${c.model} → game") }
         val inVr = env.containsKey("QSS_VR_SHM")
 
-        // The game's window: start the display server ourselves (no Termux needed). VR games need it too.
-        val localDisplay = disp != null && (disp.startsWith("127.0.0.1") || disp.startsWith("localhost") || disp.startsWith(":"))
+        // The game's window. Default: the display built into this app (the game shows in this window).
+        // A Termux:X11 address (127.0.0.1:0) in the Runtime settings still uses that app instead.
+        val builtIn = BuiltInDisplay.isBuiltIn(disp)
+        val termux = !builtIn && disp != null && (disp.startsWith("127.0.0.1") || disp.startsWith("localhost"))
         var baseline = 0
-        if (localDisplay) {
+        if (builtIn) {
+            _stage.value = LaunchStage.Working(title, "Starting the game display…")
+            env.putAll(BuiltInDisplay.start(ctx, l.rootfs, ::appendLog))
+        } else if (termux) {
             if (!GameDisplay.isAppInstalled(ctx)) {
-                appendLog("The game display app (Termux:X11) isn't installed, so the game would have no window. Tap \"Install game display app\", then Play again.")
+                appendLog("The game display app (Termux:X11) isn't installed. Install it, or clear the display setting to use the built-in display.")
                 _needsDisplay.value = true
                 _stage.value = LaunchStage.Idle
                 return
@@ -144,8 +157,6 @@ object GameRunner {
             _stage.value = LaunchStage.Working(title, "Starting the game display…")
             val problem = withContext(Dispatchers.IO) { GameDisplay.ensureRunning(ctx, l.rootfs, ::appendLog) }
             if (problem != null) { appendLog(problem); _stage.value = LaunchStage.Failed(title, problem); return }
-            // Open the game window now so it connects to the display before the game draws, then bring
-            // the loading screen back in front of it.
             GameDisplay.configureApp(ctx)
             if (!inVr) {
                 GameDisplay.show(ctx)
@@ -159,7 +170,11 @@ object GameRunner {
         val argv = GameLauncher.splitArgs(args)
         if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
         val result = withContext(Dispatchers.IO) {
-            l.launchExe(exe, disp, env, argv, onExit = { code -> onGameExit(ctx, title, code) }, onLine = ::appendLog)
+            l.launchExe(
+                exe, if (builtIn) BuiltInDisplay.DISPLAY else disp, env, argv,
+                desktop = if (builtIn) BuiltInDisplay.SCREEN else null,
+                onExit = { code -> onGameExit(ctx, title, code) }, onLine = ::appendLog,
+            )
         }
         appendLog(result.message)
         if (!result.ok) { _stage.value = LaunchStage.Failed(title, result.message); return }
@@ -172,36 +187,50 @@ object GameRunner {
             _stage.value = LaunchStage.Running(title, vr = true)
             return
         }
-        if (localDisplay) {
-            // Loading screen until the game really has a window (Unity/Unreal games take a while under Box64).
+        if (builtIn || termux) {
+            // Loading screen until the game really draws its window (Unity/Unreal games take a while under Box64).
             val started = System.currentTimeMillis()
             var lastNote = 0L
+            showNow = false
             while (true) {
                 if (!isRunning) return // onGameExit reports it
+                if (showNow) break
                 val secs = (System.currentTimeMillis() - started) / 1000
-                val windows = withContext(Dispatchers.IO) { XProbe.visibleWindows() }
-                if ((windows?.size ?: 0) > baseline) {
-                    appendLog("Game window is open (${windows!!.joinToString { "${it.width}x${it.height}" }}).")
+                if (builtIn) {
+                    if (BuiltInDisplay.gameWindow.value) break
+                    if (secs - lastNote >= 15) {
+                        lastNote = secs
+                        val n = BuiltInDisplay.server?.windowManager?.rootWindow?.children?.size ?: 0
+                        appendLog("[waiting ${secs}s] the game hasn't drawn its window yet ($n windows on the display)")
+                    }
+                } else {
+                    val windows = withContext(Dispatchers.IO) { XProbe.visibleWindows() }
+                    if ((windows?.size ?: 0) > baseline) {
+                        appendLog("Game window is open (${windows!!.joinToString { "${it.width}x${it.height}" }}).")
+                        break
+                    }
+                    if (secs - lastNote >= 15) {
+                        lastNote = secs
+                        appendLog(
+                            if (windows == null) "[waiting ${secs}s] can't ask the game display for windows: ${XProbe.lastError}"
+                            else "[waiting ${secs}s] the game hasn't shown its window yet (${windows.size} visible, ${XProbe.lastTotal} windows in total on the display)"
+                        )
+                    }
+                }
+                if (secs >= (if (builtIn) BUILT_IN_TIMEOUT_S else WINDOW_TIMEOUT_S)) {
+                    appendLog("No game window after ${secs}s; showing the game display anyway.")
                     break
                 }
-                if (secs - lastNote >= 15) {
-                    lastNote = secs
-                    appendLog(
-                        if (windows == null) "[waiting ${secs}s] can't ask the game display for windows: ${XProbe.lastError}"
-                        else "[waiting ${secs}s] the game hasn't shown its window yet (${windows.size} visible, ${XProbe.lastTotal} windows in total on the display)"
-                    )
-                }
-                if (secs >= WINDOW_TIMEOUT_S) { appendLog("No game window detected after ${secs}s; showing the game display."); break }
                 _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s", detail = logTail(5), canShowWindow = secs >= 20)
-                delay(700)
+                delay(500)
             }
             _stage.value = LaunchStage.Opening(title)
-            delay(1200)
-            GameDisplay.show(ctx)
+            delay(900)
+            if (termux) GameDisplay.show(ctx)
         }
         _stage.value = LaunchStage.Running(title, vr = false)
-        if (pads.isNotEmpty() && localDisplay) {
-            // The game window gets focus; the relay badge keeps the controller going to the game.
+        if (termux && pads.isNotEmpty()) {
+            // The Termux:X11 window gets focus; the relay badge keeps the controller going to the game.
             if (ControllerRelay.canOverlay(ctx)) { delay(800); ControllerRelay.start(ctx) }
             else appendLog("To use the controller while the game window is in front, allow \"Display over other apps\" for Quest Steam.")
         }
@@ -211,6 +240,7 @@ object GameRunner {
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         scope.launch {
+            BuiltInDisplay.stop()
             _stage.value = when (_stage.value) {
                 is LaunchStage.Working, is LaunchStage.Opening ->
                     LaunchStage.Failed(title, "The game closed while starting (code $code). The log below shows why.")
@@ -222,6 +252,7 @@ object GameRunner {
     fun stop(ctx: Context) {
         job?.cancel()
         launcher?.stop()
+        BuiltInDisplay.stop()
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         _stage.value = LaunchStage.Idle
@@ -238,6 +269,8 @@ object GameRunner {
 
     /** After this, show the game's display even if no window was detected (it may be there after all). */
     private const val WINDOW_TIMEOUT_S = 90
+    /** The built-in display knows exactly when the game draws, so it can wait longer for slow first starts. */
+    private const val BUILT_IN_TIMEOUT_S = 300
 
     /** The latest lines from the game and the display (not our own waiting notes). */
     private fun logTail(n: Int) = _log.value.trimEnd().lines().filter { it.isNotBlank() && !it.startsWith("[waiting") }.takeLast(n).joinToString("\n")

@@ -152,7 +152,7 @@ private fun PanelContent(activity: Activity) {
         )
         LaunchOverlay(
             stage = stage, appId = 0, log = log,
-            onShowGame = { GameDisplay.show(activity) },
+            onShowGame = { GameRunner.showGameNow(activity) },
             onStop = { GameRunner.stop(activity) },
             onDismiss = { GameRunner.dismissFailure() },
         )

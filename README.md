@@ -7,9 +7,18 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.10.4/quest-steam-quest3.apk)
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.11.0/quest-steam-quest3.apk)
 
 Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
+
+## v0.11.0: the game inside the app's window
+
+Games now draw into an X server **built into the app**: Winlator's Java X server (LGPL-2.1, from
+[brunodev85/winlator](https://github.com/brunodev85/winlator) v10.1.0, `app/src/main/java/com/winlator`,
+native parts in `app/src/main/cpp/winlator`) with MIT-SHM (its SysV shared memory server), DRI3 and Present.
+The runtime's libxcb connects to `<rootfs>/tmp/.X11-unix/X0`; the game runs in Wine's virtual desktop
+(`explorer /desktop=shell,1280x720`) and `display/GameSurface.kt` shows it in the app's window with pointer
+input. Leaving the game returns to the library. Termux:X11 (`127.0.0.1:0` in the Runtime screen) remains an option.
 
 ## v0.10.0: loading screen, the app in VR, cleanup after updates
 

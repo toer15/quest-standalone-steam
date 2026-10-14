@@ -52,8 +52,26 @@ class GameLauncher(ctx: Context) {
         }
     }
 
-    fun launchExe(exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), args: List<String> = emptyList(), onExit: (Int) -> Unit = {}, onLine: (String) -> Unit) =
-        runWine(listOf(exe.path) + args, display, exe.parentFile, extraEnv, onExit, onLine)
+    /**
+     * Starts [exe]. With [desktop] ("1280x720") it runs inside Wine's virtual desktop, like Winlator:
+     * one screen-sized window that games draw into, so the game fills the game display.
+     */
+    fun launchExe(
+        exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), args: List<String> = emptyList(),
+        desktop: String? = null, onExit: (Int) -> Unit = {}, onLine: (String) -> Unit,
+    ): LaunchResult {
+        // explorer starts the game with Windows' CreateProcess, which needs a Windows path (C:\games\…).
+        val cmd = if (desktop != null) listOf("explorer", "/desktop=shell,$desktop", windowsPath(exe)) + args else listOf(exe.path) + args
+        return runWine(cmd, display, exe.parentFile, extraEnv, onExit, onLine)
+    }
+
+    /** "…/.wine/drive_c/games/1/Game.exe" -> "C:\\games\\1\\Game.exe"; outside drive_c -> "Z:" + path in the runtime. */
+    fun windowsPath(f: File): String {
+        val driveC = File(prefix, "drive_c").absolutePath.trimEnd('/') + "/"
+        val p = f.absolutePath
+        return if (p.startsWith(driveC)) "C:\\" + p.removePrefix(driveC).replace('/', '\\')
+        else "Z:" + p.removePrefix(rootfs.absolutePath).replace('/', '\\')
+    }
 
     companion object {
         /** Splits a Steam launch-arguments string, keeping "quoted parts" together. */

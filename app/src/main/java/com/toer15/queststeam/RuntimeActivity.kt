@@ -7,7 +7,11 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
+import com.toer15.queststeam.display.BuiltInDisplay
 import com.toer15.queststeam.display.GameDisplay
+import com.toer15.queststeam.display.GameSurface
+import com.toer15.queststeam.display.LeaveGameDialog
+import com.toer15.queststeam.display.gameKeyEvent
 import com.toer15.queststeam.display.GameDisplayRow
 import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
@@ -105,8 +109,23 @@ class RuntimeActivity : ComponentActivity() {
     private val vm by lazy { androidx.lifecycle.ViewModelProvider(this)[RuntimeViewModel::class.java] }
 
     // While a game runs and this screen is in front, the controller goes to the game.
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        (vm.gameRunning && GamepadBridge.onKey(event)) || super.dispatchKeyEvent(event)
+    // While a game runs: controller → game (XInput); with the game on screen, keys → the game's keyboard
+    // (Back still asks "Leave game?").
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (!vm.gameRunning) return super.dispatchKeyEvent(event)
+        val gameOnScreen = BuiltInDisplay.view?.isAttachedToWindow == true
+        return (if (gameOnScreen) gameKeyEvent(event) else GamepadBridge.onKey(event)) || super.dispatchKeyEvent(event)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        BuiltInDisplay.view?.let { if (it.isAttachedToWindow) it.onPause() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        BuiltInDisplay.view?.let { if (it.isAttachedToWindow) it.onResume() }
+    }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
         (vm.gameRunning && GamepadBridge.onMotion(event)) || super.dispatchGenericMotionEvent(event)
@@ -144,7 +163,7 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     val stage: StateFlow<LaunchStage> = GameRunner.stage
 
     var display: String
-        get() = prefs.getString("display", GameDisplay.DISPLAY) ?: GameDisplay.DISPLAY
+        get() = prefs.getString("display", BuiltInDisplay.DISPLAY) ?: BuiltInDisplay.DISPLAY
         set(v) { prefs.edit().putString("display", v).apply() }
 
     /** Set when a game can't start because the game display app isn't installed (shows the install popup). */
@@ -252,6 +271,27 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: String, appId: Int, onClose: () -> Unit, vm: RuntimeViewModel = viewModel()) {
+    // While the game runs on the built-in display, this window shows the game itself; when the game
+    // ends (or you leave it) you're back in the app: the library if you came from a game card.
+    val playStage by vm.stage.collectAsState()
+    val gameView by BuiltInDisplay.viewState.collectAsState()
+    var askLeave by remember { mutableStateOf(false) }
+    var wasPlaying by remember { mutableStateOf(false) }
+    LaunchedEffect(playStage) {
+        if (playStage is LaunchStage.Running || playStage is LaunchStage.Opening) wasPlaying = true
+        else if (playStage == LaunchStage.Idle && wasPlaying && exePath != null) onClose()
+    }
+    val inGame = gameView != null && (playStage as? LaunchStage.Running)?.vr == false
+    androidx.activity.compose.BackHandler(enabled = inGame) { askLeave = true }
+    if (inGame) {
+        GameSurface(gameView!!, onLeave = { askLeave = true })
+        if (askLeave) LeaveGameDialog(
+            title ?: "the game",
+            onStay = { askLeave = false },
+            onLeave = { askLeave = false; vm.stop(); if (exePath != null) onClose() },
+        )
+        return
+    }
     val ctx = LocalContext.current
     val ui = LocalDeviceUi.current
     val installed by vm.installed.collectAsState()
@@ -339,7 +379,10 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                 Card {
                     Text("Game display", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(10.dp))
-                    GameDisplayRow(onMessage = vm::appendLog)
+                    if (BuiltInDisplay.isBuiltIn(display.trim())) {
+                        Text("✓ Built into this app: games show right here in this window.", color = SteamColors.GreenBright, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Nothing to install. Point and pull the trigger to click in a game; Back or ✕ Leave game returns to the app.", color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    } else GameDisplayRow(onMessage = vm::appendLog)
                 }
 
                 // Controllers: the exact model when connected, and the permission for flat games.
@@ -376,7 +419,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                         value = display,
                         onValueChange = { display = it; vm.display = it },
                         singleLine = true,
-                        label = { Text("Game window display (default 127.0.0.1:0 = built-in display; blank = none)") },
+                        label = { Text("Game display (:0 = built into this app; 127.0.0.1:0 = the Termux:X11 app)") },
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -411,15 +454,10 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
     val fromCard = exePath != null
     LaunchOverlay(
         stage = stage, appId = appId, log = log,
-        onShowGame = { GameDisplay.show(ctx) },
+        onShowGame = { GameRunner.showGameNow(ctx) },
         onStop = { vm.stop(); if (fromCard) onClose() },
         onDismiss = { GameRunner.dismissFailure(); if (fromCard) onClose() },
     )
-    var wasPlaying by remember { mutableStateOf(false) }
-    LaunchedEffect(stage) {
-        if (stage is LaunchStage.Running || stage is LaunchStage.Opening) wasPlaying = true
-        else if (stage == LaunchStage.Idle && wasPlaying && fromCard) onClose()
-    }
 
     // A game was started without the display app: install it here, then play.
     val needsDisplay by vm.needsDisplay.collectAsState()
