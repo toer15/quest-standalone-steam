@@ -24,4 +24,8 @@ dependencies {
     testImplementation("org.bouncycastle:bcprov-jdk18on:1.80")
 }
 
-tasks.test { timeout.set(Duration.ofMinutes(5)) }
+tasks.test {
+    timeout.set(Duration.ofMinutes(15))
+    systemProperty("steam.live", System.getProperty("steam.live") ?: "")
+    testLogging { showStandardStreams = true; events("passed", "failed", "skipped") }
+}

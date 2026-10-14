@@ -114,10 +114,16 @@ class SteamDownloader(private val session: SteamSession) {
         } finally {
             withContext(Dispatchers.IO) { runCatching { dd.close() } }
         }
+        // Remember how Steam starts this game, so Play runs the right .exe (not just the biggest one).
+        runCatching { session.launchOption(appId) }.getOrNull()?.let { l ->
+            File(dest, LAUNCH_FILE).writeText("${l.executable}\n${l.arguments}\n${l.workingDir}\n")
+        }
     }
 
     companion object {
         const val STALL_MS = 3 * 60_000L
+        /** Written into the game folder: executable, arguments, working dir (one per line). */
+        const val LAUNCH_FILE = ".qss-launch"
     }
 }
 

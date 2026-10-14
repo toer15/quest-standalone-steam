@@ -80,6 +80,7 @@ class RuntimeActivity : ComponentActivity() {
     companion object {
         const val EXTRA_EXE = "exe"
         const val EXTRA_TITLE = "title"
+        const val EXTRA_ARGS = "args"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,7 +89,8 @@ class RuntimeActivity : ComponentActivity() {
         window.navigationBarColor = 0xFF070B10.toInt()
         val exe = intent.getStringExtra(EXTRA_EXE)
         val title = intent.getStringExtra(EXTRA_TITLE)
-        setContent { SteamTheme { RuntimeScreen(title, exe, onClose = { finish() }) } }
+        val args = intent.getStringExtra(EXTRA_ARGS).orEmpty()
+        setContent { SteamTheme { RuntimeScreen(title, exe, args, onClose = { finish() }) } }
     }
 }
 
@@ -171,7 +173,7 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
      * Starts a game. On Quest, a SteamVR game gets the OpenVR bridge: its openvr_api.dll is swapped
      * for ours, the shared memory is created, and the headset switches to the immersive VR view.
      */
-    fun launchGame(ctx: Context, exe: File) {
+    fun launchGame(ctx: Context, exe: File, args: String = "") {
         viewModelScope.launch {
             val disp = display.trim().ifBlank { null }
             val gameDir = gameRoot(exe)
@@ -190,7 +192,9 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             if (disp != null && disp.startsWith("127.0.0.1")) openTermuxX11(ctx)
-            val result = withContext(Dispatchers.IO) { launcher.launchExe(exe, disp, env, onLine = ::appendLog) }
+            val argv = GameLauncher.splitArgs(args)
+            if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
+            val result = withContext(Dispatchers.IO) { launcher.launchExe(exe, disp, env, argv, onLine = ::appendLog) }
             appendLog(result.message)
             if (result.ok && env.containsKey("QSS_VR_SHM")) {
                 delay(2500)
@@ -200,15 +204,15 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Play from a game card: downloads the runtime first if needed, once. */
-    fun playOnce(ctx: Context, exePath: String) {
+    fun playOnce(ctx: Context, exePath: String, args: String) {
         if (startedPlay) return
         startedPlay = true
         val exe = File(exePath)
         if (installer.isInstalled) {
-            launchGame(ctx, exe)
+            launchGame(ctx, exe, args)
         } else {
             appendLog("First launch: downloading the Windows runtime (Box64 + Wine, ~157 MB)…")
-            install { launchGame(ctx, exe) }
+            install { launchGame(ctx, exe, args) }
         }
     }
 
@@ -263,7 +267,7 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RuntimeScreen(title: String?, exePath: String?, onClose: () -> Unit, vm: RuntimeViewModel = viewModel()) {
+private fun RuntimeScreen(title: String?, exePath: String?, args: String, onClose: () -> Unit, vm: RuntimeViewModel = viewModel()) {
     val ctx = LocalContext.current
     val ui = LocalDeviceUi.current
     val installed by vm.installed.collectAsState()
@@ -283,7 +287,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, onClose: () -> Unit,
     }
 
     LaunchedEffect(exePath) {
-        if (exePath != null) vm.playOnce(ctx, exePath)
+        if (exePath != null) vm.playOnce(ctx, exePath, args)
         else if (title != null) vm.appendLog("No .exe found for this game.")
     }
 

@@ -3,6 +3,7 @@ package com.toer15.queststeam.download
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import com.toer15.queststeam.CrashGuard
 import com.toer15.queststeam.launcher.GameLauncher
 import com.toer15.queststeam.steam.SteamAccount
 import kotlinx.coroutines.CoroutineScope
@@ -94,6 +95,21 @@ class DownloadManager private constructor(private val ctx: Context) {
 
     var primarySource: DownloadSource = SteamDepotSource()
 
+    init {
+        // An error on a downloader/Steam thread would otherwise close the app: stop the download and show why.
+        CrashGuard.onBackgroundError = { msg ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post { failActive("Download stopped: $msg. Tap Retry download to continue.") }
+        }
+    }
+
+    private fun failActive(message: String) {
+        val active = jobs.filterValues { it.isActive }.keys.toList()
+        for (id in active) {
+            jobs.remove(id)?.cancel()
+            set(id, GameState.Failed(message))
+        }
+    }
+
     fun dirFor(appId: Int) = File(launcher.gamesDir, appId.toString())
     private fun marker(appId: Int) = File(dirFor(appId), ".qss-installed")
 
@@ -151,7 +167,23 @@ class DownloadManager private constructor(private val ctx: Context) {
 
     fun uninstall(appId: Int) { cancel(appId) }
 
-    fun mainExe(appId: Int): File? = launcher.findExes(dirFor(appId)).firstOrNull()
+    /** The .exe Steam itself starts (saved at download time), else the largest .exe in the game folder. */
+    fun mainExe(appId: Int): File? {
+        val dir = dirFor(appId)
+        launchLines(appId)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let { rel ->
+            val f = File(dir, rel)
+            if (f.isFile) return f
+            // Steam paths are case-insensitive on Windows.
+            dir.walkTopDown().firstOrNull { it.isFile && it.relativeTo(dir).path.equals(rel, ignoreCase = true) }?.let { return it }
+        }
+        return launcher.findExes(dir).firstOrNull()
+    }
+
+    /** Launch arguments Steam uses for this game ("" if none). */
+    fun launchArgs(appId: Int): String = launchLines(appId)?.getOrNull(1).orEmpty()
+
+    private fun launchLines(appId: Int): List<String>? =
+        File(dirFor(appId), com.toer15.queststeam.steamclient.SteamDownloader.LAUNCH_FILE).takeIf { it.isFile }?.readLines()
 
     private fun set(appId: Int, s: GameState) = _states.update { it + (appId to s) }
 }

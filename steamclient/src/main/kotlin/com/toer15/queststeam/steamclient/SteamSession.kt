@@ -24,6 +24,7 @@ import `in`.dragonbra.javasteam.steam.steamclient.callbacks.DisconnectedCallback
 import `in`.dragonbra.javasteam.steam.steamclient.configuration.SteamConfiguration
 import `in`.dragonbra.javasteam.types.KeyValue
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -80,7 +81,13 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
     val savedLogin: SavedLogin? get() = store.load()
     val isSignedIn: Boolean get() = store.load() != null
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Last error from a background Steam task (also printed); never thrown, so it can't crash the app. */
+    @Volatile var lastBackgroundError: Throwable? = null
+        private set
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
+        lastBackgroundError = e
+        System.err.println("[steam] background error: $e")
+    })
     private val lock = Mutex()
     @Volatile private var client: SteamClient? = null
     private var pump: Job? = null
@@ -105,7 +112,15 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
         m.subscribe(LicenseListCallback::class.java) { if (it.result == EResult.OK) licenses.complete(it.licenseList) }
         m.subscribe(AccountInfoCallback::class.java) { _personaName.value = it.personaName }
         pump?.cancel()
-        pump = scope.launch { while (isActive) m.runWaitCallbackAsync() }
+        pump = scope.launch {
+            while (isActive) {
+                // One bad callback must not stop (or crash) the connection's message pump.
+                try { m.runWaitCallbackAsync() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) {
+                    lastBackgroundError = e
+                    System.err.println("[steam] callback error: $e")
+                }
+            }
+        }
         return c
     }
 
@@ -167,10 +182,32 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
         lock.withLock {
             val c = client
             if (c != null && c.isConnected && _status.value == Status.Online) return@withLock c
+            if (anonymous) throw SteamLoginException("Anonymous Steam session was disconnected.")
             val login = store.load() ?: throw SteamLoginException("Sign in to Steam first.", needsNewLogin = true)
             logOn(login.accountName, login.refreshToken)
         }
     }
+
+    /**
+     * Anonymous logon (like `steamcmd +login anonymous`): no account, only free/anonymous content.
+     * Used by the live download test in CI.
+     */
+    suspend fun signInAnonymous(): SteamClient = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val c = connect()
+            _status.value = Status.SigningIn
+            licenses = CompletableDeferred(emptyList())
+            val waiter = CompletableDeferred<LoggedOnCallback>().also { loggedOn = it }
+            c.getHandler(SteamUser::class.java)!!.logOnAnonymous()
+            val cb = withTimeout(LOGON_TIMEOUT_MS) { waiter.await() }
+            if (cb.result != EResult.OK) throw SteamLoginException("Anonymous logon failed (${cb.result})")
+            anonymous = true
+            _status.value = Status.Online
+            c
+        }
+    }
+
+    @Volatile private var anonymous = false
 
     // endregion
 
@@ -270,6 +307,15 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
         fromService.ifEmpty { ownedFromLicenses(c) }
     }
 
+    /** The Windows launch option Steam uses for [appId] (executable + arguments), from PICS app info. */
+    suspend fun launchOption(appId: Int): PicsParse.Launch? = withContext(Dispatchers.IO) {
+        val c = ensureOnline()
+        val apps = c.getHandler(SteamApps::class.java)!!
+        val token = runCatching { withTimeout(PICS_TIMEOUT_MS) { apps.picsGetAccessTokens(listOf(appId), emptyList()).await() }.appTokens[appId] }.getOrNull() ?: 0L
+        val rs = withTimeout(PICS_TIMEOUT_MS) { apps.picsGetProductInfo(listOf(PICSRequest(appId, token)), emptyList()).await() }
+        rs.results.firstNotNullOfOrNull { it.apps[appId] }?.let { PicsParse.windowsLaunch(it.keyValues) }
+    }
+
     private suspend fun ownedFromLicenses(c: SteamClient): List<OwnedApp> {
         val apps = c.getHandler(SteamApps::class.java)!!
         val lic = licenses()
@@ -336,5 +382,25 @@ object PicsParse {
         val name = common["name"].asString()
         if (type !in PLAYABLE_TYPES || name.isNullOrBlank()) return null
         return OwnedApp(appId, name, 0)
+    }
+
+    data class Launch(val executable: String, val arguments: String, val workingDir: String)
+
+    /**
+     * Picks the launch entry Steam would use on Windows: config/launch/<n> with oslist containing
+     * "windows" (or no oslist), preferring the default type and skipping betas and tool entries.
+     */
+    fun windowsLaunch(app: KeyValue): Launch? {
+        val entries = app["config"]["launch"].children.mapNotNull { e ->
+            val exe = e["executable"].asString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val os = e["config"]["oslist"].asString().orEmpty()
+            if (os.isNotBlank() && !os.split(',').any { it.trim() == "windows" }) return@mapNotNull null
+            if (e["config"]["betakey"].asString()?.isNotBlank() == true) return@mapNotNull null
+            if (!exe.endsWith(".exe", true) && !exe.endsWith(".bat", true)) return@mapNotNull null
+            val type = e["type"].asString().orEmpty().lowercase()
+            val rank = when (type) { "", "default", "none" -> 0; "option1" -> 1; "vr" -> 2; else -> 3 }
+            rank to Launch(exe.replace('\\', '/'), e["arguments"].asString().orEmpty(), e["workingdir"].asString().orEmpty().replace('\\', '/'))
+        }
+        return entries.minByOrNull { it.first }?.second
     }
 }

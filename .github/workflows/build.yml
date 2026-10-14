@@ -39,7 +39,7 @@ jobs:
           [ -f gradle/wrapper/gradle-wrapper.jar ] || gradle wrapper --gradle-version 8.7
           chmod +x gradlew
           ./gradlew :steamclient:test :launcher:testDebugUnitTest :app:testQuestDebugUnitTest \
-            -Dwinlator.apk=$HOME/.cache/qss/Winlator_11.2.apk -Dwinlator.smoke=1 \
+            -Dwinlator.apk=$HOME/.cache/qss/Winlator_11.2.apk -Dwinlator.smoke=1 -Dsteam.live=1 \
             :app:assembleQuestRelease --no-daemon 2>&1 | tee build.log; status=${PIPESTATUS[0]}
           # Short summary of compiler errors / failed tests at the end of the log.
           grep -E "^e: |^w: .*error|FAILED|Test.*>" build.log | grep -v "^w: " | sort -u | head -60 || true
@@ -59,17 +59,23 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.6.2
+      - name: Publish release v0.7.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.6.2
+          tag_name: v0.7.0
           target_commitish: ${{ github.sha }}
-          name: "v0.6.2: fixes install failure (unsigned APK)"
+          name: "v0.7.0: downloads no longer close the app, Home filters, play with Steam launch options"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.7.0:**
+            - **Download no longer closes the app.** An error while downloading now stops that download and shows the reason on the card, with **Retry download**. If the app ever does close unexpectedly, the next start shows the crash report with a **Copy** button.
+            - The download system is now tested for real on every build: CI signs in to Steam (anonymously) and downloads an actual Steam app from Steam's CDN with the same code the app uses.
+            - **Play** starts the game the way Steam does, using Steam's launch option (the right .exe and its arguments) instead of guessing the biggest .exe.
+            - **Home → Filters** (top right) opens a side panel with check boxes: VR games only, installed only, not installed only, played games only, genres, and sort order.
 
             **v0.6.2:** fixes "Install failed … pm install exited with code 1": v0.6.1 was published unsigned by mistake. This build is signed again (and CI now refuses to publish an unsigned APK).
 

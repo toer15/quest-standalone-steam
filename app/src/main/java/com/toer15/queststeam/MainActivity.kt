@@ -36,6 +36,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -87,6 +90,8 @@ import com.toer15.queststeam.steam.OwnedGame
 import com.toer15.queststeam.steam.SessionStore
 import com.toer15.queststeam.steam.SteamAccount
 import com.toer15.queststeam.ui.LocalDeviceUi
+import com.toer15.queststeam.ui.FilterPanel
+import com.toer15.queststeam.ui.HomeFilters
 import com.toer15.queststeam.update.UpdateDialog
 import com.toer15.queststeam.update.UpdateUi
 import com.toer15.queststeam.update.UpdateViewModel
@@ -143,6 +148,9 @@ private fun LauncherApp(
     var pendingImport by remember { mutableStateOf<Int?>(null) }
     var confirmUninstall by remember { mutableStateOf<OwnedGame?>(null) }
     var showKey by remember { mutableStateOf(false) }
+    var lastCrash by remember { mutableStateOf(CrashGuard.lastCrash()) }
+    var homeFilters by remember { mutableStateOf(HomeFilters()) }
+    var filtersOpen by remember { mutableStateOf(false) }
 
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         val id = pendingImport; pendingImport = null
@@ -157,7 +165,12 @@ private fun LauncherApp(
         onCancel = { vm.downloads.cancel(g.appId) },
         onPlay = {
             val exe = vm.downloads.mainExe(g.appId)
-            ctx.startActivity(Intent(ctx, RuntimeActivity::class.java).putExtra(RuntimeActivity.EXTRA_EXE, exe?.path).putExtra(RuntimeActivity.EXTRA_TITLE, g.name))
+            ctx.startActivity(
+                Intent(ctx, RuntimeActivity::class.java)
+                    .putExtra(RuntimeActivity.EXTRA_EXE, exe?.path)
+                    .putExtra(RuntimeActivity.EXTRA_ARGS, vm.downloads.launchArgs(g.appId))
+                    .putExtra(RuntimeActivity.EXTRA_TITLE, g.name)
+            )
         },
         onUninstall = { confirmUninstall = g },
     )
@@ -190,11 +203,23 @@ private fun LauncherApp(
                 label = "tabs",
             ) { current ->
                 when (current) {
-                    Tab.Home -> HomeScreen(games, ::stateOf, ::actionsFor, onBrowse = { tab = Tab.Games }, onSync = vm::sync, onCheckUpdates = updates::check)
+                    Tab.Home -> HomeScreen(
+                        games, ::stateOf, ::actionsFor, onBrowse = { tab = Tab.Games }, onSync = vm::sync,
+                        onCheckUpdates = updates::check, filters = homeFilters, onOpenFilters = { filtersOpen = true },
+                    )
                     Tab.Games -> GamesScreen(games, ::stateOf, ::actionsFor)
                 }
             }
         }
+        val allGenres = remember(games) { games.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
+        FilterPanel(
+            visible = filtersOpen && tab == Tab.Home,
+            filters = homeFilters,
+            genres = allGenres,
+            matching = homeFilters.apply(games) { stateOf(it) is GameState.Installed }.size,
+            onChange = { homeFilters = it },
+            onClose = { filtersOpen = false },
+        )
     }
 
     UpdateDialog(
@@ -205,6 +230,28 @@ private fun LauncherApp(
         onDismiss = updates::dismiss,
         onRetry = { (updateState as? UpdateUi.Failed)?.release?.let(updates::updateNow) ?: updates.check() },
     )
+
+    lastCrash?.let { report ->
+        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+        AlertDialog(
+            onDismissRequest = { CrashGuard.clearLastCrash(); lastCrash = null },
+            title = { Text("The app closed unexpectedly last time") },
+            text = {
+                Column {
+                    Text("Copy this and send it to the developer so it can be fixed:", fontSize = 13.sp)
+                    Text(
+                        report.take(4000), fontSize = 11.sp, lineHeight = 14.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 8.dp).heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(report)) }) { Text("Copy") }
+            },
+            dismissButton = { TextButton(onClick = { CrashGuard.clearLastCrash(); lastCrash = null }) { Text("Close") } },
+        )
+    }
 
     if (showKey) ApiKeyDialog(vm.apiKey.orEmpty(), onSave = { vm.apiKey = it; showKey = false }, onDismiss = { showKey = false })
 
@@ -283,10 +330,13 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String
 
 @Composable
 private fun HomeScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameState, actionsFor: (OwnedGame) -> CardActions,
-                       onBrowse: () -> Unit, onSync: () -> Unit, onCheckUpdates: () -> Unit) {
-    val installed = games.filter { stateOf(it) is GameState.Installed || stateOf(it) is GameState.Downloading }
-    val recent = games.sortedByDescending { it.playtimeMinutes }.take(12)
-    val hero = games.maxByOrNull { it.playtimeMinutes }
+                       onBrowse: () -> Unit, onSync: () -> Unit, onCheckUpdates: () -> Unit,
+                       filters: HomeFilters, onOpenFilters: () -> Unit) {
+    // Everything on Home follows the filter panel.
+    val shown = filters.apply(games) { stateOf(it) is GameState.Installed }
+    val installed = shown.filter { stateOf(it) is GameState.Installed || stateOf(it) is GameState.Downloading }
+    val recent = shown.sortedByDescending { it.playtimeMinutes }.take(12)
+    val hero = shown.maxByOrNull { it.playtimeMinutes }
     val ui = LocalDeviceUi.current
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
         item {
@@ -295,6 +345,17 @@ private fun HomeScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameState
                     Text("Welcome back", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = ui.welcomeText, letterSpacing = (-0.4).sp)
                     Text(DeviceMode.label(androidx.compose.ui.platform.LocalContext.current), color = SteamColors.Muted, fontSize = 13.sp)
                 }
+                // Filters: side panel with check boxes (VR only, installed, genres, sort).
+                Text(
+                    if (filters.activeCount > 0) "☰  Filters (${filters.activeCount})" else "☰  Filters",
+                    color = if (filters.activeCount > 0) Color(0xFF0E141B) else SteamColors.Text,
+                    fontSize = if (ui.isQuest) 16.sp else 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clip(RoundedCornerShape(50))
+                        .background(if (filters.activeCount > 0) SteamColors.Accent else Color.White.copy(alpha = 0.07f))
+                        .clickable(onClick = onOpenFilters)
+                        .padding(horizontal = if (ui.isQuest) 18.dp else 12.dp, vertical = if (ui.isQuest) 12.dp else 8.dp),
+                )
+                Spacer(Modifier.width(10.dp))
                 // Check for updates: opens the update popup.
                 Text(
                     "⟳  Check for updates",
@@ -313,10 +374,13 @@ private fun HomeScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameState
                     colors = ButtonDefaults.buttonColors(containerColor = SteamColors.Accent, contentColor = Color(0xFF0E141B)),
                 ) { Text("Sync Steam games", fontWeight = FontWeight.Bold) }
             }
-        } else if (hero != null) {
+        } else if (hero == null) {
+            item { Text("No games match the filters.", color = SteamColors.Muted, modifier = Modifier.padding(horizontal = ui.gutter, vertical = 12.dp)) }
+        } else {
             item { HeroBanner(hero, stateOf(hero), actionsFor(hero)) }
-            item { Shelf("Installed & downloading", installed, stateOf, actionsFor, empty = "Nothing installed yet — open Games and tap a card.") }
+            item { Shelf("Installed & downloading", installed, stateOf, actionsFor, empty = "Nothing installed yet — tap a game card and Download.") }
             item { Shelf("Most played", recent, stateOf, actionsFor) }
+            item { Shelf("Your games · ${shown.size}", shown, stateOf, actionsFor, empty = "No games match the filters.") }
             item {
                 TextButton(onClick = onBrowse, modifier = Modifier.padding(horizontal = 12.dp)) {
                     Text("Browse all ${games.size} games →", fontSize = 15.sp)

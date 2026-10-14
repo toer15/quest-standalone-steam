@@ -60,6 +60,29 @@ class SteamClientLogicTest {
         assertNull(PicsParse.playableApp(4, app("Game", "")))
     }
 
+    @Test fun picksWindowsLaunchOption() {
+        fun entry(n: String, exe: String, os: String? = null, type: String? = null, beta: String? = null) = KeyValue(n).apply {
+            children.add(KeyValue("executable", exe))
+            if (type != null) children.add(KeyValue("type", type))
+            children.add(KeyValue("config").apply {
+                if (os != null) children.add(KeyValue("oslist", os))
+                if (beta != null) children.add(KeyValue("betakey", beta))
+            })
+        }
+        val app = KeyValue("appinfo").apply {
+            children.add(KeyValue("config").apply {
+                children.add(KeyValue("launch").apply {
+                    children.add(entry("0", "Game.x86_64", os = "linux"))
+                    children.add(entry("1", "bin\\win64\\Game.exe", os = "windows", type = "default"))
+                    children.add(entry("2", "Game_beta.exe", os = "windows", beta = "beta"))
+                    children.add(entry("3", "Tools.exe", os = "windows", type = "option2"))
+                })
+            })
+        }
+        assertEquals("bin/win64/Game.exe", PicsParse.windowsLaunch(app)?.executable)
+        assertNull(PicsParse.windowsLaunch(KeyValue("empty")))
+    }
+
     @Test fun guardPromptAdapterBridgesToFutures() = runBlocking {
         val prompt = object : GuardPrompt {
             override suspend fun deviceCode(previousWasWrong: Boolean) = if (previousWasWrong) " 22222 " else "11111"
@@ -106,6 +129,35 @@ class SteamClientLogicTest {
         val item = AppItem(appId = 620, installDirectory = "/tmp/x", os = "windows", osArch = "64", language = "english")
         assertEquals("windows", item.os)
         dd.close()
+    }
+
+    /**
+     * Real download from Steam's CDN with the app's own code: anonymous logon, then the Windows
+     * depots of app 1007 (Steamworks SDK Redist). Run with -Dsteam.live=1 (CI does).
+     */
+    @Test fun liveAnonymousDownloadFromSteam() = runBlocking<Unit> {
+        org.junit.Assume.assumeTrue("set -Dsteam.live=1", System.getProperty("steam.live") == "1")
+        val store = object : LoginStore {
+            override fun load(): SavedLogin? = null
+            override fun save(login: SavedLogin?) {}
+        }
+        val session = SteamSession(store)
+        session.signInAnonymous()
+        val dir = java.nio.file.Files.createTempDirectory("qss-dl").toFile()
+        var last = 0L to -1L
+        val phases = mutableListOf<String>()
+        kotlinx.coroutines.withTimeout(10 * 60_000L) {
+            SteamDownloader(session).download(1007, dir, onStatus = { if (phases.lastOrNull() != it) phases += it }) { d, t -> last = d to t }
+        }
+        val files = dir.walkTopDown().filter { it.isFile && !it.path.contains(".DepotDownloader") }.toList()
+        println("phases: $phases")
+        println("progress: ${last.first} / ${last.second}")
+        files.forEach { println("  ${it.relativeTo(dir)} ${it.length()}") }
+        assertTrue("downloaded some files", files.isNotEmpty())
+        assertTrue("Windows DLLs present", files.any { it.name.endsWith(".dll", true) })
+        assertTrue("progress reached the end", last.second > 0 && last.first == last.second)
+        println("launch file: " + java.io.File(dir, SteamDownloader.LAUNCH_FILE).takeIf { it.exists() }?.readText())
+        dir.deleteRecursively()
     }
 
     @Test fun friendlyErrors() {

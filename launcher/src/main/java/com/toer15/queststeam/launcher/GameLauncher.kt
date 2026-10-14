@@ -50,8 +50,27 @@ class GameLauncher(ctx: Context) {
         }
     }
 
-    fun launchExe(exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), onLine: (String) -> Unit) =
-        runWine(listOf(exe.path), display, exe.parentFile, extraEnv, onLine)
+    fun launchExe(exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), args: List<String> = emptyList(), onLine: (String) -> Unit) =
+        runWine(listOf(exe.path) + args, display, exe.parentFile, extraEnv, onLine)
+
+    companion object {
+        /** Splits a Steam launch-arguments string, keeping "quoted parts" together. */
+        fun splitArgs(s: String): List<String> {
+            val out = mutableListOf<String>()
+            val cur = StringBuilder()
+            var quoted = false
+            var has = false
+            for (c in s) {
+                when {
+                    c == '"' -> { quoted = !quoted; has = true }
+                    c.isWhitespace() && !quoted -> { if (has) { out += cur.toString(); cur.clear(); has = false } }
+                    else -> { cur.append(c); has = true }
+                }
+            }
+            if (has) out += cur.toString()
+            return out
+        }
+    }
 
     /** Sanity check that needs no display. */
     fun smokeTest(onLine: (String) -> Unit) = runWine(listOf("cmd", "/c", "ver"), null, null, onLine = onLine)
