@@ -10,7 +10,7 @@
         android:allowBackup="false"
         android:extractNativeLibs="true"
         android:label="Quest Standalone Steam"
-        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+        android:theme="@style/Theme.AppCompat.NoActionBar">
 
         <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s|quest2|questpro" />
 
@@ -21,7 +21,6 @@
             </intent-filter>
         </activity>
         <activity android:name=".LoginActivity" android:exported="false" />
-        <activity android:name=".LibraryActivity" android:exported="false" />
         <activity android:name=".RuntimeActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>
 </manifest>

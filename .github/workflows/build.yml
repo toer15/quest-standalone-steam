@@ -26,11 +26,11 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk quest-standalone-steam.apk
       - uses: actions/upload-artifact@v4
         with: { name: quest-standalone-steam-apk, path: quest-standalone-steam.apk }
-      - name: Publish release v0.2.1
+      - name: Publish release v0.3.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.1
-          name: "v0.2.1 (fix runtime install)"
+          tag_name: v0.3.0
+          name: "v0.3.0 (new launcher UI)"
           prerelease: true
           files: quest-standalone-steam.apk
-          body: "Fixes Install runtime failing with ZipException invalid LOC header: verified download (size + SHA-256 of Winlator v11.2.0 APK, correct 200/206 resume handling, auto re-download, single install at a time), exec bit fix for box64, clearer logs. Extraction verified on desktop JVM against the real APK; still untested on Quest/phone hardware."
+          body: "New Compose launcher UI: Home/Games tabs, Steam avatar + sign out, synced library as flip cards (Download / Import from folder, progress + ETA, Play Game, Uninstall), category slider (All, VR, Installed, genres) and Browse popup (search, All games, A-Z jump). Direct Steam downloads not implemented yet (honest error); folder import works. Runtime/smoke test under Settings. Untested on hardware."
