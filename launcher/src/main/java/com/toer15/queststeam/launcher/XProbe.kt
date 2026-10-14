@@ -18,6 +18,8 @@ object XProbe {
 
     /** Why the last [visibleWindows] call returned null (for the log). */
     @Volatile var lastError: String? = null
+    /** All top-level windows (mapped or not) seen by the last call: > 0 means the game has connected. */
+    @Volatile var lastTotal: Int = 0
 
     /** Visible top-level windows on 127.0.0.1:6000+[display]; null if the X server can't be reached. */
     fun visibleWindows(display: Int = 0, minSize: Int = 32, host: String = "127.0.0.1"): List<Window>? = runCatching {
@@ -40,6 +42,7 @@ object XProbe {
             val tb = ByteBuffer.wrap(tree).order(ByteOrder.LITTLE_ENDIAN)
             val n = tb.getShort(16).toInt() and 0xffff
             val children = (0 until n).map { tb.getInt(32 + 4 * it) }
+            lastTotal = children.size
             children.mapNotNull { w ->
                 val attrs = request(3, w) // GetWindowAttributes
                 if (attrs[0].toInt() != 1) return@mapNotNull null

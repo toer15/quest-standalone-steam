@@ -144,6 +144,14 @@ object GameRunner {
             _stage.value = LaunchStage.Working(title, "Starting the game display…")
             val problem = withContext(Dispatchers.IO) { GameDisplay.ensureRunning(ctx, l.rootfs, ::appendLog) }
             if (problem != null) { appendLog(problem); _stage.value = LaunchStage.Failed(title, problem); return }
+            // Open the game window now so it connects to the display before the game draws, then bring
+            // the loading screen back in front of it.
+            GameDisplay.configureApp(ctx)
+            if (!inVr) {
+                GameDisplay.show(ctx)
+                delay(1500)
+                bringBack(ctx)
+            }
             baseline = withContext(Dispatchers.IO) { XProbe.visibleWindows()?.size ?: 0 }
         }
 
@@ -180,11 +188,11 @@ object GameRunner {
                     lastNote = secs
                     appendLog(
                         if (windows == null) "[waiting ${secs}s] can't ask the game display for windows: ${XProbe.lastError}"
-                        else "[waiting ${secs}s] the game hasn't opened its window yet (${windows.size} on the display)"
+                        else "[waiting ${secs}s] the game hasn't shown its window yet (${windows.size} visible, ${XProbe.lastTotal} windows in total on the display)"
                     )
                 }
                 if (secs >= WINDOW_TIMEOUT_S) { appendLog("No game window detected after ${secs}s; showing the game display."); break }
-                _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s", detail = logTail(3), canShowWindow = secs >= 20)
+                _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s", detail = logTail(5), canShowWindow = secs >= 20)
                 delay(700)
             }
             _stage.value = LaunchStage.Opening(title)
@@ -231,5 +239,13 @@ object GameRunner {
     /** After this, show the game's display even if no window was detected (it may be there after all). */
     private const val WINDOW_TIMEOUT_S = 90
 
-    private fun logTail(n: Int) = _log.value.trimEnd().lines().filter { it.isNotBlank() }.takeLast(n).joinToString("\n")
+    /** The latest lines from the game and the display (not our own waiting notes). */
+    private fun logTail(n: Int) = _log.value.trimEnd().lines().filter { it.isNotBlank() && !it.startsWith("[waiting") }.takeLast(n).joinToString("\n")
+
+    /** Puts the app's loading screen back in front (after opening the game window behind it). */
+    private fun bringBack(ctx: Context) {
+        val i = android.content.Intent(ctx, RuntimeActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        runCatching { ctx.startActivity(i) }
+    }
 }

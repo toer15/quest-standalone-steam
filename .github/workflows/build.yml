@@ -80,17 +80,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.10.3
+      - name: Publish release v0.10.4
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.10.3
+          tag_name: v0.10.4
           target_commitish: ${{ github.sha }}
-          name: "v0.10.3: Clear log, Cancel goes back to the library"
+          name: "v0.10.4: game window connects before the game starts, landscape 1280x720"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.10.4:**
+            - The game window (Termux:X11) now opens and connects to the display **before** the game starts (it showed only its "X" logo, i.e. it never connected), then the loading screen comes back in front.
+            - The game window is landscape, 1280x720 stretched to fill it, without the extra-keys bar.
+            - The loading screen shows the game's and the display's latest output (not just "waiting"), and the log says how many windows the game has made, so the next photo shows exactly where it stops.
 
             **v0.10.3:**
             - **Clear log** button on the Runtime screen's Log.

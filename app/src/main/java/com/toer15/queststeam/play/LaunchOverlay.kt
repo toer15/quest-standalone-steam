@@ -93,7 +93,7 @@ fun LaunchOverlay(stage: LaunchStage, appId: Int, log: String, onShowGame: () ->
                                 stage.detail?.let {
                                     Spacer(Modifier.height(10.dp))
                                     Text(
-                                        it, color = Color(0xFFAEB9C3), fontSize = 11.sp, fontFamily = FontFamily.Monospace, lineHeight = 14.sp, maxLines = 4,
+                                        it, color = Color(0xFFAEB9C3), fontSize = 11.sp, fontFamily = FontFamily.Monospace, lineHeight = 14.sp, maxLines = 6,
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.Black.copy(alpha = 0.35f)).padding(10.dp),
                                     )

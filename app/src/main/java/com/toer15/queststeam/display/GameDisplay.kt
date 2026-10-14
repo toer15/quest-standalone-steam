@@ -70,13 +70,15 @@ object GameDisplay {
             put("CLASSPATH", apk)
             put("TMPDIR", tmp.path)
             put("XKB_CONFIG_ROOT", xkb.path)
+            // Copies the display server's own Android log into ours (connection problems show up there).
+            put("TERMUX_X11_DEBUG", "1")
             remove("LD_PRELOAD")
             remove("LD_LIBRARY_PATH")
         }
         val p = try { pb.start() } catch (e: Exception) { return "Couldn't start the display server: ${e.message}" }
         server = p
         Thread {
-            runCatching { p.inputStream.bufferedReader().forEachLine { log("[display] $it") } }
+            runCatching { p.inputStream.bufferedReader().forEachLine { if (worthLogging(it)) log("[display] $it") } }
             log("[display server exited with code ${runCatching { p.waitFor() }.getOrDefault(-1)}]")
         }.apply { isDaemon = true; start() }
         repeat(100) {
@@ -113,6 +115,31 @@ object GameDisplay {
         if (!File(dir, "rules").isDirectory) return null
         stamp.writeText(size.toString())
         return dir
+    }
+
+    /** Keeps warnings, errors and connection messages from the display's debug log; drops per-frame chatter. */
+    private fun worthLogging(line: String): Boolean {
+        val l = line.trim()
+        if (l.isEmpty()) return false
+        val level = Regex("""^(?:\S+\s+\S+\s+\d+\s+\d+\s+)?([VDIWEF])[ /]""").find(l)?.groupValues?.get(1)
+        if (level == null) return true // plain server output
+        if (level == "W" || level == "E" || level == "F") return true
+        return Regex("(?i)broadcast|connect|binder|activity|CmdEntryPoint|error|fail").containsMatchIn(l)
+    }
+
+    /**
+     * Settings for the game window, sent to Termux:X11 like its `termux-x11-preference` command:
+     * landscape, a fixed 1280x720 screen stretched to the window, no extra-keys bar.
+     */
+    fun configureApp(ctx: Context) {
+        val i = Intent("com.termux.x11.CHANGE_PREFERENCE").setPackage(PACKAGE)
+            .putExtra("forceOrientation", "landscape")
+            .putExtra("displayResolutionMode", "custom")
+            .putExtra("displayResolutionCustom", "1280x720")
+            .putExtra("displayStretch", "true")
+            .putExtra("showAdditionalKbd", "false")
+            .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+        runCatching { ctx.sendBroadcast(i) }
     }
 
     /** Brings the game window (Termux:X11) to the front. */
