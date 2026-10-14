@@ -80,17 +80,21 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.10.2
+      - name: Publish release v0.10.3
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.10.2
+          tag_name: v0.10.3
           target_commitish: ${{ github.sha }}
-          name: "v0.10.2: loading screen always ends in the game window"
+          name: "v0.10.3: Clear log, Cancel goes back to the library"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.10.3:**
+            - **Clear log** button on the Runtime screen's Log.
+            - **Cancel** on the loading screen (or Close on an error, Stop game, or the game ending) now goes straight back to the library you came from instead of the Runtime settings screen.
 
             **v0.10.2:**
             - The loading screen no longer waits forever: after at most 90 seconds it opens the game's window anyway, and from 20 seconds a **Show game window** button lets you look at the game while it's still starting.

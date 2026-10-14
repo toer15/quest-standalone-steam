@@ -58,6 +58,8 @@ object GameRunner {
     val needsDisplay: StateFlow<Boolean> = _needsDisplay
     fun dismissDisplayPrompt() { _needsDisplay.value = false }
 
+    fun clearLog() { _log.value = "" }
+
     fun appendLog(line: String) {
         val s = _log.value + line + "\n"
         _log.value = if (s.length > 120_000) s.takeLast(100_000) else s

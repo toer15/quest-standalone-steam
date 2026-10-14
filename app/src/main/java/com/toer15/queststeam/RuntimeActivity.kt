@@ -388,7 +388,10 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                 }
 
                 Card {
-                    Text("Log", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Log", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        SecondaryButton("Clear log", enabled = log.isNotBlank()) { GameRunner.clearLog() }
+                    }
                     Spacer(Modifier.height(8.dp))
                     Text(
                         log.ifBlank { "Messages from the runtime and games show up here." },
@@ -403,12 +406,20 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
 
     // Loading screen: "Loading…" until the game's window is up, then "Opening game now", then the game.
     val stage by vm.stage.collectAsState()
+    // Opened from a game's Play button: cancelling, closing an error, stopping the game or the game
+    // ending goes straight back to the library, not to this settings screen.
+    val fromCard = exePath != null
     LaunchOverlay(
         stage = stage, appId = appId, log = log,
         onShowGame = { GameDisplay.show(ctx) },
-        onStop = { vm.stop() },
-        onDismiss = { GameRunner.dismissFailure() },
+        onStop = { vm.stop(); if (fromCard) onClose() },
+        onDismiss = { GameRunner.dismissFailure(); if (fromCard) onClose() },
     )
+    var wasPlaying by remember { mutableStateOf(false) }
+    LaunchedEffect(stage) {
+        if (stage is LaunchStage.Running || stage is LaunchStage.Opening) wasPlaying = true
+        else if (stage == LaunchStage.Idle && wasPlaying && fromCard) onClose()
+    }
 
     // A game was started without the display app: install it here, then play.
     val needsDisplay by vm.needsDisplay.collectAsState()
