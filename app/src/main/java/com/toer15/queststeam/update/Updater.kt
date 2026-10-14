@@ -132,6 +132,8 @@ object Updater {
     /** Hands the APK to Android's package installer; the system shows its confirmation screen. */
     fun install(ctx: Context, apk: File) {
         installResult.value = null
+        // The new version opens the app again by itself once installed (UpdatedReceiver).
+        ctx.getSharedPreferences("updates", Context.MODE_PRIVATE).edit().putBoolean(UpdatedReceiver.PREF_RELAUNCH, true).commit()
         val installer = ctx.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(ctx.packageName)

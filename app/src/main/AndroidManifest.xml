@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Downloads keep going while the panel is closed. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- "Updated · tap to open" if the headset blocks opening the new version by itself. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
@@ -29,6 +31,12 @@
         <activity android:name=".LoginActivity" android:exported="false" />
         <activity android:name=".store.StoreActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
         <receiver android:name=".update.InstallResultReceiver" android:exported="false" />
+        <!-- Opens the app again after an in-app update. -->
+        <receiver android:name=".update.UpdatedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <service android:name=".gamepad.ControllerRelay" android:exported="false" />
         <service android:name=".download.DownloadService" android:exported="false" />
         <activity android:name=".RuntimeActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />

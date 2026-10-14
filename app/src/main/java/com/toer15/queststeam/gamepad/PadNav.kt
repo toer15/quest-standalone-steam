@@ -19,6 +19,17 @@ object PadNav {
     /** Set by the UI: whether anything on screen has controller focus. */
     @Volatile var hasFocus = false
 
+    // B closes the most recent open thing first (e.g. a flipped game card). Main thread only.
+    private val backHandlers = ArrayList<() -> Unit>()
+    fun pushBack(h: () -> Unit) { backHandlers.remove(h); backHandlers.add(h) }
+    fun removeBack(h: () -> Unit) { backHandlers.remove(h) }
+    /** Runs the newest back handler; false if there is none. */
+    fun consumeBack(): Boolean {
+        val h = backHandlers.removeLastOrNull() ?: return false
+        h()
+        return true
+    }
+
     fun isFromController(e: KeyEvent): Boolean {
         val s = e.source
         return (s and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||

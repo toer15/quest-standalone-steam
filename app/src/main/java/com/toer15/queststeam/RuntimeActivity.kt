@@ -11,7 +11,7 @@ import com.toer15.queststeam.gamepad.ControllerRelay
 import com.toer15.queststeam.gamepad.Controllers
 import com.toer15.queststeam.gamepad.GamepadBridge
 import com.toer15.queststeam.ui.ControllerStatus
-import com.toer15.queststeam.ui.rememberOverlayAllowed
+import com.toer15.queststeam.ui.OverlayPermissionRow
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -403,17 +403,12 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                     Text("Controllers", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(10.dp))
                     ControllerStatus()
-                    val overlay = rememberOverlayAllowed()
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
+                    OverlayPermissionRow { if (!ControllerRelay.requestOverlay(ctx)) vm.appendLog("This headset has no settings page for that. On a PC run: adb shell appops set com.qssteam SYSTEM_ALERT_WINDOW allow") }
                     Text(
-                        if (overlay) "Flat games: the controller keeps working while the game window is in front (\"🎮 → game\" badge; tap it to give the keyboard back)."
-                        else "Flat games: allow \"Display over other apps\" so the controller keeps working while the game window is in front. If the button does nothing, run on a PC: adb shell appops set com.qssteam SYSTEM_ALERT_WINDOW allow",
-                        color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+                        "With it allowed, a \"🎮 → game\" badge passes the controller to flat games; tap the badge to give the keyboard back.",
+                        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
                     )
-                    if (!overlay) {
-                        Spacer(Modifier.height(8.dp))
-                        SecondaryButton("Allow display over other apps") { if (!ControllerRelay.requestOverlay(ctx)) vm.appendLog("This headset has no settings page for that; use the adb command above.") }
-                    }
                 }
 
                 Card {

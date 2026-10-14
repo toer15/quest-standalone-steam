@@ -30,6 +30,12 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import com.toer15.queststeam.gamepad.PadNav
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +76,19 @@ fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: 
     val hovered by interaction.collectIsHoveredAsState()
     val focused by interaction.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (pressed) 0.97f else if (hovered || focused) 1.025f else 1f, tween(140), label = "press")
+    // Controller: A on a focused card flips it and moves focus to its main button (Download / Play /
+    // Cancel); D-pad reaches the others; B turns the card back and puts focus on it again.
+    var padFlip by remember { mutableStateOf(false) }
+    var refocusCard by remember { mutableStateOf(false) }
+    val cardFocus = remember { FocusRequester() }
+    DisposableEffect(flipped) {
+        val unflip: () -> Unit = { flipped = false; if (padFlip) refocusCard = true }
+        if (flipped) PadNav.pushBack(unflip)
+        onDispose { PadNav.removeBack(unflip) }
+    }
+    LaunchedEffect(refocusCard) {
+        if (refocusCard) { delay(60); runCatching { cardFocus.requestFocus() }; refocusCard = false }
+    }
     Box(
         modifier
             .aspectRatio(1.42f)
@@ -87,10 +106,11 @@ fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: 
             // Controller focus: a bright outline on the selected card.
             .border(if (focused) 3.dp else 0.dp, if (focused) SteamColors.Accent else Color.Transparent, CardShape)
             .hoverable(interaction)
-            .clickable(interactionSource = interaction, indication = null) { flipped = !flipped }
+            .focusRequester(cardFocus)
+            .clickable(interactionSource = interaction, indication = null) { padFlip = !flipped && focused; flipped = !flipped }
     ) {
         if (rotation <= 90f) CardFront(game, state)
-        else Box(Modifier.fillMaxSize().graphicsLayer { rotationY = 180f }) { CardBack(game, state, actions) }
+        else Box(Modifier.fillMaxSize().graphicsLayer { rotationY = 180f }) { CardBack(game, state, actions, autoFocus = padFlip) }
     }
 }
 
@@ -150,9 +170,14 @@ private fun CardFront(game: OwnedGame, state: GameState) {
 }
 
 @Composable
-private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
+private fun CardBack(game: OwnedGame, state: GameState, a: CardActions, autoFocus: Boolean = false) {
     val ui = LocalDeviceUi.current
     val btn = Modifier.fillMaxWidth().height(ui.buttonHeight)
+    // The main button for this state gets controller focus (again after Download → Downloading → Installed).
+    val primary = remember { FocusRequester() }
+    LaunchedEffect(autoFocus, state::class) {
+        if (autoFocus) { delay(50); runCatching { primary.requestFocus() } }
+    }
     Column(
         Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF24364A), SteamColors.Panel))).padding(14.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
@@ -175,19 +200,19 @@ private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
                     fontSize = if (ui.isQuest) 13.sp else 11.sp, color = SteamColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(6.dp))
-                OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50), modifier = Modifier.focusRing().height(ui.buttonHeight)) { Text("Cancel") }
+                OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50), modifier = Modifier.focusRequester(primary).focusRing().height(ui.buttonHeight)) { Text("Cancel") }
             }
             is GameState.Installed -> {
-                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = btn.focusRing()) { Text("Play Game", fontWeight = FontWeight.Bold) }
+                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = btn.focusRequester(primary).focusRing()) { Text("Play Game", fontWeight = FontWeight.Bold) }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = a.onUninstall, shape = RoundedCornerShape(50), modifier = btn.focusRing()) { Text("Uninstall") }
             }
             else -> {
                 if (state is GameState.Failed) Text(state.message, fontSize = 11.sp, color = SteamColors.Danger, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = btn.focusRing()) {
+                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = btn.focusRequester(primary).focusRing()) {
                     Text((if (state is GameState.Failed) "Retry download" else "Download") + (if (game.sizeBytes > 0) " · ${formatBytes(game.sizeBytes)}" else ""), fontWeight = FontWeight.Bold)
                 }
-                Text("Import from folder", color = SteamColors.Accent, fontSize = 13.sp, modifier = Modifier.clickable(onClick = a.onImport).padding(6.dp))
+                Text("Import from folder", color = SteamColors.Accent, fontSize = 13.sp, modifier = Modifier.clip(RoundedCornerShape(50)).focusRing().clickable(onClick = a.onImport).padding(6.dp))
             }
         }
     }

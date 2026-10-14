@@ -67,7 +67,11 @@ enum class PlayMode { VR, FLAT }
 /** Whether a game can run in the headset through our SteamVR bridge. */
 enum class VrSupport { YES, NOT_STEAMVR }
 
-/** Re-reads "Display over other apps" whenever the screen comes back (after the Settings page). */
+/**
+ * Live "Display over other apps" state: re-checked when the screen comes back and every second
+ * while it isn't allowed yet (on the Quest the Settings panel can sit next to the app, so the app
+ * never pauses), so the screen switches to "Already allowed" by itself.
+ */
 @Composable
 fun rememberOverlayAllowed(): Boolean {
     val ctx = LocalContext.current
@@ -78,7 +82,33 @@ fun rememberOverlayAllowed(): Boolean {
         owner.lifecycle.addObserver(obs)
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
+    LaunchedEffect(allowed) {
+        while (!allowed) {
+            kotlinx.coroutines.delay(1000)
+            allowed = ControllerRelay.canOverlay(ctx)
+        }
+    }
     return allowed
+}
+
+/** "Display over other apps": a green "Already allowed" once granted, else an Allow button. */
+@Composable
+fun OverlayPermissionRow(onAllow: () -> Unit) {
+    val allowed = rememberOverlayAllowed()
+    if (allowed) Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(SteamColors.GreenBright))
+        Spacer(Modifier.width(10.dp))
+        Text("Display over other apps: ✓ Already allowed", color = SteamColors.GreenBright, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    } else Column {
+        Text(
+            "Flat games: allow \"Display over other apps\" so the controller keeps working while the game window is in front.",
+            color = Color(0xFFFFC46B), fontSize = 13.sp, lineHeight = 18.sp,
+        )
+        Text(
+            "Allow display over other apps", color = SteamColors.Accent, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clip(RoundedCornerShape(50)).focusRing().clickable(onClick = onAllow).padding(horizontal = 10.dp, vertical = 8.dp),
+        )
+    }
 }
 
 @Suppress("UNUSED_PARAMETER")
@@ -153,7 +183,6 @@ fun PlayDialog(
     val ctx = LocalContext.current
     val ui = LocalDeviceUi.current
     val pads by Controllers.connected.collectAsState()
-    val overlayAllowed = rememberOverlayAllowed()
     val first = remember { FocusRequester() }
     val scale = remember { Animatable(0.9f) }
     LaunchedEffect(Unit) {
@@ -197,16 +226,9 @@ fun PlayDialog(
             Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.Black.copy(alpha = 0.22f)).padding(14.dp)) {
                 ControllerStatus()
             }
-            if (pads.isNotEmpty() && !overlayAllowed) {
+            if (pads.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                Text(
-                    "Flat games: to keep the controller working while the game window is in front, allow \"Display over other apps\" for Quest Steam.",
-                    color = Color(0xFFFFC46B), fontSize = 13.sp, lineHeight = 18.sp,
-                )
-                Text(
-                    "Allow", color = SteamColors.Accent, fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable { ControllerRelay.requestOverlay(ctx) }.padding(horizontal = 10.dp, vertical = 8.dp),
-                )
+                OverlayPermissionRow { ControllerRelay.requestOverlay(ctx) }
             }
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

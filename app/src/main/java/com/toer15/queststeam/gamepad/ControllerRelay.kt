@@ -87,7 +87,16 @@ class ControllerRelay : Service() {
         private const val NOTIFICATION_ID = 7
         private const val ACTION_STOP = "stop"
 
-        fun canOverlay(ctx: Context) = Settings.canDrawOverlays(ctx)
+        /** Settings.canDrawOverlays can lag behind a fresh grant (or an adb appops grant); app-ops is current. */
+        fun canOverlay(ctx: Context): Boolean {
+            if (Settings.canDrawOverlays(ctx)) return true
+            return runCatching {
+                val ops = ctx.getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+                @Suppress("DEPRECATION")
+                ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, android.os.Process.myUid(), ctx.packageName) ==
+                    android.app.AppOpsManager.MODE_ALLOWED
+            }.getOrDefault(false)
+        }
 
         fun start(ctx: Context) {
             runCatching { ctx.startForegroundService(Intent(ctx, ControllerRelay::class.java)) }

@@ -133,6 +133,10 @@ class MainActivity : ComponentActivity() {
         if (SessionStore(this).steamId == null && !SteamAccount.get(this).session.isSignedIn) {
             startActivity(Intent(this, LoginActivity::class.java)); finish(); return
         }
+        if (intent.getBooleanExtra(com.toer15.queststeam.update.UpdatedReceiver.EXTRA_JUST_UPDATED, false)) {
+            android.widget.Toast.makeText(this, "Updated to ${BuildConfig.VERSION_NAME}", android.widget.Toast.LENGTH_LONG).show()
+            (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(21)
+        }
         val toLogin = { startActivity(Intent(this, LoginActivity::class.java)); finish() }
         setContent { SteamTheme { LauncherApp(onSignedOut = toLogin, onSteamSignIn = toLogin) } }
     }
@@ -189,6 +193,7 @@ private fun LauncherApp(
                     storeItem != null -> storeItem = null
                     playFor != null -> playFor = null
                     filtersOpen -> filtersOpen = false
+                    PadNav.consumeBack() -> Unit
                     tab != Tab.Home -> tab = Tab.Home
                 }
                 PadNav.Action.TabLeft -> tab = Tab.entries[(tab.ordinal - 1 + Tab.entries.size) % Tab.entries.size]
