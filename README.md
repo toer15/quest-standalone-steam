@@ -9,14 +9,29 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 ## Download: two apps
 | Device | Download |
 |---|---|
-| **Meta Quest 3** (also 3S / 2 / Pro) | [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.4.0/quest-steam-quest3.apk) |
-| **Android phone** (Android 10+) | [quest-steam-phone.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.4.0/quest-steam-phone.apk) |
+| **Meta Quest 3** (also 3S / 2 / Pro) | [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.5.0/quest-steam-quest3.apk) |
+| **Android phone** (Android 10+) | [quest-steam-phone.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.5.0/quest-steam-phone.apk) |
 
 Both are built by GitHub Actions from the same code ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). They share the app id `com.qssteam`, which the Wine runtime needs, so install one per device.
 - **Quest 3 version**: a large landscape 2D panel (1400×860 dp). Cards, text, tabs and buttons are bigger so controllers and hand pointers hit them easily. Declares head tracking and hand tracking (optional) and the Quest device list. The QR sign-in opens first, because you can scan it with your phone while wearing the headset.
 - **Phone version**: a compact touch layout with smaller cards (2+ per row), tighter spacing and the password sign-in first. It has no VR manifest entries.
 
 On Quest: sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources.
+
+## v0.5.0: SteamVR games in the headset (Quest 3 app)
+On a Quest, **Play in VR** on a downloaded SteamVR game:
+1. Replaces the game's `openvr_api.dll` with the bridge (originals are kept as `*.qss-orig`).
+2. Starts the game with Box64 + Wine, using **Turnip** (Mesa Vulkan for the Quest 3's Adreno 740) and **DXVK** for Direct3D 11.
+3. Switches the headset to the immersive view (OpenXR, Meta's runtime). Your head and Touch controllers drive the game. The game's frames show in the headset, and the runtime's timewarp corrects for latency.
+
+Dark blue in the headset means the VR view is waiting for the game. Teal means the game connected but hasn't sent a frame yet. **Runtime & settings → Enter VR view** reopens it.
+Details and limits: [openvr-bridge/README.md](openvr-bridge/README.md). First-version limits:
+- 64-bit D3D11 games only.
+- Frames are copied through the CPU, so expect low frame rates.
+- Games still need Termux:X11 for their window.
+- Games that need the Steam client (Steamworks DRM) won't start.
+
+**Tested**: the Windows half under Wine in CI. A test D3D11 VR game gets poses and controller input, and its frames arrive in shared memory pixel-perfect. **Untested on hardware**: the headset half (OpenXR activity), Turnip + DXVK on Quest, and real games.
 
 ## v0.4.0: Steam sign-in, auto-sync, real downloads
 1. **Sign in to Steam in the app** (Steam client protocol via [JavaSteam](https://github.com/Longi94/JavaSteam)):
@@ -104,7 +119,8 @@ v0.2.0's installer could corrupt the downloaded Winlator APK: tapping Install tw
 app/            Kotlin/Compose UI. Flavors: quest (Quest 3 panel) and phone. LoginActivity (Steam client + OpenID fallback)
 steamclient/    Pure-JVM Steam client: SteamSession (QR/password + Steam Guard, owned games), SteamDownloader (DepotDownloader)
 launcher/       GameLauncher: builds the box64 -> wine64 -> game.exe process (TODOs for runtime/prefix/X server/VR)
-openvr-bridge/  C++ stub of openvr_api exports to be backed by OpenXR
+openvr-bridge/  SteamVR bridge: Windows openvr_api.dll (win/), shared-memory contract (include/), Wine test (test/)
+app/src/quest/cpp/  Quest immersive OpenXR view (NativeActivity, libqssxr.so)
 docs/           Depot download + copy instructions
 ```
 
@@ -129,10 +145,14 @@ docs/           Depot download + copy instructions
 - [x] In-app depot download via JavaSteam (v0.4.0, untested on hardware)
 - [x] Separate Quest 3 and phone apps
 - [ ] Foreground service so downloads continue with the headset asleep
-- [ ] openvr-bridge: mingw DLL + Wine unixlib thunk + OpenXR session
-- [ ] Head pose → IVRSystem, Touch controllers → IVRInput
-- [ ] DXVK VkImage → XrSwapchain submission
-- [ ] Try a tiny VR title
+- [x] openvr-bridge: mingw openvr_api.dll + shared memory + OpenXR session (v0.5.0)
+- [x] Head pose → IVRSystem, Touch controllers → IVRInput (v0.5.0)
+- [x] D3D11 frames → XrSwapchain (CPU copy, v0.5.0)
+- [x] Turnip + DXVK in the runtime (v0.5.0)
+- [ ] Zero-copy frames (AHardwareBuffer/dma-buf) for speed
+- [ ] Older OpenVR interface versions, OpenGL/Vulkan submissions
+- [ ] Embedded X server so Termux:X11 isn't needed
+- [ ] Try a tiny VR title on hardware
 
 ## Disclaimer
 Personal experiment. Only run games you own. Not affiliated with Valve or Meta.

@@ -73,6 +73,9 @@ class RuntimeActivity : AppCompatActivity() {
         btn("Import single .exe…") { pickExe.launch(arrayOf("*/*")) }
         btn("Run an imported game…") { chooseAndRun() }
         btn("Stop") { launcher.stop(); appendLog("[stopped]") }
+        if (BuildConfig.QUEST_BUILD) btn("Enter VR view (SteamVR bridge)") {
+            if (VrBridge.isAvailable(this)) VrBridge.enterVr(this) else appendLog("VR bridge DLL is missing from this build.")
+        }
 
         logScroll = ScrollView(this)
         logView = TextView(this).apply { textSize = 12f; setTextIsSelectable(true); typeface = android.graphics.Typeface.MONOSPACE }
@@ -85,10 +88,7 @@ class RuntimeActivity : AppCompatActivity() {
         intent.getStringExtra(EXTRA_EXE)?.let { path ->
             title = intent.getStringExtra(EXTRA_TITLE) ?: "Play"
             val display = displayField.text.toString().trim().ifBlank { null }
-            val play = {
-                if (display != null && display.startsWith("127.0.0.1")) tryOpenTermuxX11()
-                appendLog(launcher.launchExe(File(path), display, ::appendLog).message)
-            }
+            val play = { launchGame(File(path), display) }
             if (launcher.isInstalled) play()
             else {
                 // First Play on this device: set up Box64 + Wine, then start the game.
@@ -165,8 +165,39 @@ class RuntimeActivity : AppCompatActivity() {
             val display = displayField.text.toString().trim().ifBlank { null }
             getSharedPreferences("runtime", MODE_PRIVATE).edit().putString("display", display ?: "").apply()
             if (display != null && display.startsWith("127.0.0.1")) tryOpenTermuxX11()
-            appendLog(launcher.launchExe(exes[i], display, ::appendLog).message)
+            launchGame(exes[i], display)
         }.show()
+    }
+
+    /**
+     * Starts the game. On Quest, a SteamVR game gets the OpenVR bridge: its openvr_api.dll is swapped
+     * for ours, the shared memory is created, and the headset switches to the immersive VR view.
+     */
+    private fun launchGame(exe: File, display: String?) {
+        val gameDir = gameRoot(exe)
+        val vr = VrBridge.canPlayInVr(this) && VrBridge.isVrGame(gameDir)
+        val env = mutableMapOf<String, String>()
+        if (vr) {
+            val n = VrBridge.install(this, gameDir, ::appendLog)
+            if (n > 0) {
+                env["QSS_VR_SHM"] = VrBridge.prepareShm(this).path
+                appendLog("SteamVR game: starting in VR (bridge in $n place(s)). The headset view opens in a moment.")
+            } else appendLog("This game's openvr_api.dll is 32-bit; VR needs a 64-bit game for now. Starting flat.")
+        } else if (BuildConfig.QUEST_BUILD && VrBridge.isVrGame(gameDir) && !VrBridge.isAvailable(this)) {
+            appendLog("VR bridge DLL is missing from this build; starting flat.")
+        }
+        if (display != null && display.startsWith("127.0.0.1")) tryOpenTermuxX11()
+        appendLog(launcher.launchExe(exe, display, env, onLine = ::appendLog).message)
+        if (env.containsKey("QSS_VR_SHM")) logScroll.postDelayed({ VrBridge.enterVr(this) }, 2500)
+    }
+
+    /** The game's install folder: <games>/<appId>/..., or the exe's folder for loose imports. */
+    private fun gameRoot(exe: File): File {
+        var d = exe.parentFile ?: return exe
+        while (d.parentFile != null && d.parentFile!!.canonicalPath != launcher.gamesDir.canonicalPath) {
+            d = d.parentFile ?: break
+        }
+        return if (d.parentFile?.canonicalPath == launcher.gamesDir.canonicalPath) d else exe.parentFile!!
     }
 
     /** Brings Termux:X11 to the front if installed so the game window is visible. */

@@ -24,8 +24,8 @@ android {
         // 28: Android 10+ forbids exec() of files in app data for targetSdk>=29 (same as Winlator/Termux).
         @Suppress("ExpiredTargetSdkVersion")
         targetSdk = 28
-        versionCode = 7
-        versionName = "0.4.0"
+        versionCode = 8
+        versionName = "0.5.0"
         ndk { abiFilters += "arm64-v8a" }
         val key = localProps.getProperty("STEAM_API_KEY", "")
         buildConfigField("String", "STEAM_API_KEY", "\"$key\"")
@@ -48,7 +48,15 @@ android {
         }
     }
 
-    buildFeatures { buildConfig = true; compose = true }
+    buildFeatures { buildConfig = true; compose = true; prefab = true }
+
+    // Immersive OpenXR view for the SteamVR bridge (android.app.NativeActivity, Quest manifest only).
+    externalNativeBuild {
+        cmake {
+            path = file("src/quest/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -84,6 +92,8 @@ dependencies {
     implementation("com.madgag.spongycastle:prov:1.58.0.0")
     // QR code for "sign in with the Steam mobile app".
     implementation("com.google.zxing:core:3.5.3")
+    // Khronos OpenXR loader (prefab) for the VR view; Meta's runtime on the headset does the rest.
+    implementation("org.khronos.openxr:openxr_loader_for_android:1.1.49")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")

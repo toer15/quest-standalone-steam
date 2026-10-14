@@ -10,3 +10,7 @@
 .cxx
 *.apk
 *.keystore
+
+# Built by CI (openvr-bridge/win/build.sh)
+app/src/quest/assets/vrbridge/
+openvr-bridge/build/

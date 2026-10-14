@@ -15,11 +15,16 @@ class RuntimeInstaller(private val ctx: Context) {
 
     data class Progress(val stage: String, val fraction: Float)
 
-    companion object { private val running = AtomicBoolean(false) }
+    companion object {
+        private val running = AtomicBoolean(false)
+        const val GAMES_SUBDIR = "home/xuser/.wine/drive_c/games"
+    }
 
     val rootfs = File(ctx.filesDir, "rootfs")
     private val marker = File(rootfs, ".qss-installed")
-    val isInstalled get() = marker.exists() && File(rootfs, "usr/local/bin/box64").exists()
+    val isInstalled get() = marker.exists() && File(rootfs, "usr/local/bin/box64").exists() &&
+        marker.readText().trim() == installedTag
+    private val installedTag = "${RuntimeCore.WINLATOR_VERSION}/layout${RuntimeCore.LAYOUT_VERSION}"
 
     fun install(log: (String) -> Unit, onProgress: (Progress) -> Unit) {
         if (!running.compareAndSet(false, true)) { log("Install already running."); return }
@@ -31,9 +36,14 @@ class RuntimeInstaller(private val ctx: Context) {
                 onProgress(Progress("Downloading Winlator ${RuntimeCore.WINLATOR_VERSION} (157 MB)", it))
             }
             log("Extracting into ${rootfs.path}")
+            // Keep downloaded games (they live inside the Wine prefix) across a reinstall/upgrade.
+            val games = File(rootfs, GAMES_SUBDIR)
+            val kept = File(ctx.filesDir, "games-keep")
+            if (games.isDirectory) { kept.deleteRecursively(); games.renameTo(kept) }
             rootfs.deleteRecursively(); rootfs.mkdirs()
             RuntimeCore.extractAll(apk, rootfs, ctx.packageName) { stage, f -> onProgress(Progress(stage, f)) }
-            marker.writeText(RuntimeCore.WINLATOR_VERSION)
+            if (kept.isDirectory) { games.deleteRecursively(); games.parentFile?.mkdirs(); kept.renameTo(games) }
+            marker.writeText(installedTag)
             onProgress(Progress("Runtime installed", 1f))
         } finally {
             running.set(false)

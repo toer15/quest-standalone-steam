@@ -14,6 +14,12 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.7' }
+      - name: Build the SteamVR bridge DLL (mingw) and test it under Wine
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends mingw-w64 wine64 xvfb libgl1-mesa-dri
+          openvr-bridge/win/build.sh app/src/quest/assets/vrbridge/openvr_api.dll
+          openvr-bridge/test/run_wine_test.sh app/src/quest/assets/vrbridge/openvr_api.dll
       - name: Build Quest 3 and phone APKs
         env:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
@@ -32,12 +38,12 @@ jobs:
           path: |
             quest-steam-quest3.apk
             quest-steam-phone.apk
-      - name: Publish release v0.4.0
+      - name: Publish release v0.5.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.4.0
+          tag_name: v0.5.0
           target_commitish: ${{ github.sha }}
-          name: "v0.4.0: Quest 3 + phone apps, Steam sign-in, real downloads"
+          name: "v0.5.0: SteamVR games in the Quest 3 headset (OpenVR bridge)"
           prerelease: true
           files: |
             quest-steam-quest3.apk
@@ -47,4 +53,6 @@ jobs:
             - **Meta Quest 3**: `quest-steam-quest3.apk` (large landscape panel, bigger cards and buttons for controllers/hands)
             - **Phone**: `quest-steam-phone.apk` (compact touch layout)
 
-            New: sign in to Steam in the app (account + password with Steam Guard, or a QR code scanned in the Steam mobile app). Your games sync automatically from Steam's servers, including private profiles. Download now fetches the game's Windows files from Steam's CDN, with progress and time left, and resumes after a failure. Play installs the Box64 + Wine runtime on first use. VR rendering inside the headset is not done yet. Untested on hardware.
+            **New in v0.5.0, SteamVR bridge (Quest 3 app):** Play in VR swaps the game's openvr_api.dll for our bridge. The bridge sends the game's frames into the headset through Meta's OpenXR runtime, and sends head and Touch controller tracking back to the game. Supported: 64-bit D3D11 SteamVR games, SteamVR Input action manifests and legacy input. The runtime now includes the Turnip Vulkan driver and DXVK, so 3D games have a GPU path. Expect low frame rates on the first try. The bridge passes an end-to-end Wine test in CI. The headset side is untested on hardware.
+
+            From v0.4.0: sign in to Steam in the app (account + password with Steam Guard, or a QR code scanned in the Steam mobile app). Your games sync automatically from Steam's servers, including private profiles. Download now fetches the game's Windows files from Steam's CDN, with progress and time left, and resumes after a failure. Play installs the Box64 + Wine runtime on first use.

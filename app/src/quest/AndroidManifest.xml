@@ -2,6 +2,10 @@
 <!-- Meta Quest 3 build: runs as a large landscape 2D panel in Horizon OS. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- OpenXR runtime broker access (also merged from the Khronos loader AAR). -->
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+
     <!-- required=false: a 2D panel app that can later open an immersive VR activity. -->
     <uses-feature android:name="android.hardware.vr.headtracking" android:required="false" android:version="1" />
     <uses-feature android:name="oculus.software.handtracking" android:required="false" />
@@ -17,5 +21,24 @@
             <layout android:defaultWidth="1100dp" android:defaultHeight="760dp" android:gravity="center" />
         </activity>
         <activity android:name=".RuntimeActivity" android:screenOrientation="landscape" />
+
+        <!-- Immersive SteamVR bridge view: OpenXR (Meta runtime) in libqssxr.so. -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.qssteam.vr"
+            android:screenOrientation="landscape"
+            android:resizeableActivity="false"
+            android:excludeFromRecents="true"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|uiMode"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+            <meta-data android:name="android.app.lib_name" android:value="qssxr" />
+            <intent-filter>
+                <action android:name="com.qssteam.action.VR" />
+                <category android:name="com.oculus.intent.category.VR" />
+                <category android:name="org.khronos.openxr.intent.category.IMMERSIVE_HMD" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

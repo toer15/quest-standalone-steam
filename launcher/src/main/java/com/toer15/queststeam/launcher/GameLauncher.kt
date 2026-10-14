@@ -13,7 +13,7 @@ data class LaunchResult(val ok: Boolean, val message: String)
  *  - Termux:X11 over TCP (DISPLAY=127.0.0.1:0). In Termux run: `termux-x11 :0 -listen tcp -ac`.
  *  - Headless (no DISPLAY) for console programs (e.g. `cmd /c ver`).
  * TODO: embed an in-app X server (port of Winlator's Java XServer, LGPL) to drop the Termux dependency.
- * TODO: OpenXR/VR via openvr-bridge.
+ * VR: the game's openvr_api.dll is replaced by the bridge (see app VrBridge); QSS_VR_SHM tells it where to connect.
  */
 class GameLauncher(ctx: Context) {
 
@@ -24,7 +24,7 @@ class GameLauncher(ctx: Context) {
     val gamesDir get() = File(prefix, "drive_c/games")
     @Volatile var current: Process? = null; private set
 
-    fun environment(display: String?): Map<String, String> {
+    fun environment(display: String?, extra: Map<String, String> = emptyMap()): Map<String, String> {
         val r = rootfs.path
         return buildMap {
             put("HOME", "$r/home/xuser")
@@ -38,20 +38,31 @@ class GameLauncher(ctx: Context) {
             put("BOX64_PATH", "$r/opt/wine/bin")
             put("BOX64_DYNAREC", "1")
             put("BOX64_LOG", "1")
-            put("WINEDLLOVERRIDES", "openvr_api=n,b;winemenubuilder.exe=d")
+            // DXVK (installed into the prefix) for Direct3D 9/10/11, the game's own openvr_api.dll (our bridge).
+            put("WINEDLLOVERRIDES", "d3d11,dxgi,d3d10core,d3d9=n,b;openvr_api=n,b;winemenubuilder.exe=d")
+            // Turnip: Mesa's Vulkan driver for Adreno GPUs (Quest 3 = Adreno 740), from Winlator.
+            put("VK_ICD_FILENAMES", "$r/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json")
+            put("TU_OVERRIDE_HEAP_SIZE", "4096")
+            put("MESA_VK_WSI_PRESENT_MODE", "mailbox")
+            put("MESA_SHADER_CACHE_DIR", "$r/tmp/mesa-cache")
+            put("vblank_mode", "0")
+            put("DXVK_LOG_LEVEL", "warn")
+            put("DXVK_STATE_CACHE_PATH", "$r/tmp")
             put("QSS_MODE", if (DeviceMode.isQuest) "quest-flat" else "phone-flat")
             if (!display.isNullOrBlank()) put("DISPLAY", display)
+            putAll(extra)
         }
     }
 
     /** Starts `box64 wine args...`; streams combined stdout/stderr to [onLine]. */
-    fun runWine(args: List<String>, display: String?, workDir: File? = null, onLine: (String) -> Unit): LaunchResult {
+    fun runWine(args: List<String>, display: String?, workDir: File? = null, extraEnv: Map<String, String> = emptyMap(), onLine: (String) -> Unit): LaunchResult {
         if (!installer.isInstalled) return LaunchResult(false, "Runtime not installed")
         val cmd = listOf(File(rootfs, "usr/local/bin/box64").path, File(rootfs, "opt/wine/bin/wine").path) + args
         onLine("$ " + cmd.joinToString(" "))
         return try {
+            File(rootfs, "tmp/mesa-cache").mkdirs()
             val pb = ProcessBuilder(cmd).directory(workDir ?: prefix).redirectErrorStream(true)
-            pb.environment().putAll(environment(display))
+            pb.environment().putAll(environment(display, extraEnv))
             val p = pb.start(); current = p
             Thread {
                 runCatching { p.inputStream.bufferedReader().forEachLine(onLine) }
@@ -63,11 +74,11 @@ class GameLauncher(ctx: Context) {
         }
     }
 
-    fun launchExe(exe: File, display: String?, onLine: (String) -> Unit) =
-        runWine(listOf(exe.path), display, exe.parentFile, onLine)
+    fun launchExe(exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), onLine: (String) -> Unit) =
+        runWine(listOf(exe.path), display, exe.parentFile, extraEnv, onLine)
 
     /** Sanity check that needs no display. */
-    fun smokeTest(onLine: (String) -> Unit) = runWine(listOf("cmd", "/c", "ver"), null, null, onLine)
+    fun smokeTest(onLine: (String) -> Unit) = runWine(listOf("cmd", "/c", "ver"), null, null, onLine = onLine)
 
     fun stop() { current?.destroy(); current = null }
 

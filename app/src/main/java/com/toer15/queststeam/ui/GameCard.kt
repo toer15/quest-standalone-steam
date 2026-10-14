@@ -190,7 +190,7 @@ private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
                 OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50), modifier = Modifier.height(ui.buttonHeight)) { Text("Cancel") }
             }
             is GameState.Installed -> {
-                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = btn) { Text("Play Game", fontWeight = FontWeight.Bold) }
+                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = btn) { Text(if (ui.isQuest && game.isVr) "Play in VR" else "Play Game", fontWeight = FontWeight.Bold) }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = a.onUninstall, shape = RoundedCornerShape(50), modifier = btn) { Text("Uninstall") }
             }

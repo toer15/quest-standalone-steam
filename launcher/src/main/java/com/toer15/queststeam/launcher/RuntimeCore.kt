@@ -34,8 +34,14 @@ object RuntimeCore {
         Asset("assets/rootfs.tzst", "", "Extracting rootfs + Wine"),
         Asset("assets/box64/box64-0.4.4.tzst", "", "Extracting Box64"),
         Asset("assets/container_pattern.tzst", "home/xuser", "Creating Wine prefix"),
-        Asset("assets/dxwrapper/dxvk-2.4.1.tzst", "opt/dxvk", "Extracting DXVK (optional)"),
+        Asset("assets/rootfs_patches.tzst", "", "Applying Winlator patches"),
+        // GPU: Mesa Turnip (Vulkan for Adreno, e.g. Quest 3's XR2 Gen 2) + DXVK (D3D9/10/11 -> Vulkan) in the prefix.
+        Asset("assets/graphics_driver/turnip-26.2.0.tzst", "", "Installing Turnip GPU driver"),
+        Asset("assets/dxwrapper/dxvk-2.4.1.tzst", "home/xuser/.wine/drive_c/windows", "Installing DXVK"),
     )
+
+    /** Bumped when [ASSETS] change so existing installs are redone. */
+    const val LAYOUT_VERSION = 2
 
     /** "/data/data/<pkg>" padded with '/' to the same length as [FROM_PREFIX]. */
     fun replacementPrefix(packageName: String): String {
