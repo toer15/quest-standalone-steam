@@ -21,8 +21,8 @@ android {
         // 28: Android 10+ forbids exec() of files in app data for targetSdk>=29 (same as Winlator/Termux).
         @Suppress("ExpiredTargetSdkVersion")
         targetSdk = 28
-        versionCode = 4
-        versionName = "0.3.0-experiment"
+        versionCode = 5
+        versionName = "0.3.1"
         ndk { abiFilters += "arm64-v8a" }
         val key = localProps.getProperty("STEAM_API_KEY", "")
         buildConfigField("String", "STEAM_API_KEY", "\"$key\"")
@@ -36,6 +36,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    testOptions { unitTests.all { it.systemProperty("live", System.getProperty("live") ?: "") } }
     lint { abortOnError = false; checkReleaseBuilds = false }
     packaging { jniLibs { useLegacyPackaging = true } }
 }
@@ -55,6 +56,8 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
     implementation("io.coil-kt:coil-compose:2.6.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
 }

@@ -14,6 +14,14 @@ Grab `quest-standalone-steam.apk` from [Releases](https://github.com/toer15/ques
 | Steam login + library | yes | yes (2D panel) |
 | Runtime installer, import game, run .exe | yes (flat, via Termux:X11) | yes (flat 2D panel via Termux:X11); VR bridge TODO |
 
+## Steam library without a built-in key (v0.3.1)
+The public APK ships with **no** Steam Web API key. Each player signs in with their own Steam account:
+- **Profile name + avatar** come from the public `steamcommunity.com/profiles/<id>/?xml=1` (works anonymously; tested).
+- **Owned games** come from `steamcommunity.com/profiles/<id>/games/?tab=all`. Steam now redirects anonymous requests for that page to login, so the app sends the cookies from your own Steam sign-in WebView. The page parser is unit-tested, but the signed-in request is **untested on hardware**.
+- **Fallback**: in the profile menu, choose *Steam API key (optional)…* and paste your own key from https://steamcommunity.com/dev/apikey. It's stored only on your device.
+- If your game details are private, the app tells you to set *Profile → Edit Profile → Privacy Settings → Game details* to **Public**.
+- Builders can still put `STEAM_API_KEY` in `local.properties` for personal builds. Never commit it.
+
 ## Launcher UI (v0.3.0)
 Jetpack Compose with a dark, Steam-style theme. It works on phones and as a Quest 2D panel.
 - **Top bar**: HOME and GAMES tabs, Sync and Settings buttons, and your Steam avatar from `GetPlayerSummaries`. Tap the avatar for profile, sync, settings or sign out.

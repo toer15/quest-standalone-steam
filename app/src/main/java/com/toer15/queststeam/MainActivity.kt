@@ -105,6 +105,7 @@ private fun LauncherApp(onSignedOut: () -> Unit, vm: LibraryViewModel = viewMode
     val syncing by vm.syncing.collectAsState()
     var pendingImport by remember { mutableStateOf<Int?>(null) }
     var confirmUninstall by remember { mutableStateOf<OwnedGame?>(null) }
+    var showKey by remember { mutableStateOf(false) }
 
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         val id = pendingImport; pendingImport = null
@@ -127,13 +128,16 @@ private fun LauncherApp(onSignedOut: () -> Unit, vm: LibraryViewModel = viewMode
         TopBar(tab, { tab = it }, profile?.avatarUrl, profile?.personaName, syncing,
             onSync = vm::sync,
             onSettings = { ctx.startActivity(Intent(ctx, RuntimeActivity::class.java)) },
-            onSignOut = { vm.signOut(); onSignedOut() })
+            onSignOut = { vm.signOut(); onSignedOut() },
+            onApiKey = { showKey = true })
         if (status.isNotBlank()) Text(status, color = SteamColors.Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         when (tab) {
             Tab.Home -> HomeScreen(games, ::stateOf, ::actionsFor, onBrowse = { tab = Tab.Games }, onSync = vm::sync)
             Tab.Games -> GamesScreen(games, ::stateOf, ::actionsFor)
         }
     }
+
+    if (showKey) ApiKeyDialog(vm.apiKey.orEmpty(), onSave = { vm.apiKey = it; showKey = false }, onDismiss = { showKey = false })
 
     confirmUninstall?.let { g ->
         AlertDialog(onDismissRequest = { confirmUninstall = null },
@@ -145,7 +149,7 @@ private fun LauncherApp(onSignedOut: () -> Unit, vm: LibraryViewModel = viewMode
 
 @Composable
 private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String?, syncing: Boolean,
-                   onSync: () -> Unit, onSettings: () -> Unit, onSignOut: () -> Unit) {
+                   onSync: () -> Unit, onSettings: () -> Unit, onSignOut: () -> Unit, onApiKey: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().background(SteamColors.Panel).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         for (t in Tab.entries) {
@@ -168,6 +172,7 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String
                 DropdownMenuItem(text = { Text(name ?: "Steam user") }, onClick = {}, enabled = false)
                 DropdownMenuItem(text = { Text("Sync Steam account") }, onClick = { menu = false; onSync() })
                 DropdownMenuItem(text = { Text("Runtime & settings") }, onClick = { menu = false; onSettings() })
+                DropdownMenuItem(text = { Text("Steam API key (optional)…") }, onClick = { menu = false; onApiKey() })
                 DropdownMenuItem(text = { Text("Sign out") }, onClick = { menu = false; onSignOut() })
             }
         }
@@ -245,4 +250,25 @@ private fun GamesScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameStat
         onLetters = { letters = it; popup = false },
         onDismiss = { popup = false },
     )
+}
+
+/** Optional: player's own Steam Web API key, stored only on this device. */
+@Composable
+private fun ApiKeyDialog(current: String, onSave: (String?) -> Unit, onDismiss: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var text by remember { mutableStateOf(current) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Steam Web API key (optional)") },
+        text = {
+            Column {
+                Text("Not needed normally: your library loads from your Steam sign-in. Add your own key if that fails. It's stored only on this device.", fontSize = 13.sp)
+                androidx.compose.material3.OutlinedTextField(value = text, onValueChange = { text = it.trim() }, singleLine = true,
+                    label = { Text("API key") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://steamcommunity.com/dev/apikey"))) }) {
+                    Text("Get a key: steamcommunity.com/dev/apikey")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(text.ifBlank { null }) }) { Text("Save") } },
+        dismissButton = { Row { TextButton(onClick = { onSave(null) }) { Text("Remove") }; TextButton(onClick = onDismiss) { Text("Cancel") } } })
 }
