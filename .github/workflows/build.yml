@@ -1,7 +1,7 @@
-name: Build APK
+name: Build APKs
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   workflow_dispatch:
 permissions:
   contents: write
@@ -14,7 +14,7 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.7' }
-      - name: Build debug APK
+      - name: Build Quest 3 and phone APKs
         env:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
         run: |
@@ -22,15 +22,29 @@ jobs:
           # gradle-wrapper.jar is binary and not committed; regenerate it here
           [ -f gradle/wrapper/gradle-wrapper.jar ] || gradle wrapper --gradle-version 8.7
           chmod +x gradlew
-          ./gradlew :launcher:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk quest-standalone-steam.apk
+          ./gradlew :steamclient:test :launcher:testDebugUnitTest :app:testQuestDebugUnitTest \
+            :app:assembleQuestDebug :app:assemblePhoneDebug --no-daemon
+          cp app/build/outputs/apk/quest/debug/app-quest-debug.apk quest-steam-quest3.apk
+          cp app/build/outputs/apk/phone/debug/app-phone-debug.apk quest-steam-phone.apk
       - uses: actions/upload-artifact@v4
-        with: { name: quest-standalone-steam-apk, path: quest-standalone-steam.apk }
-      - name: Publish release v0.3.2
+        with:
+          name: quest-steam-apks
+          path: |
+            quest-steam-quest3.apk
+            quest-steam-phone.apk
+      - name: Publish release v0.4.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.3.2
-          name: "v0.3.2 (private libraries, modern UI)"
+          tag_name: v0.4.0
+          target_commitish: ${{ github.sha }}
+          name: "v0.4.0: Quest 3 + phone apps, Steam sign-in, real downloads"
           prerelease: true
-          files: quest-standalone-steam.apk
-          body: "Your library loads from your own Steam sign-in, including when the profile is private. If the session cookies are missing, the app asks you to sign out and sign in again. An optional Web API key is only a fallback. Dark gradient UI with a glassy bar, hero banner, flip cards, and pill categories for phones and Quest 2D panels. Untested on hardware."
+          files: |
+            quest-steam-quest3.apk
+            quest-steam-phone.apk
+          body: |
+            Two apps from the same code:
+            - **Meta Quest 3**: `quest-steam-quest3.apk` (large landscape panel, bigger cards and buttons for controllers/hands)
+            - **Phone**: `quest-steam-phone.apk` (compact touch layout)
+
+            New: sign in to Steam in the app (account + password with Steam Guard, or a QR code scanned in the Steam mobile app). Your games sync automatically from Steam's servers, including private profiles. Download now fetches the game's Windows files from Steam's CDN, with progress and time left, and resumes after a failure. Play installs the Box64 + Wine runtime on first use. VR rendering inside the headset is not done yet. Untested on hardware.

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.toer15.queststeam.launcher.GameLauncher
+import com.toer15.queststeam.steam.SteamAccount
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,7 +19,7 @@ import java.io.File
 /** Per-game install state shown on the cards. */
 sealed interface GameState {
     data object NotInstalled : GameState
-    data class Downloading(val bytes: Long, val total: Long, val etaSeconds: Long?, val source: String) : GameState {
+    data class Downloading(val bytes: Long, val total: Long, val etaSeconds: Long?, val source: String, val note: String? = null) : GameState {
         val fraction get() = if (total > 0) bytes.toFloat() / total else 0f
     }
     data object Installed : GameState
@@ -31,29 +32,33 @@ typealias ProgressFn = (Long, Long) -> Unit
 /** Pluggable source of a game's Windows files. */
 interface DownloadSource {
     val name: String
+    /** True when files already in the install dir can be reused (resume), so they aren't wiped first. */
+    val resumable: Boolean get() = false
     /** Writes the game's files into [dest]; throws with a user-readable message on failure. */
-    suspend fun fetch(ctx: Context, appId: Int, dest: File, progress: ProgressFn)
+    suspend fun fetch(ctx: Context, appId: Int, dest: File, status: (String) -> Unit, progress: ProgressFn)
 }
 
 /**
- * Steam depot download. Not implemented yet: needs a Steam CM client (e.g. JavaSteam's
- * ContentDownloader) with the user's own Steam login + Steam Guard, depot manifests and keys.
- * Kept as a pluggable source so it can be dropped in without touching the UI.
+ * Downloads the game's Windows depots straight from Steam's CDN (JavaSteam DepotDownloader)
+ * with the player's own Steam sign-in. Existing files are validated and reused on retry.
  */
 class SteamDepotSource : DownloadSource {
     override val name = "Steam"
-    override suspend fun fetch(ctx: Context, appId: Int, dest: File, progress: ProgressFn) {
-        throw UnsupportedOperationException(
-            "Direct Steam downloads aren't implemented yet. Download the game's Windows files on a PC " +
-                "(SteamCMD/DepotDownloader, see docs/DEPOTS.md) and use \"Import from folder\"."
+    override val resumable = true
+    override suspend fun fetch(ctx: Context, appId: Int, dest: File, status: (String) -> Unit, progress: ProgressFn) {
+        val account = SteamAccount.get(ctx)
+        if (!account.session.isSignedIn) throw IllegalStateException(
+            "To download, sign in with your Steam account: profile picture → Sign in to Steam."
         )
+        account.downloader.download(appId, dest, status, progress)
     }
 }
 
 /** Copies a folder the user picked (SAF tree URI) into the game's install dir. Works today. */
 class FolderImportSource(private val tree: Uri) : DownloadSource {
     override val name = "Import"
-    override suspend fun fetch(ctx: Context, appId: Int, dest: File, progress: ProgressFn) {
+    override suspend fun fetch(ctx: Context, appId: Int, dest: File, status: (String) -> Unit, progress: ProgressFn) {
+        status("Copying files…")
         val root = DocumentFile.fromTreeUri(ctx, tree) ?: error("Can't open folder")
         val total = sizeOf(root)
         var done = 0L
@@ -100,32 +105,43 @@ class DownloadManager private constructor(private val ctx: Context) {
 
     fun download(appId: Int, source: DownloadSource = primarySource) {
         if (jobs[appId]?.isActive == true) return
-        if (!launcher.isInstalled && source !is SteamDepotSource) {
-            // Files can be imported before the runtime exists, but the prefix dir must exist.
-            launcher.gamesDir.mkdirs()
-        }
-        set(appId, GameState.Downloading(0, -1, null, source.name))
+        // Files can arrive before the runtime is installed, but the prefix dir must exist.
+        launcher.gamesDir.mkdirs()
+        set(appId, GameState.Downloading(0, -1, null, source.name, "Starting…"))
         jobs[appId] = scope.launch {
             val dest = dirFor(appId)
-            val start = System.nanoTime()
+            var note: String? = "Starting…"
+            var last = GameState.Downloading(0, -1, null, source.name, note)
+            // Rate from bytes received in this run only, so resumed bytes don't inflate it.
+            var firstBytes = -1L
+            var firstAt = 0L
             try {
-                dest.deleteRecursively(); dest.mkdirs()
+                if (!source.resumable) dest.deleteRecursively()
+                dest.mkdirs()
                 var lastEmit = 0L
-                source.fetch(ctx, appId, dest) { done, total ->
+                source.fetch(ctx, appId, dest, status = { msg ->
+                    note = msg
+                    last = last.copy(note = msg)
+                    set(appId, last)
+                }) { done, total ->
                     val now = System.nanoTime()
-                    if (now - lastEmit < 200_000_000L && done != total) return@fetch
+                    if (now - lastEmit < 250_000_000L && done != total) return@fetch
                     lastEmit = now
-                    val secs = (now - start) / 1e9
-                    val rate = if (secs > 0.5) done / secs else 0.0
+                    if (firstBytes < 0) { firstBytes = done; firstAt = now }
+                    val secs = (now - firstAt) / 1e9
+                    val rate = if (secs > 1.0) (done - firstBytes) / secs else 0.0
                     val eta = if (rate > 0 && total > 0) ((total - done) / rate).toLong() else null
-                    set(appId, GameState.Downloading(done, total, eta, source.name))
+                    last = GameState.Downloading(done, total, eta, source.name, note)
+                    set(appId, last)
                 }
                 if (!isActive) return@launch
-                if (launcher.findExes(dest).isEmpty()) throw IllegalStateException("No .exe found in the imported files")
+                if (launcher.findExes(dest).isEmpty()) throw IllegalStateException("Download finished, but the game has no Windows .exe")
                 marker(appId).writeText(source.name)
                 set(appId, GameState.Installed)
             } catch (e: Throwable) {
-                dest.deleteRecursively()
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                // Keep Steam files so the next tap on Download resumes; imports start over.
+                if (!source.resumable) dest.deleteRecursively()
                 set(appId, GameState.Failed(e.message ?: e.toString()))
             }
         }

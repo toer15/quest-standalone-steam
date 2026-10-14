@@ -127,6 +127,7 @@ fun ShimmerBox(modifier: Modifier = Modifier) {
 
 @Composable
 private fun CardFront(game: OwnedGame, state: GameState) {
+    val ui = LocalDeviceUi.current
     Box(Modifier.fillMaxSize().background(SteamColors.Card)) {
         SteamArt(game.headerUrl, game.name, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.42f to Color.Transparent, 1f to Color(0xF0101418))))
@@ -144,11 +145,11 @@ private fun CardFront(game: OwnedGame, state: GameState) {
             ) else CircularProgressIndicator(modifier = Modifier.size(40.dp), color = SteamColors.Accent, strokeWidth = 3.5.dp)
         }
         Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
-            Text(game.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(game.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = ui.cardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             when (state) {
                 is GameState.Installed -> Text(
-                    "Installed", color = Color(0xFF10200A), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    "Installed", color = Color(0xFF10200A), fontSize = if (ui.isQuest) 14.sp else 11.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.background(SteamColors.GreenBright, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp),
                 )
                 is GameState.Downloading -> Text("Downloading ${(state.fraction * 100).toInt()}%", color = SteamColors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -160,11 +161,13 @@ private fun CardFront(game: OwnedGame, state: GameState) {
 
 @Composable
 private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
+    val ui = LocalDeviceUi.current
+    val btn = Modifier.fillMaxWidth().height(ui.buttonHeight)
     Column(
         Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF24364A), SteamColors.Panel))).padding(14.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(game.name, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(game.name, fontWeight = FontWeight.Bold, color = Color.White, fontSize = ui.cardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (game.genres.isNotEmpty()) Text(game.genres.take(3).joinToString(" · "), fontSize = 12.sp, color = SteamColors.Muted, maxLines = 1)
         Spacer(Modifier.height(10.dp))
         val green = ButtonDefaults.buttonColors(containerColor = SteamColors.Green, contentColor = Color.White)
@@ -178,18 +181,22 @@ private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "${formatBytes(state.bytes)} / ${if (state.total > 0) formatBytes(state.total) else "?"} · ${state.etaSeconds?.let { "${formatEta(it)} left" } ?: "estimating…"}",
-                    fontSize = 11.sp, color = SteamColors.Muted,
+                    if (state.total > 0) "${formatBytes(state.bytes)} / ${formatBytes(state.total)} · ${state.etaSeconds?.let { "${formatEta(it)} left" } ?: "estimating time…"}"
+                    else state.note ?: "Starting…",
+                    fontSize = if (ui.isQuest) 14.sp else 11.sp, color = SteamColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50)) { Text("Cancel") }
+                if (state.total > 0 && state.note != null) Text(state.note, fontSize = if (ui.isQuest) 12.sp else 10.sp, color = SteamColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50), modifier = Modifier.height(ui.buttonHeight)) { Text("Cancel") }
             }
             is GameState.Installed -> {
-                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = Modifier.fillMaxWidth()) { Text("Play Game") }
-                OutlinedButton(onClick = a.onUninstall, shape = RoundedCornerShape(50), modifier = Modifier.fillMaxWidth()) { Text("Uninstall") }
+                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = btn) { Text("Play Game", fontWeight = FontWeight.Bold) }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = a.onUninstall, shape = RoundedCornerShape(50), modifier = btn) { Text("Uninstall") }
             }
             else -> {
                 if (state is GameState.Failed) Text(state.message, fontSize = 11.sp, color = SteamColors.Danger, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = Modifier.fillMaxWidth()) { Text("Download") }
+                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = btn) { Text(if (state is GameState.Failed) "Retry download" else "Download", fontWeight = FontWeight.Bold) }
                 Text("Import from folder", color = SteamColors.Accent, fontSize = 13.sp, modifier = Modifier.clickable(onClick = a.onImport).padding(6.dp))
             }
         }

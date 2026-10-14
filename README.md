@@ -6,13 +6,31 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 2. Get the games' Windows depots (SteamCMD / DepotDownloader with *your* credentials — see [docs/DEPOTS.md](docs/DEPOTS.md)).
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
-## Download
-Grab `quest-standalone-steam.apk` from [Releases](https://github.com/toer15/quest-standalone-steam/releases) (built by GitHub Actions). One universal arm64 APK installs on **Android phones (Android 10+)** and **Meta Quest** (appears in Library → Unknown Sources). CI builds have no Steam API key unless you add a repo secret `STEAM_API_KEY` (Settings → Secrets → Actions); otherwise build locally with your key.
+## Download: two apps
+| Device | Download |
+|---|---|
+| **Meta Quest 3** (also 3S / 2 / Pro) | [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.4.0/quest-steam-quest3.apk) |
+| **Android phone** (Android 10+) | [quest-steam-phone.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.4.0/quest-steam-phone.apk) |
 
-| | Phone | Quest 3 |
-|---|---|---|
-| Steam login + library | yes | yes (2D panel) |
-| Runtime installer, import game, run .exe | yes (flat, via Termux:X11) | yes (flat 2D panel via Termux:X11); VR bridge TODO |
+Both are built by GitHub Actions from the same code ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). They share the app id `com.qssteam`, which the Wine runtime needs, so install one per device.
+- **Quest 3 version**: a large landscape 2D panel (1400×860 dp). Cards, text, tabs and buttons are bigger so controllers and hand pointers hit them easily. Declares head tracking and hand tracking (optional) and the Quest device list. The QR sign-in opens first, because you can scan it with your phone while wearing the headset.
+- **Phone version**: a compact touch layout with smaller cards (2+ per row), tighter spacing and the password sign-in first. It has no VR manifest entries.
+
+On Quest: sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources.
+
+## v0.4.0: Steam sign-in, auto-sync, real downloads
+1. **Sign in to Steam in the app** (Steam client protocol via [JavaSteam](https://github.com/Longi94/JavaSteam)):
+   - **Account & password**, with Steam Guard: approve in the Steam phone app, or type the code (authenticator or email).
+   - **QR code**: in the Steam phone app, open Steam Guard → scan the QR code. No password is typed on the device.
+   - The password goes RSA-encrypted straight to Steam and is never stored. The app keeps only Steam's refresh token in private storage, like the Steam client's "Remember me". Sign out deletes it.
+2. **Your games sync automatically** right after sign-in, from Steam's servers (`Player.GetOwnedGames`, with a licenses + PICS fallback). That includes private profiles. The list is saved, so it shows instantly on the next launch and then refreshes.
+3. **Download** on a flipped card fetches the game's Windows depots (64-bit, English) from Steam's CDN with JavaSteam's DepotDownloader. The card shows the phase, `done / total` and time left. When it finishes the card shows **Play Game**, and the front shows **Installed**. If a download fails or stalls (3 minutes with no data), tap **Retry download**: files already on disk are checked and reused.
+4. **Play Game** starts the game's largest `.exe` with Box64 + Wine. On the first Play the runtime is installed automatically (~157 MB).
+5. **Uninstall** (under Play Game) deletes the game's files.
+
+The old website sign-in (OpenID) is still there: "Library only? Sign in on Steam's website". It syncs the library but can't download. The profile menu then offers **Sign in to Steam (sync + downloads)**.
+
+**Untested on hardware**: every Steam network call above. This environment can't reach Steam's servers. The pure-JVM parts (`steamclient/`) compile against JavaSteam 1.8.0 and have unit tests. The Android builds compile in CI.
 
 ## Steam library without a built-in key (v0.3.2)
 The public APK ships with **no** Steam Web API key. Each player signs in with their own Steam account. A private profile still loads for its owner.
@@ -35,7 +53,7 @@ Jetpack Compose with a dark, Steam-style theme. It works on phones and as a Ques
 - **Games tab**: category slider with All / VR / Installed plus Steam store genres. **☰ Browse** (or a long-press on a chip) opens an animated popup that grows into a larger panel, with **Search games**, **All games** and an A–Z jump list (A–F, G–L, M–R, S–Z, #).
 - **Downloads** use pluggable `DownloadSource`s (`app/.../download/Downloads.kt`):
   - `FolderImportSource` works.
-  - `SteamDepotSource` is a **stub** that shows an honest error. Real Steam depot downloads need a Steam CM client (e.g. JavaSteam) with your Steam login + Steam Guard. That's the next milestone.
+  - `SteamDepotSource` downloads from Steam (v0.4.0, see above).
 - Play opens the runtime screen and launches the game's largest `.exe` via Box64 + Wine, with logs. The runtime installer and smoke test live under Settings.
 
 ## Runtime (v0.2.0): Box64 + Wine on the device
@@ -83,7 +101,8 @@ v0.2.0's installer could corrupt the downloaded Winlator APK: tapping Install tw
 
 ## Architecture
 ```
-app/            Kotlin UI: LoginActivity (Steam OpenID), LibraryActivity (GetOwnedGames + VR tagging)
+app/            Kotlin/Compose UI. Flavors: quest (Quest 3 panel) and phone. LoginActivity (Steam client + OpenID fallback)
+steamclient/    Pure-JVM Steam client: SteamSession (QR/password + Steam Guard, owned games), SteamDownloader (DepotDownloader)
 launcher/       GameLauncher: builds the box64 -> wine64 -> game.exe process (TODOs for runtime/prefix/X server/VR)
 openvr-bridge/  C++ stub of openvr_api exports to be backed by OpenXR
 docs/           Depot download + copy instructions
@@ -92,12 +111,12 @@ docs/           Depot download + copy instructions
 ## Setup
 1. Install Android Studio (JDK 17, Android SDK 34, NDK for the bridge later).
 2. `cp local.properties.example local.properties` and, if you want one, set `STEAM_API_KEY` (from https://steamcommunity.com/dev/apikey). It's git-ignored — never commit it. The library loads from your Steam sign-in session; the key is only an optional fallback.
-3. Open in Android Studio, or run `gradle wrapper --gradle-version 8.7` once (the binary wrapper jar isn't committed) then `./gradlew :app:assembleDebug`.
+3. Open in Android Studio, or run `gradle wrapper --gradle-version 8.7` once (the binary wrapper jar isn't committed) then `./gradlew :app:assembleQuestDebug` (Quest 3) or `./gradlew :app:assemblePhoneDebug` (phone). Unit tests: `./gradlew :steamclient:test`.
 
 ## Sideload to Quest 3
 - Enable Developer Mode (Meta Horizon phone app → device → Developer mode).
 - USB to PC, accept the prompt in headset.
-- `adb install -r app/build/outputs/apk/debug/app-debug.apk` — or drag the APK into **SideQuest**.
+- `adb install -r quest-steam-quest3.apk` (or `app/build/outputs/apk/quest/debug/app-quest-debug.apk`), or drag the APK into **SideQuest**.
 - Find it under *Library → Unknown Sources*.
 
 ## Roadmap
@@ -106,7 +125,10 @@ docs/           Depot download + copy instructions
 - [ ] Embedded X server (port Winlator's Java XServer) instead of Termux:X11
 - [ ] sysvshm/ALSA helpers, Turnip Vulkan driver + DXVK install into prefix
 - [ ] Run a simple 2D Windows game end-to-end (milestone 1!)
-- [ ] In-app depot download via JavaSteam
+- [x] In-app Steam sign-in (QR / password + Steam Guard) and auto library sync (v0.4.0, untested on hardware)
+- [x] In-app depot download via JavaSteam (v0.4.0, untested on hardware)
+- [x] Separate Quest 3 and phone apps
+- [ ] Foreground service so downloads continue with the headset asleep
 - [ ] openvr-bridge: mingw DLL + Wine unixlib thunk + OpenXR session
 - [ ] Head pose → IVRSystem, Touch controllers → IVRInput
 - [ ] DXVK VkImage → XrSwapchain submission

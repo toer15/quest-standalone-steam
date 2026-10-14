@@ -1,8 +1,10 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 val localProps = Properties().apply {
@@ -16,33 +18,73 @@ android {
 
     defaultConfig {
         // Short id: same length as "com.winlator" path (+pad) so Winlator binaries can be byte-patched.
+        // Both flavors keep it (a suffix would break the patch); each flavor targets a different device.
         applicationId = "com.qssteam"
         minSdk = 29
         // 28: Android 10+ forbids exec() of files in app data for targetSdk>=29 (same as Winlator/Termux).
         @Suppress("ExpiredTargetSdkVersion")
         targetSdk = 28
-        versionCode = 6
-        versionName = "0.3.2"
+        versionCode = 7
+        versionName = "0.4.0"
         ndk { abiFilters += "arm64-v8a" }
         val key = localProps.getProperty("STEAM_API_KEY", "")
         buildConfigField("String", "STEAM_API_KEY", "\"$key\"")
     }
 
+    // Two apps from one codebase: a Meta Quest 3 panel build and a phone build.
+    flavorDimensions += "device"
+    productFlavors {
+        create("quest") {
+            dimension = "device"
+            versionNameSuffix = "-quest"
+            buildConfigField("boolean", "QUEST_BUILD", "true")
+            resValue("string", "app_name", "Quest Steam")
+        }
+        create("phone") {
+            dimension = "device"
+            versionNameSuffix = "-phone"
+            buildConfigField("boolean", "QUEST_BUILD", "false")
+            resValue("string", "app_name", "Quest Steam (Phone)")
+        }
+    }
+
     buildFeatures { buildConfig = true; compose = true }
-    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
-    kotlinOptions { jvmTarget = "17" }
     testOptions { unitTests.all { it.systemProperty("live", System.getProperty("live") ?: "") } }
     lint { abortOnError = false; checkReleaseBuilds = false }
-    packaging { jniLibs { useLegacyPackaging = true } }
+    packaging {
+        jniLibs { useLegacyPackaging = true }
+        resources {
+            // Duplicate metadata from JavaSteam's dependencies (Ktor, OkHttp, protobuf, coroutines).
+            excludes += setOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/DEPENDENCIES",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/versions/9/previous-compilation-data.bin",
+                "META-INF/{AL2.0,LGPL2.1}",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/*.md",
+            )
+        }
+    }
 }
+
+kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
 
 dependencies {
     implementation(project(":launcher"))
+    implementation(project(":steamclient"))
+    // JavaSteam's crypto provider on Android (Android's own "BC" provider refuses AES for targetSdk 28).
+    implementation("com.madgag.spongycastle:prov:1.58.0.0")
+    // QR code for "sign in with the Steam mobile app".
+    implementation("com.google.zxing:core:3.5.3")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
@@ -58,6 +100,6 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.6.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
 }

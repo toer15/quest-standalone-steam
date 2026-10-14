@@ -85,10 +85,15 @@ class RuntimeActivity : AppCompatActivity() {
         intent.getStringExtra(EXTRA_EXE)?.let { path ->
             title = intent.getStringExtra(EXTRA_TITLE) ?: "Play"
             val display = displayField.text.toString().trim().ifBlank { null }
-            if (!launcher.isInstalled) appendLog("Runtime not installed: tap Install runtime first, then Play again.")
-            else {
+            val play = {
                 if (display != null && display.startsWith("127.0.0.1")) tryOpenTermuxX11()
                 appendLog(launcher.launchExe(File(path), display, ::appendLog).message)
+            }
+            if (launcher.isInstalled) play()
+            else {
+                // First Play on this device: set up Box64 + Wine, then start the game.
+                appendLog("First launch: installing the Windows runtime (Box64 + Wine, ~157 MB)…")
+                install(onInstalled = play)
             }
         } ?: if (intent.hasExtra(EXTRA_TITLE)) appendLog("No .exe found for this game.") else Unit
     }
@@ -104,7 +109,7 @@ class RuntimeActivity : AppCompatActivity() {
         logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 
-    private fun install() {
+    private fun install(onInstalled: () -> Unit = {}) {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -113,6 +118,8 @@ class RuntimeActivity : AppCompatActivity() {
                     }
                 }
                 appendLog("Runtime installed.")
+                refreshStatus()
+                onInstalled()
             } catch (e: Exception) {
                 appendLog("Install failed: $e"); e.cause?.let { appendLog("  cause: $it") }
             }

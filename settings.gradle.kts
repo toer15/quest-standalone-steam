@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "quest-standalone-steam"
-include(":app", ":launcher")
+include(":app", ":launcher", ":steamclient")
