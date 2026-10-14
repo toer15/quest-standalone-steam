@@ -14,6 +14,18 @@ Grab `quest-standalone-steam.apk` from [Releases](https://github.com/toer15/ques
 | Steam login + library | yes | yes (2D panel) |
 | Runtime installer, import game, run .exe | yes (flat, via Termux:X11) | yes (flat 2D panel via Termux:X11); VR bridge TODO |
 
+## Launcher UI (v0.3.0)
+Jetpack Compose with a dark, Steam-style theme. It works on phones and as a Quest 2D panel.
+- **Top bar**: HOME and GAMES tabs, Sync and Settings buttons, and your Steam avatar from `GetPlayerSummaries`. Tap the avatar for profile, sync, settings or sign out.
+- **Cards**: art comes from Steam's CDN (`header.jpg`). Tap a card to flip it in 3D.
+  - Back of the card: **Download** (shows progress + time remaining), then **Play Game** + **Uninstall**. The front shows **Installed**.
+  - **Import from folder** copies a game folder you picked, with real progress and ETA.
+- **Games tab**: category slider with All / VR / Installed plus Steam store genres. **☰ Browse** (or a long-press on a chip) opens an animated popup that grows into a larger panel, with **Search games**, **All games** and an A–Z jump list (A–F, G–L, M–R, S–Z, #).
+- **Downloads** use pluggable `DownloadSource`s (`app/.../download/Downloads.kt`):
+  - `FolderImportSource` works.
+  - `SteamDepotSource` is a **stub** that shows an honest error. Real Steam depot downloads need a Steam CM client (e.g. JavaSteam) with your Steam login + Steam Guard. That's the next milestone.
+- Play opens the runtime screen and launches the game's largest `.exe` via Box64 + Wine, with logs. The runtime installer and smoke test live under Settings.
+
 ## Runtime (v0.2.0): Box64 + Wine on the device
 Open **Library → Runtime & launcher**:
 1. **Install runtime**: downloads the official [Winlator v11.2.0 APK](https://github.com/brunodev85/winlator/releases/tag/v11.2.0) (~157 MB, resumable) and extracts from its assets: `rootfs.tzst` (arm64 glibc userland + x86_64 Wine in `/opt/wine`), `box64/box64-0.4.4.tzst`, `container_pattern.tzst` (ready Wine prefix) and `dxwrapper/dxvk-2.4.1.tzst`, into app-private storage, with a progress bar.
