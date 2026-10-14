@@ -5,6 +5,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -72,40 +75,65 @@ fun CategoryPopup(
         scale.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
     }
     val counts = remember(games) { games.groupingBy { LetterFilter.first(it.name).let { c -> if (c in 'A'..'Z') c.toString() else "#" } }.eachCount() }
+    val pill = RoundedCornerShape(50)
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier
                 .graphicsLayer { scaleX = scale.value; scaleY = scale.value; alpha = ((scale.value - 0.6f) / 0.4f).coerceIn(0f, 1f) }
-                .clip(RoundedCornerShape(14.dp))
-                .background(SteamColors.Panel)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xF216212C))
+                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(24.dp))
                 .animateContentSize(tween(260))
-                .widthIn(min = 280.dp, max = if (expanded) 560.dp else 320.dp)
-                .padding(16.dp)
+                .widthIn(min = 300.dp, max = if (expanded) 580.dp else 340.dp)
+                .padding(20.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            OutlinedTextField(value = query, onValueChange = onQuery, singleLine = true,
-                label = { Text("Search games") }, modifier = Modifier.fillMaxWidth())
-            if (query.isNotBlank()) Text("${games.count { it.name.contains(query, true) }} matches", fontSize = 12.sp, color = SteamColors.Muted)
-            Spacer(Modifier.height(10.dp))
-            Text("All games (${games.size})", fontWeight = FontWeight.Bold, color = SteamColors.Accent,
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onAllGames)
-                    .background(SteamColors.Card).padding(12.dp))
+            Text("Browse", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = query, onValueChange = onQuery, singleLine = true,
+                label = { Text("Search games") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = SteamColors.Accent,
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.16f),
+                    focusedTextColor = SteamColors.Text,
+                    unfocusedTextColor = SteamColors.Text,
+                    cursorColor = SteamColors.Accent,
+                    focusedLabelColor = SteamColors.Accent,
+                    unfocusedLabelColor = SteamColors.Muted,
+                ),
+            )
+            if (query.isNotBlank()) Text("${games.count { it.name.contains(query, true) }} matches", fontSize = 12.sp, color = SteamColors.Muted, modifier = Modifier.padding(top = 6.dp))
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "All games (${games.size})", fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.fillMaxWidth().clip(pill).clickable(onClick = onAllGames)
+                    .background(SteamColors.Accent.copy(alpha = 0.18f)).padding(horizontal = 16.dp, vertical = 12.dp),
+            )
             if (expanded) {
-                Spacer(Modifier.height(12.dp))
-                Text("Jump by letter", fontSize = 12.sp, color = SteamColors.Muted)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                Spacer(Modifier.height(16.dp))
+                Text("Jump by letter", fontSize = 12.sp, color = SteamColors.Muted, letterSpacing = 0.4.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
                     LetterFilter.GROUPS.forEach { g ->
-                        Text(g, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(6.dp))
-                            .clickable { onLetters(g) }.background(SteamColors.Card).padding(horizontal = 10.dp, vertical = 6.dp))
+                        Text(
+                            g, fontWeight = FontWeight.SemiBold, color = SteamColors.Text,
+                            modifier = Modifier.clip(pill).clickable { onLetters(g) }
+                                .background(SteamColors.Card).padding(horizontal = 12.dp, vertical = 8.dp),
+                        )
                     }
                 }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ('A'..'Z').forEach { c ->
                         val n = counts[c.toString()] ?: 0
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.size(width = 40.dp, height = 46.dp)
-                            .clip(RoundedCornerShape(6.dp)).clickable(enabled = n > 0) { onLetters(c.toString()) }
-                            .background(if (n > 0) SteamColors.Card else SteamColors.Bg).padding(top = 4.dp)) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.size(width = 42.dp, height = 48.dp)
+                                .clip(RoundedCornerShape(14.dp)).clickable(enabled = n > 0) { onLetters(c.toString()) }
+                                .background(if (n > 0) SteamColors.Card else Color.White.copy(alpha = 0.04f)).padding(top = 6.dp),
+                        ) {
                             Text(c.toString(), fontWeight = FontWeight.Bold, color = if (n > 0) SteamColors.Text else SteamColors.Muted)
                             Text("$n", fontSize = 10.sp, color = SteamColors.Muted)
                         }

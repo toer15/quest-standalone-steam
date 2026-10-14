@@ -7,22 +7,27 @@ import java.net.URL
 
 /**
  * Keyless Steam access, so the public app needs no built-in Web API key.
- *  - Profile (name, avatar, privacy): public `steamcommunity.com/profiles/<id>/?xml=1`. Works anonymously (verified).
- *  - Owned games: `steamcommunity.com/profiles/<id>/games/?tab=all` now redirects anonymous requests to login,
- *    so we send the steamcommunity.com cookies from the user's own Steam sign-in (the OpenID WebView).
+ * The player's own steamcommunity.com session (OpenID WebView cookies) is sent
+ * with profile and games requests, so a private profile still loads for its owner.
+ * A Steam CM / JavaSteam login is not used: that path needs a password and Steam Guard.
  */
 object KeylessSteam {
-    const val UA = "Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36"
+    const val UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    const val SIGN_IN_AGAIN = "Sign out and sign in again"
+    const val GAMES_PAGE = "https://steamcommunity.com/my/games/?tab=all"
 
-    class PrivateProfileException(msg: String) : Exception(msg)
     class NeedsLoginException(msg: String) : Exception(msg)
 
     data class Profile(val summary: PlayerSummary, val privacyState: String)
+
+    /** True when the WebView cookie jar has a steamcommunity.com login session. */
+    fun hasSession(cookie: String?) = cookie?.contains("steamLoginSecure") == true
 
     fun get(url: String, cookie: String? = null): Pair<Int, String> {
         val c = URL(url).openConnection() as HttpURLConnection
         c.instanceFollowRedirects = false
         c.setRequestProperty("User-Agent", UA)
+        c.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         if (!cookie.isNullOrBlank()) c.setRequestProperty("Cookie", cookie)
         c.connectTimeout = 20_000; c.readTimeout = 30_000
         val code = c.responseCode
@@ -30,8 +35,9 @@ object KeylessSteam {
         return code to body
     }
 
-    fun profile(steamId: String): Profile? {
-        val (code, xml) = get("https://steamcommunity.com/profiles/$steamId/?xml=1")
+    /** Profile XML. Pass the sign-in cookies so the owner can read a private profile. */
+    fun profile(steamId: String, cookie: String? = null): Profile? {
+        val (code, xml) = get("https://steamcommunity.com/profiles/$steamId/?xml=1", cookie)
         if (code != 200) return null
         return parseProfileXml(steamId, xml)
     }
@@ -47,13 +53,22 @@ object KeylessSteam {
 
     /** Owned games via the logged-in community games page. [cookie] = CookieManager cookies for steamcommunity.com. */
     fun ownedGames(steamId: String, cookie: String?): List<OwnedGame> {
+        if (!hasSession(cookie)) throw NeedsLoginException(SIGN_IN_AGAIN)
         val (code, html) = get("https://steamcommunity.com/profiles/$steamId/games/?tab=all", cookie)
-        if (code in 300..399 || html.contains("/login/?redir=")) throw NeedsLoginException("Steam needs you to be signed in to read your games list. Sign out and sign in again.")
+        return interpretGamesResponse(cookie, code, html)
+    }
+
+    /**
+     * A signed-in owner can read their own games page even when the profile is private.
+     * A missing session, a login redirect, or the visitor private-profile wall means the
+     * cookies were missing or rejected.
+     */
+    fun interpretGamesResponse(cookie: String?, code: Int, html: String): List<OwnedGame> {
+        if (hasSession(cookie) && code == 200) parseGamesPage(html)?.let { return it }
+        if (!hasSession(cookie) || code in 300..399 || html.contains("/login/?redir=") || html.contains("profile_private_info")) {
+            throw NeedsLoginException(SIGN_IN_AGAIN)
+        }
         if (code != 200) throw Exception("Steam games page returned HTTP $code")
-        val games = parseGamesPage(html)
-        if (games != null) return games
-        if (html.contains("profile_private_info") || html.contains("private", ignoreCase = true) && html.contains("gameslist").not())
-            throw PrivateProfileException(PRIVATE_MSG)
         throw Exception("Couldn't read the games list from Steam's page (format may have changed).")
     }
 
@@ -81,6 +96,4 @@ object KeylessSteam {
     }
 
     fun htmlUnescape(s: String) = s.replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-
-    const val PRIVATE_MSG = "Your Steam game details are private. In Steam: Profile → Edit Profile → Privacy Settings → set \"Game details\" to Public, then Sync."
 }

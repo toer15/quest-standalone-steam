@@ -26,11 +26,11 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk quest-standalone-steam.apk
       - uses: actions/upload-artifact@v4
         with: { name: quest-standalone-steam-apk, path: quest-standalone-steam.apk }
-      - name: Publish release v0.3.1
+      - name: Publish release v0.3.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.3.1
-          name: "v0.3.1 (works for any Steam user, no built-in key)"
+          tag_name: v0.3.2
+          name: "v0.3.2 (private libraries, modern UI)"
           prerelease: true
           files: quest-standalone-steam.apk
-          body: "Library loads for any player without a built-in API key: profile name/avatar from the public profile XML, owned games from your own Steam sign-in session. Optional: paste your own Steam Web API key (profile menu) as fallback. Clear message if game details are private. Untested on hardware."
+          body: "Your library loads from your own Steam sign-in, including when the profile is private. If the session cookies are missing, the app asks you to sign out and sign in again. An optional Web API key is only a fallback. Dark gradient UI with a glassy bar, hero banner, flip cards, and pill categories for phones and Quest 2D panels. Untested on hardware."

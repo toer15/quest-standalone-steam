@@ -22,6 +22,42 @@ class KeylessSteamTest {
 
     @Test fun unknownPageReturnsNull() = assertEquals(null, KeylessSteam.parseGamesPage("<html>nothing</html>"))
 
+    @Test fun signedInPageReturnsGamesEvenIfMarkupMentionsPrivacy() {
+        val html = """<div class="profile_private_info"></div><template data-profile-gameslist="{&quot;rgGames&quot;:[{&quot;appid&quot;:10,&quot;name&quot;:&quot;Counter-Strike&quot;,&quot;playtime_forever&quot;:5}]}"></template>"""
+        val g = KeylessSteam.interpretGamesResponse("steamLoginSecure=session", 200, html)
+        assertEquals(10, g[0].appId)
+    }
+
+    @Test fun missingSessionAsksToSignInAgain() {
+        try {
+            KeylessSteam.interpretGamesResponse(null, 200, "<html>profile_private_info</html>")
+            throw AssertionError("expected NeedsLogin")
+        } catch (e: KeylessSteam.NeedsLoginException) {
+            assertEquals(KeylessSteam.SIGN_IN_AGAIN, e.message)
+            assertTrue(!e.message!!.contains("Public"))
+            assertTrue(!e.message!!.contains("privacy", ignoreCase = true))
+            assertTrue(!e.message!!.contains("Game details"))
+        }
+    }
+
+    @Test fun rejectedSessionAsksToSignInAgain() {
+        try {
+            KeylessSteam.interpretGamesResponse("steamLoginSecure=session", 302, "")
+            throw AssertionError("expected NeedsLogin")
+        } catch (e: KeylessSteam.NeedsLoginException) {
+            assertEquals("Sign out and sign in again", e.message)
+        }
+    }
+
+    @Test fun privateWallWithoutGamesAsksToSignInAgain() {
+        try {
+            KeylessSteam.interpretGamesResponse("steamLoginSecure=session", 200, """<div class="profile_private_info">This profile is private</div>""")
+            throw AssertionError("expected NeedsLogin")
+        } catch (e: KeylessSteam.NeedsLoginException) {
+            assertEquals(KeylessSteam.SIGN_IN_AGAIN, e.message)
+        }
+    }
+
     /** Live: public profile XML works without a key. Run with -Dlive=1 */
     @Test fun liveProfileXml() {
         assumeTrue(System.getProperty("live") == "1")
@@ -34,6 +70,6 @@ class KeylessSteamTest {
     @Test fun liveGamesNeedsLogin() {
         assumeTrue(System.getProperty("live") == "1")
         try { KeylessSteam.ownedGames("76561198006409530", null); throw AssertionError("expected NeedsLogin") }
-        catch (e: KeylessSteam.NeedsLoginException) { println("anonymous games page -> needs login (expected)") }
+        catch (e: KeylessSteam.NeedsLoginException) { assertEquals(KeylessSteam.SIGN_IN_AGAIN, e.message) }
     }
 }

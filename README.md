@@ -14,13 +14,17 @@ Grab `quest-standalone-steam.apk` from [Releases](https://github.com/toer15/ques
 | Steam login + library | yes | yes (2D panel) |
 | Runtime installer, import game, run .exe | yes (flat, via Termux:X11) | yes (flat 2D panel via Termux:X11); VR bridge TODO |
 
-## Steam library without a built-in key (v0.3.1)
-The public APK ships with **no** Steam Web API key. Each player signs in with their own Steam account:
-- **Profile name + avatar** come from the public `steamcommunity.com/profiles/<id>/?xml=1` (works anonymously; tested).
-- **Owned games** come from `steamcommunity.com/profiles/<id>/games/?tab=all`. Steam now redirects anonymous requests for that page to login, so the app sends the cookies from your own Steam sign-in WebView. The page parser is unit-tested, but the signed-in request is **untested on hardware**.
+## Steam library without a built-in key (v0.3.2)
+The public APK ships with **no** Steam Web API key. Each player signs in with their own Steam account. A private profile still loads for its owner.
+- After OpenID, the login WebView opens `https://steamcommunity.com/my/games/?tab=all` so the `steamcommunity.com` session stays in the app.
+- **Profile name + avatar** come from `steamcommunity.com/profiles/<id>/?xml=1`, sent with that session.
+- **Owned games** come from your own games page with those cookies. The page parser is unit-tested. The signed-in request is **untested on hardware**.
+- If the session cookies are missing or Steam rejects them, the app says **Sign out and sign in again**.
 - **Fallback**: in the profile menu, choose *Steam API key (optional)…* and paste your own key from https://steamcommunity.com/dev/apikey. It's stored only on your device.
-- If your game details are private, the app tells you to set *Profile → Edit Profile → Privacy Settings → Game details* to **Public**.
 - Builders can still put `STEAM_API_KEY` in `local.properties` for personal builds. Never commit it.
+
+## Look (v0.3.2)
+Dark gradient backdrop, glassy top bar with a sliding tab indicator, a Home hero of your most-played game, larger flip cards with press and hover scale, shimmer while art loads, pill category chips, and a progress ring on downloads. The same layout fits a phone and a Quest 2D panel.
 
 ## Launcher UI (v0.3.0)
 Jetpack Compose with a dark, Steam-style theme. It works on phones and as a Quest 2D panel.
@@ -87,7 +91,7 @@ docs/           Depot download + copy instructions
 
 ## Setup
 1. Install Android Studio (JDK 17, Android SDK 34, NDK for the bridge later).
-2. `cp local.properties.example local.properties` and set `STEAM_API_KEY` (from https://steamcommunity.com/dev/apikey). It's git-ignored — never commit it. Your Steam profile's game details must be public for GetOwnedGames.
+2. `cp local.properties.example local.properties` and, if you want one, set `STEAM_API_KEY` (from https://steamcommunity.com/dev/apikey). It's git-ignored — never commit it. The library loads from your Steam sign-in session; the key is only an optional fallback.
 3. Open in Android Studio, or run `gradle wrapper --gradle-version 8.7` once (the binary wrapper jar isn't committed) then `./gradlew :app:assembleDebug`.
 
 ## Sideload to Quest 3

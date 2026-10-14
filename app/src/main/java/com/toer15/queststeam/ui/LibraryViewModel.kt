@@ -38,7 +38,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         get() = session.apiKey
         set(v) { session.apiKey = v; sync() }
 
-    /** Key priority: player's own key from Settings, then a build-time key (personal builds only; CI has none). */
+    /** Optional fallback only: a key the player pasted, or a personal build-time key. CI has none. */
     private fun effectiveKey(): String? = session.apiKey ?: BuildConfig.STEAM_API_KEY.takeIf { it.isNotBlank() }
 
     fun sync() {
@@ -49,21 +49,24 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 _status.value = "Syncing Steam account…"
                 val key = effectiveKey()
-                val prof = withContext(Dispatchers.IO) { runCatching { KeylessSteam.profile(id) }.getOrNull() }
-                _profile.value = prof?.summary ?: key?.let { SteamApi.getPlayerSummary(it, id) }
-                if (prof != null && prof.privacyState != "public" && key == null) {
-                    _status.value = "Your Steam profile is ${prof.privacyState}. " + KeylessSteam.PRIVATE_MSG; return@launch
-                }
-                // 1) keyless via the user's own Steam sign-in cookies, 2) Web API key fallback.
-                var source = "Steam profile"
+                val cookie = CookieManager.getInstance().getCookie("https://steamcommunity.com")
+                val prof = withContext(Dispatchers.IO) { runCatching { KeylessSteam.profile(id, cookie) }.getOrNull() }
+                if (prof != null) _profile.value = prof.summary
+                else if (key != null) _profile.value = SteamApi.getPlayerSummary(key, id)
+                // Always read the owner's games page with the sign-in cookies, including private profiles.
+                var source = "Steam session"
                 val owned = try {
-                    withContext(Dispatchers.IO) { KeylessSteam.ownedGames(id, CookieManager.getInstance().getCookie("https://steamcommunity.com")) }
+                    withContext(Dispatchers.IO) { KeylessSteam.ownedGames(id, cookie) }
                 } catch (e: Exception) {
                     if (key == null) throw e
                     source = "Steam Web API"
                     SteamApi.getOwnedGames(key, id)
                 }.sortedBy { it.name.lowercase() }
-                if (owned.isEmpty()) { _status.value = "Steam returned no games. " + KeylessSteam.PRIVATE_MSG; return@launch }
+                if (owned.isEmpty()) {
+                    _games.value = emptyList()
+                    _status.value = "Steam returned no games."
+                    return@launch
+                }
                 _games.value = owned
                 downloads.refresh(owned.map { it.appId })
                 var n = 0
@@ -72,8 +75,8 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 _games.value = owned.toList()
                 _status.value = "${owned.size} games · ${owned.count { it.isVr }} VR · via $source"
-            } catch (e: KeylessSteam.PrivateProfileException) {
-                _status.value = e.message ?: KeylessSteam.PRIVATE_MSG
+            } catch (e: KeylessSteam.NeedsLoginException) {
+                _status.value = KeylessSteam.SIGN_IN_AGAIN
             } catch (e: Exception) {
                 _status.value = "Sync failed: ${e.message}" + if (effectiveKey() == null) "\nTip: add your own Steam Web API key in the profile menu → Steam API key." else ""
             } finally { _syncing.value = false }
