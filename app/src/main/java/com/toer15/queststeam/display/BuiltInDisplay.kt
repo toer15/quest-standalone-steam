@@ -71,7 +71,8 @@ object BuiltInDisplay {
         xs.setRenderer(renderer)
         xs.windowManager.addOnWindowModificationListener(object : WindowManager.OnWindowModificationListener {
             override fun onUpdateWindowContent(window: Window) {
-                if (!_gameWindow.value && window.isApplicationWindow) {
+                // Wine's desktop (explorer.exe) draws first; only the game's own windows count.
+                if (!_gameWindow.value && window.isApplicationWindow && !window.className.contains("explorer.exe")) {
                     _gameWindow.value = true
                     log("Game window is open (${window.className.ifBlank { "window" }}, ${window.width}x${window.height}).")
                 }

@@ -61,9 +61,12 @@ object Vortek {
                 .onFailure { lib.copyTo(viaLib, overwrite = true) }
         }
 
-        val vk = deviceVulkan(ctx)
+        // The driver's own answer first (Android's feature flag says 1.1 on the Quest 3 even when the
+        // driver does 1.3); DXVK 2.x needs 1.3, like Winlator's rule.
+        val probed = VkProbe.info()
+        val vk = probed?.let { it.major to it.minor } ?: deviceVulkan(ctx)
         val dxvk = if (vk == null || vk.first > 1 || vk.second >= 3) "2.4.1" else "1.10.3"
-        log("Headset Vulkan ${vk?.let { "${it.first}.${it.second}" } ?: "unknown"} → DXVK $dxvk.")
+        log("Headset Vulkan ${vk?.let { "${it.first}.${it.second}" } ?: "unknown"}${probed?.gpu?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""} → DXVK $dxvk.")
         val windows = File(rootfs, "home/xuser/.wine/drive_c/windows")
         val dxvkMarker = File(windows, ".qss-dxvk")
         val current = runCatching { dxvkMarker.readText().trim() }.getOrNull() ?: "2.4.1"

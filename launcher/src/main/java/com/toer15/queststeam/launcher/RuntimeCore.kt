@@ -66,7 +66,7 @@ object RuntimeCore {
             put("MESA_VK_WSI_PRESENT_MODE", "mailbox")
             put("MESA_SHADER_CACHE_DIR", "$r/tmp/mesa-cache")
             put("vblank_mode", "0")
-            put("DXVK_LOG_LEVEL", "warn")
+            put("DXVK_LOG_LEVEL", "info")
             put("DXVK_STATE_CACHE_PATH", "$r/tmp")
             put("QSS_MODE", mode)
             if (!display.isNullOrBlank()) put("DISPLAY", display)

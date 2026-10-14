@@ -21,7 +21,8 @@ add_library(winlator SHARED
             ${WINLATOR_SRC}/drawable.c
             ${WINLATOR_SRC}/gpu_image.c
             ${WINLATOR_SRC}/sysvshared_memory.c
-            ${WINLATOR_SRC}/xconnector_epoll.c)
+            ${WINLATOR_SRC}/xconnector_epoll.c
+            vk_probe.c)
 target_include_directories(winlator PRIVATE ${WINLATOR_SRC})
 target_compile_options(winlator PRIVATE -O2 -Wno-unused-function -Wimplicit-function-declaration)
 target_link_libraries(winlator log android jnigraphics EGL GLESv2 GLESv3 dl)

@@ -62,6 +62,15 @@ object GameRunner {
 
     fun clearLog() { _log.value = "" }
 
+    private val important = Regex("err:|warn:|Found device|Driver:|error|fail|DXVK|Vortek|Vulkan|exited with code|D3D|wine:|X Error|\\[android log\\]|\\b[EF]/[A-Za-z]", RegexOption.IGNORE_CASE)
+
+    /** The log lines that explain a failure (Wine/DXVK errors, GPU driver, exit code), newest last. */
+    fun importantLines(log: String, max: Int = 18): List<String> {
+        val all = log.trimEnd().lines()
+        val picked = all.filter { important.containsMatchIn(it) && !it.contains("I/Adreno") }
+        return (if (picked.size >= 3) picked else all).takeLast(max)
+    }
+
     fun appendLog(line: String) {
         val s = _log.value + line + "\n"
         _log.value = if (s.length > 120_000) s.takeLast(100_000) else s
@@ -251,6 +260,7 @@ object GameRunner {
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         appendNativeLog()
+        appendUnityLog()
         launcher?.killLeftovers()
         scope.launch {
             BuiltInDisplay.stop()
@@ -280,15 +290,37 @@ object GameRunner {
         }.getOrElse { appendLog("[android log unavailable: ${it.message}]"); return }
         nativeLogShownUntil = System.currentTimeMillis()
         val keep = Regex("vortek|Vortek|VORTEK|vulkan|Vulkan|adreno|Adreno|AHardwareBuffer|linker|DEBUG|libc|FATAL|AndroidRuntime|UnsatisfiedLink|JNI|kgsl", RegexOption.IGNORE_CASE)
-        val picked = lines.filter { keep.containsMatchIn(it) && !it.contains("logcat") }.takeLast(40)
+        // The Adreno driver prints a long info dump for every Vulkan device; only warnings/errors matter.
+        val noise = Regex("\\bI/Adreno|W/Adreno-AppProfiles|I/AdrenoVK")
+        val picked = lines.filter { keep.containsMatchIn(it) && !noise.containsMatchIn(it) && !it.contains("logcat") }.takeLast(40)
         if (picked.isNotEmpty()) {
             appendLog("[android log]")
             picked.forEach { appendLog("  " + it.substringAfter(' ').substringAfter(' ').take(300)) }
         }
     }
 
+    /**
+     * Unity games write why they stopped (e.g. "Failed to initialize graphics") to Player.log in
+     * AppData\LocalLow\<company>\<game>; its important lines go into the log.
+     */
+    private fun appendUnityLog() {
+        val l = launcher ?: return
+        val since = gameStartedAt
+        val users = File(l.prefix, "drive_c/users")
+        val logs = users.listFiles().orEmpty().mapNotNull { File(it, "AppData/LocalLow").takeIf(File::isDirectory) }
+            .flatMap { low -> low.walkTopDown().maxDepth(3).filter { it.name == "Player.log" && it.lastModified() >= since - 5_000 }.toList() }
+        val log = logs.maxByOrNull { it.lastModified() } ?: return
+        val keep = Regex("d3d|dxgi|direct3d|vulkan|gfxdevice|graphics|error|fail|exception|gpu|renderer|adapter", RegexOption.IGNORE_CASE)
+        val lines = runCatching { log.readLines() }.getOrDefault(emptyList()).filter { it.isNotBlank() && keep.containsMatchIn(it) }.takeLast(15)
+        if (lines.isNotEmpty()) {
+            appendLog("[game log: ${log.parentFile?.name}/Player.log]")
+            lines.forEach { appendLog("  " + it.take(300)) }
+        }
+    }
+
     fun stop(ctx: Context) {
         appendNativeLog()
+        appendUnityLog()
         job?.cancel()
         launcher?.stop()
         BuiltInDisplay.stop()

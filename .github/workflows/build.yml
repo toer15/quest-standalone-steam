@@ -91,17 +91,23 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.1
+      - name: Publish release v0.12.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.1
+          tag_name: v0.12.2
           target_commitish: ${{ github.sha }}
-          name: "v0.12.1: Vortek fixes, clean restart between games, GPU log"
+          name: "v0.12.2: DXVK picked from the real GPU driver, no more out-of-memory crash"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.2:**
+            - **"Failed to initialize player / Failed to initialize graphics" (Unity, DirectX 11):** the app asked Android for the Quest's Vulkan version, which says 1.1, so it installed the old DXVK 1.10.3. It now asks the GPU driver itself (like Winlator) and uses DXVK 2.4.1 when the driver supports Vulkan 1.3.
+            - **Fixes the app closing with "OutOfMemoryError":** the game's screen buffers count against the app's memory, so the app now asks Android for the large memory limit (like Winlator).
+            - The loading screen no longer says "Opening game now" just because Wine's desktop appeared; it waits for the game's own window.
+            - Better error info: the error screen shows Wine/DXVK errors instead of the GPU driver's info dump, DXVK says which GPU it found and why it fails, and Unity games' own Player.log errors are added to the log.
 
             **v0.12.1:**
             - **Fixes the next game failing after a stopped one** ("X Error … BadWindow … X_CreateWindow"): stopping a game left Wine's background processes running, and the next game used their old windows. Now every Wine process from the last game is closed before a game starts and when it stops.

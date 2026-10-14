@@ -130,7 +130,7 @@ fun LaunchOverlay(stage: LaunchStage, appId: Int, log: String, onShowGame: () ->
                                 Text(stage.message, color = SteamColors.Text, fontSize = 14.sp, textAlign = TextAlign.Center)
                                 Spacer(Modifier.height(10.dp))
                                 Text(
-                                    log.trimEnd().lines().takeLast(14).joinToString("\n"),
+                                    GameRunner.importantLines(log).joinToString("\n"),
                                     color = Color(0xFFC8D2DA), fontSize = 11.sp, fontFamily = FontFamily.Monospace, lineHeight = 14.sp,
                                     modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(12.dp))
                                         .background(Color.Black.copy(alpha = 0.4f)).verticalScroll(rememberScrollState()).padding(10.dp),
