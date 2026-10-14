@@ -33,4 +33,11 @@ class StoreApiTest {
         assertTrue(p[570]!!.free)
         assertTrue(1 !in p)
     }
+
+    @Test fun parsesFeaturedLists() {
+        val json = """{"top_sellers":{"id":"cat_topsellers","items":[{"id":730,"type":0,"name":"Counter-Strike 2"},{"id":5,"type":1,"name":"Pack"}]},
+            "specials":{"items":[{"id":620980,"type":0,"name":"Beat Saber"}]}}"""
+        assertEquals(listOf(730), StoreApi.parseFeatured(json, StoreApi.Section.TopSellers).map { it.appId })
+        assertEquals(listOf(730, 620980), StoreApi.parseFeatured(json, StoreApi.Section.All).map { it.appId })
+    }
 }

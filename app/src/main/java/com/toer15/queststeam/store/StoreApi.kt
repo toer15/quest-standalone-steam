@@ -43,10 +43,14 @@ object StoreApi {
             else if (section.query.isNotBlank()) append('&').append(section.query)
         }
         val items = runCatching { parseSearch(get(q)) }.getOrDefault(emptyList())
-        // Fallback for search: the store's suggestion API (first results only).
-        if (items.isEmpty() && term.isNotBlank() && start == 0)
-            runCatching { parseStoreSearch(get("https://store.steampowered.com/api/storesearch/?term=${URLEncoder.encode(term.trim(), "UTF-8")}&l=english&cc=$country")) }.getOrDefault(emptyList())
-        else items
+        when {
+            items.isNotEmpty() || start != 0 -> items
+            // Fallbacks: the store's suggestion API for searches, the front page lists for sections.
+            term.isNotBlank() -> runCatching {
+                parseStoreSearch(get("https://store.steampowered.com/api/storesearch/?term=${URLEncoder.encode(term.trim(), "UTF-8")}&l=english&cc=$country"))
+            }.getOrDefault(emptyList())
+            else -> runCatching { parseFeatured(get("https://store.steampowered.com/api/featuredcategories?cc=$country&l=english"), section) }.getOrDefault(emptyList())
+        }
     }
 
     /** Prices for many games at once (Steam allows a list of appids with filters=price_overview). */
@@ -97,6 +101,25 @@ object StoreApi {
             if (o.optString("type", "app") != "app") return@mapNotNull null
             StoreItem(o.optInt("id").takeIf { it > 0 } ?: return@mapNotNull null, o.optString("name"))
         }
+    }
+
+    /** api/featuredcategories: {"top_sellers":{"items":[{"id":730,"name":"…"}]},"new_releases":…,"specials":…} */
+    fun parseFeatured(json: String, section: Section): List<StoreItem> {
+        val root = JSONObject(json)
+        val keys = when (section) {
+            Section.TopSellers -> listOf("top_sellers")
+            Section.Trending -> listOf("new_releases", "top_sellers")
+            Section.Specials -> listOf("specials")
+            else -> listOf("top_sellers", "new_releases", "specials", "coming_soon")
+        }
+        return keys.flatMap { k ->
+            val items = root.optJSONObject(k)?.optJSONArray("items") ?: return@flatMap emptyList()
+            (0 until items.length()).mapNotNull { i ->
+                val o = items.getJSONObject(i)
+                if (o.optInt("type", 0) != 0) return@mapNotNull null
+                StoreItem(o.optInt("id").takeIf { it > 0 } ?: return@mapNotNull null, o.optString("name"))
+            }
+        }.distinctBy { it.appId }
     }
 
     /** api/appdetails?filters=price_overview: free games come back with "data": []. */

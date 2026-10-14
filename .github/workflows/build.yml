@@ -33,15 +33,6 @@ jobs:
           # Controller bridge: XInput DLLs (64 + 32-bit), tested with a fake controller under Wine.
           openvr-bridge/win/build_xinput.sh app/src/quest/assets/gamepad
           openvr-bridge/test/run_pad_test.sh app/src/quest/assets/gamepad/xinput64.dll
-      - name: Check the Steam store endpoints the Store tab uses (informational)
-        continue-on-error: true
-        run: |
-          set -x
-          curl -sS -m 30 "https://store.steampowered.com/search/results/?json=1&infinite=1&category1=998&start=0&count=5&cc=us&l=english&filter=topsellers" | head -c 600; echo
-          curl -sS -m 30 "https://store.steampowered.com/search/results/?json=1&infinite=1&category1=998&start=0&count=3&cc=us&l=english&term=beat%20saber" | head -c 400; echo
-          curl -sS -m 30 "https://store.steampowered.com/api/appdetails?appids=620980,570,546560&filters=price_overview&cc=us" | head -c 600; echo
-          curl -sS -o /dev/null -w "new header %{http_code}\n" "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3241660/header.jpg"
-          curl -sS -o /dev/null -w "old header %{http_code}\n" "https://cdn.cloudflare.steamstatic.com/steam/apps/3241660/header.jpg"
       - name: Build the Quest 3 APK
         env:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
@@ -115,3 +106,13 @@ jobs:
             **v0.6.0:** in-app updates (Update now with progress and time left; Home → Check for updates).
             **v0.5.x:** faster app (release builds), SteamVR bridge into the headset, Turnip GPU driver + DXVK.
             Untested on hardware; feedback welcome.
+      - name: Check the Steam store endpoints the Store tab uses (informational)
+        continue-on-error: true
+        run: |
+          set -x
+          curl -sS -m 30 "https://store.steampowered.com/search/results/?json=1&infinite=1&category1=998&start=0&count=5&cc=us&l=english&filter=topsellers" | head -c 1200; echo
+          curl -sS -m 30 "https://store.steampowered.com/search/results/?json=1&infinite=1&category1=998&start=0&count=3&cc=us&l=english&term=beat%20saber" | head -c 400; echo
+          curl -sS -m 30 "https://store.steampowered.com/api/featuredcategories?cc=us&l=english" | head -c 600; echo
+          curl -sS -m 30 "https://store.steampowered.com/api/appdetails?appids=620980,570,546560&filters=price_overview&cc=us" | head -c 1200; echo
+          curl -sS -o /dev/null -w "new header %{http_code}\n" "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3241660/header.jpg"
+          curl -sS -o /dev/null -w "old header %{http_code}\n" "https://cdn.cloudflare.steamstatic.com/steam/apps/3241660/header.jpg"
