@@ -29,9 +29,13 @@ def replace(data, old, new, expect):
     return data.replace(old, new)
 
 
+# Adrenotools' hook libraries, loaded by the renderer from the app's native library folder.
+HOOKS = ("libhook_impl.so", "libmain_hook.so", "libfile_redirect_hook.so", "libgsl_alloc_hook.so")
+
 with zipfile.ZipFile(apk) as z:
     renderer = z.read("lib/arm64-v8a/libvortekrenderer.so")
     helpers = z.read("lib/arm64-v8a/libwinlator.so")
+    hooks = {h: z.read(f"lib/arm64-v8a/{h}") for h in HOOKS}
     driver = z.read("assets/graphics_driver/vortek-2.1.tzst")
     # DXVK 2.x needs Vulkan 1.3; the app picks 1.10.3 when the headset's driver is older.
     dxvk = {v: z.read(f"assets/dxwrapper/dxvk-{v}.tzst") for v in ("1.10.3", "2.4.1")}
@@ -40,8 +44,11 @@ renderer = replace(renderer, b"libwinlator.so\0", b"libwlvortek.so\0", 1)
 helpers = replace(helpers, b"libwinlator.so\0", b"libwlvortek.so\0", 1)
 helpers = replace(helpers, b"Java_com_winlator", b"Java_qss_winlator", helpers.count(b"Java_com_winlator"))
 assert b"Java_com_winlator" not in helpers
+# Their cache files (/data/data/com.winlator/cache/...) go to this app's cache folder (same length).
+renderer = replace(renderer, b"/data/data/com.winlator/", b"/data/data/com.qssteam//", 3)
+helpers = replace(helpers, b"/data/data/com.winlator/", b"/data/data/com.qssteam//", 1)
 
-for name, data in (("libvortekrenderer.so", renderer), ("libwlvortek.so", helpers)):
+for name, data in [("libvortekrenderer.so", renderer), ("libwlvortek.so", helpers), *hooks.items()]:
     with open(os.path.join(libdir, name), "wb") as f:
         f.write(data)
 with open(os.path.join(assetdir, "vortek-2.1.tzst"), "wb") as f:

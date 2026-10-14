@@ -81,7 +81,7 @@ jobs:
             || { echo "APK is not signed with the sideload key ($want)"; exit 1; }
           "$bt/aapt2" dump badging quest-steam-quest3.apk | head -3
           # The game's GPU path: our X server (libwinlator) + Vortek (renderer, helpers, guest driver, DXVK).
-          for f in lib/arm64-v8a/libwinlator.so lib/arm64-v8a/libvortekrenderer.so lib/arm64-v8a/libwlvortek.so \
+          for f in lib/arm64-v8a/libwinlator.so lib/arm64-v8a/libvortekrenderer.so lib/arm64-v8a/libwlvortek.so lib/arm64-v8a/libmain_hook.so lib/arm64-v8a/libhook_impl.so \
                    assets/graphics/vortek-2.1.tzst assets/graphics/dxvk-1.10.3.tzst assets/graphics/dxvk-2.4.1.tzst; do
             unzip -l quest-steam-quest3.apk "$f" | grep -q "$f" || { echo "missing in APK: $f"; exit 1; }
           done
@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.0
+      - name: Publish release v0.12.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.0
+          tag_name: v0.12.1
           target_commitish: ${{ github.sha }}
-          name: "v0.12.0: games draw with the Quest's own GPU driver (Vortek)"
+          name: "v0.12.1: Vortek fixes, clean restart between games, GPU log"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.1:**
+            - **Fixes the next game failing after a stopped one** ("X Error … BadWindow … X_CreateWindow"): stopping a game left Wine's background processes running, and the next game used their old windows. Now every Wine process from the last game is closed before a game starts and when it stops.
+            - Vortek: its cache files now go to this app's own folder (they pointed at Winlator's), and it gets the helper libraries Winlator ships with it.
+            - The log shows what the GPU driver does ("Vortek: the game's Vulkan connected", "Vulkan device ready", or why it failed) plus the app's own Android log lines about the GPU, so the next screenshot shows exactly where it stops.
 
             **v0.12.0:**
             - **Fixes games stopping with "BO init VK_ERROR_OUT_OF_DEVICE_MEMORY" / "Failed to create D3D11 device".** The Quest doesn't let the Turnip GPU driver use the GPU. Games now draw through **Vortek** (Winlator 11's default): the game's Vulkan calls run on the Quest's own GPU driver inside this app, and the picture goes straight into the game screen in the app's window.

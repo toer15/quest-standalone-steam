@@ -109,6 +109,11 @@ object GameRunner {
 
     private suspend fun start(ctx: Context, exe: File, args: String, mode: String, title: String) {
         val l = launcher ?: GameLauncher(ctx.applicationContext).also { launcher = it }
+        gameStartedAt = System.currentTimeMillis()
+        withContext(Dispatchers.IO) {
+            val k = l.killLeftovers()
+            if (k > 0) appendLog("Closed $k Wine process(es) left over from the last game.")
+        }
         val disp = display(ctx)
         val gameDir = gameRoot(l, exe)
         val env = mutableMapOf<String, String>()
@@ -207,6 +212,7 @@ object GameRunner {
                         lastNote = secs
                         val n = BuiltInDisplay.server?.windowManager?.rootWindow?.children?.size ?: 0
                         appendLog("[waiting ${secs}s] the game hasn't drawn its window yet ($n windows on the display)")
+                        withContext(Dispatchers.IO) { appendNativeLog() }
                     }
                 } else {
                     val windows = withContext(Dispatchers.IO) { XProbe.visibleWindows() }
@@ -244,6 +250,8 @@ object GameRunner {
     private fun onGameExit(ctx: Context, title: String, code: Int) {
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
+        appendNativeLog()
+        launcher?.killLeftovers()
         scope.launch {
             BuiltInDisplay.stop()
             _stage.value = when (_stage.value) {
@@ -254,7 +262,33 @@ object GameRunner {
         }
     }
 
+    @Volatile private var gameStartedAt = 0L
+    @Volatile private var nativeLogShownUntil = 0L
+
+    /**
+     * Adds this app's own Android log lines about the GPU driver (Vortek, Vulkan, crashes) since the
+     * game started, so a failure can be read from the in-app log. An app may read its own log lines.
+     */
+    private fun appendNativeLog() {
+        val since = maxOf(gameStartedAt, nativeLogShownUntil)
+        if (since <= 0L) return
+        val fmt = java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+        val lines = runCatching {
+            val p = ProcessBuilder("logcat", "-d", "-v", "time", "-T", fmt.format(java.util.Date(since)), "--pid=${android.os.Process.myPid()}")
+                .redirectErrorStream(true).start()
+            p.inputStream.bufferedReader().readLines().also { p.waitFor() }
+        }.getOrElse { appendLog("[android log unavailable: ${it.message}]"); return }
+        nativeLogShownUntil = System.currentTimeMillis()
+        val keep = Regex("vortek|Vortek|VORTEK|vulkan|Vulkan|adreno|Adreno|AHardwareBuffer|linker|DEBUG|libc|FATAL|AndroidRuntime|UnsatisfiedLink|JNI|kgsl", RegexOption.IGNORE_CASE)
+        val picked = lines.filter { keep.containsMatchIn(it) && !it.contains("logcat") }.takeLast(40)
+        if (picked.isNotEmpty()) {
+            appendLog("[android log]")
+            picked.forEach { appendLog("  " + it.substringAfter(' ').substringAfter(' ').take(300)) }
+        }
+    }
+
     fun stop(ctx: Context) {
+        appendNativeLog()
         job?.cancel()
         launcher?.stop()
         BuiltInDisplay.stop()

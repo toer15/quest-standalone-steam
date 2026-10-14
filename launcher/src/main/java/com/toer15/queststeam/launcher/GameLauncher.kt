@@ -15,7 +15,7 @@ data class LaunchResult(val ok: Boolean, val message: String)
  * TODO: embed an in-app X server (port of Winlator's Java XServer, LGPL) to drop the Termux dependency.
  * VR: the game's openvr_api.dll is replaced by the bridge (see app VrBridge); QSS_VR_SHM tells it where to connect.
  */
-class GameLauncher(ctx: Context) {
+class GameLauncher(private val ctx: Context) {
 
     private val installer = RuntimeInstaller(ctx)
     val rootfs: File get() = installer.rootfs
@@ -95,7 +95,31 @@ class GameLauncher(ctx: Context) {
     /** Sanity check that needs no display. */
     fun smokeTest(onLine: (String) -> Unit) = runWine(listOf("cmd", "/c", "ver"), null, null, onLine = onLine)
 
-    fun stop() { current?.destroy(); current = null }
+    fun stop() { current?.destroy(); current = null; killLeftovers() }
+
+    /**
+     * Kills every Wine/Box64 process this app started (wineserver, explorer, the game, wineboot…).
+     * Stopping only the first process leaves the rest running, and the next game then talks to a
+     * wineserver that remembers the old display's windows (X error BadWindow on X_CreateWindow).
+     * Returns how many were killed. Keeps this app's own processes and the Termux:X11 server.
+     */
+    fun killLeftovers(): Int {
+        val me = android.os.Process.myPid()
+        val uid = android.os.Process.myUid()
+        var n = 0
+        File("/proc").listFiles()?.forEach { d ->
+            val pid = d.name.toIntOrNull() ?: return@forEach
+            if (pid == me) return@forEach
+            val status = runCatching { File(d, "status").readText() }.getOrNull() ?: return@forEach
+            val procUid = Regex("(?m)^Uid:\\s+(\\d+)").find(status)?.groupValues?.get(1)?.toIntOrNull()
+            if (procUid != uid) return@forEach
+            val cmd = runCatching { File(d, "cmdline").readText().replace('\u0000', ' ').trim() }.getOrDefault("")
+            if (cmd.startsWith(ctx.packageName) || cmd.contains("app_process") || cmd.startsWith("logcat") || cmd.startsWith("sh ")) return@forEach
+            android.os.Process.killProcess(pid)
+            n++
+        }
+        return n
+    }
 
     fun findExes(dir: File): List<File> = dir.walkTopDown()
         .filter { it.isFile && it.extension.equals("exe", true) && !it.name.contains("unins", true) }

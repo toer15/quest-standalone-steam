@@ -102,6 +102,8 @@ object BuiltInDisplay {
         )
         if (useVortek) {
             try {
+                File(ctx.cacheDir, "vortek").mkdirs()
+                VortekRendererComponent.logger = java.util.function.Consumer { log(it) }
                 val component = VortekRendererComponent(
                     xs, v, UnixSocketConfig.createSocket(root, Vortek.SOCKET),
                     VortekRendererComponent.Options(), ctx.applicationInfo.nativeLibraryDir,

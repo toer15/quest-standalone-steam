@@ -16,6 +16,7 @@ import com.winlator.xserver.Window;
 import com.winlator.xserver.XServer;
 
 import java.io.IOException;
+import java.util.function.Consumer;
 
 /**
  * Vortek: the game's Vulkan calls (from the guest ICD libvulkan_vortek.so) come over a Unix socket
@@ -30,6 +31,13 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
     private final UnixSocketConfig socketConfig;
     private final XServer xServer;
     private final XServerView xServerView;
+    /** Where connection events go (the game log). */
+    public static volatile Consumer<String> logger = null;
+
+    private static void log(String line) {
+        Consumer<String> l = logger;
+        if (l != null) l.accept(line);
+    }
 
     static {
         System.loadLibrary("vortekrenderer");
@@ -121,11 +129,13 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
             client.setTag(null);
             destroyVkContext((Long)tag);
         }
+        log("Vortek: the game's Vulkan disconnected.");
     }
 
     @Override
     public void handleNewConnection(Client client) {
         client.createIOStreams();
+        log("Vortek: the game's Vulkan connected.");
     }
 
     @Override
@@ -138,12 +148,17 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
             long contextPtr = createVkContext(client.clientSocket.fd, options);
             if (contextPtr > 0) {
                 client.setTag(contextPtr);
+                log("Vortek: Vulkan device ready.");
             }
-            else connector.killConnection(client);
+            else {
+                log("Vortek: couldn't create the Vulkan device on the headset's driver.");
+                connector.killConnection(client);
+            }
         }
         else if (requestCode > 32767 && (requestCode >> 16) == 2) {
             Object tag = client.getTag();
             if (tag == null || !handleExtraDataRequest((Long)tag, requestCode & 0xffff, requestLength)) {
+                log("Vortek: request " + (requestCode & 0xffff) + " failed.");
                 throw new IOException("Failed to handle extra data request.");
             }
         }
