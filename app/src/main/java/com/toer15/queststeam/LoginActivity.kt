@@ -34,7 +34,7 @@ class LoginActivity : AppCompatActivity() {
                     val id = SteamOpenId.verify(req.url)
                     if (id != null) {
                         SessionStore(this@LoginActivity).steamId = id
-                        startActivity(Intent(this@LoginActivity, LibraryActivity::class.java))
+                        startActivity(Intent(this@LoginActivity, MainActivity::class.java))
                         finish()
                     } else {
                         Toast.makeText(this@LoginActivity, "Steam login could not be verified", Toast.LENGTH_LONG).show()

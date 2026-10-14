@@ -28,6 +28,11 @@ import java.io.File
 /** Runtime installer + "pick a game and run it with Box64/Wine" screen, with live logs. */
 class RuntimeActivity : AppCompatActivity() {
 
+    companion object {
+        const val EXTRA_EXE = "exe"
+        const val EXTRA_TITLE = "title"
+    }
+
     private lateinit var launcher: GameLauncher
     private lateinit var status: TextView
     private lateinit var progress: ProgressBar
@@ -77,6 +82,15 @@ class RuntimeActivity : AppCompatActivity() {
 
         displayField.setOnFocusChangeListener { _, _ -> prefs.edit().putString("display", displayField.text.toString()).apply() }
         refreshStatus()
+        intent.getStringExtra(EXTRA_EXE)?.let { path ->
+            title = intent.getStringExtra(EXTRA_TITLE) ?: "Play"
+            val display = displayField.text.toString().trim().ifBlank { null }
+            if (!launcher.isInstalled) appendLog("Runtime not installed: tap Install runtime first, then Play again.")
+            else {
+                if (display != null && display.startsWith("127.0.0.1")) tryOpenTermuxX11()
+                appendLog(launcher.launchExe(File(path), display, ::appendLog).message)
+            }
+        } ?: if (intent.hasExtra(EXTRA_TITLE)) appendLog("No .exe found for this game.") else Unit
     }
 
     private fun refreshStatus() {
