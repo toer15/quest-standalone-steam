@@ -85,6 +85,36 @@ class SteamClientLogicTest {
         assertNull(PicsParse.windowsLaunch(KeyValue("empty")))
     }
 
+    @Test fun sumsInstallSizeOfWindowsDepots() {
+        fun depot(id: String, size: Long?, os: String? = null, arch: String? = null, lang: String? = null, shared: Boolean = false, maxsize: Long? = null) =
+            KeyValue(id).apply {
+                children.add(KeyValue("config").apply {
+                    if (os != null) children.add(KeyValue("oslist", os))
+                    if (arch != null) children.add(KeyValue("osarch", arch))
+                    if (lang != null) children.add(KeyValue("language", lang))
+                })
+                if (shared) { children.add(KeyValue("depotfromapp", "228980")); children.add(KeyValue("sharedinstall", "1")) }
+                if (size != null) children.add(KeyValue("manifests").apply {
+                    children.add(KeyValue("public").apply { children.add(KeyValue("gid", "1")); children.add(KeyValue("size", size.toString())) })
+                })
+                if (maxsize != null) children.add(KeyValue("maxsize", maxsize.toString()))
+            }
+        val app = KeyValue("appinfo").apply {
+            children.add(KeyValue("depots").apply {
+                children.add(depot("101", 4_000_000_000L, os = "windows"))
+                children.add(depot("102", 500_000_000L))                       // all OSes: content
+                children.add(depot("103", 9_000_000_000L, os = "macos"))
+                children.add(depot("104", 7_000_000_000L, os = "windows", arch = "32"))
+                children.add(depot("105", 300_000_000L, os = "windows", lang = "german"))
+                children.add(depot("228983", 100_000_000L, os = "windows", shared = true))
+                children.add(depot("106", null, os = "windows", maxsize = 1_000L))  // old format
+                children.add(KeyValue("branches"))
+            })
+        }
+        assertEquals(4_500_001_000L, PicsParse.installSize(app))
+        assertNull(PicsParse.installSize(KeyValue("empty")))
+    }
+
     @Test fun guardPromptAdapterBridgesToFutures() = runBlocking {
         val prompt = object : GuardPrompt {
             override suspend fun deviceCode(previousWasWrong: Boolean) = if (previousWasWrong) " 22222 " else "11111"
@@ -145,6 +175,7 @@ class SteamClientLogicTest {
         }
         val session = SteamSession(store)
         session.signInAnonymous()
+        println("install sizes from PICS: " + session.appSizes(listOf(1007, 620980, 730)))
         val dir = java.nio.file.Files.createTempDirectory("qss-dl").toFile()
         var last = 0L to -1L
         val phases = mutableListOf<String>()

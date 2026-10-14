@@ -52,16 +52,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         val list = (0 until a.length()).map { i ->
             val o = a.getJSONObject(i)
             OwnedGame(o.getInt("id"), o.getString("n"), o.optInt("p"), o.optBoolean("vr"),
-                o.optJSONArray("g")?.let { g -> (0 until g.length()).map(g::getString) } ?: emptyList())
+                o.optJSONArray("g")?.let { g -> (0 until g.length()).map(g::getString) } ?: emptyList(), o.optLong("s"))
         }
         _games.value = list
+        downloads.setNames(list.associate { it.appId to it.name })
         downloads.refresh(list.map { it.appId })
     }
 
     private fun saveCache(list: List<OwnedGame>) = runCatching {
         val a = JSONArray()
         list.forEach { g ->
-            a.put(JSONObject().put("id", g.appId).put("n", g.name).put("p", g.playtimeMinutes).put("vr", g.isVr).put("g", JSONArray(g.genres)))
+            a.put(JSONObject().put("id", g.appId).put("n", g.name).put("p", g.playtimeMinutes).put("vr", g.isVr).put("g", JSONArray(g.genres)).put("s", g.sizeBytes))
         }
         cacheFile.writeText(a.toString())
     }
@@ -105,21 +106,33 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 }.sortedBy { it.name.lowercase() }
                 // Keep VR flags/genres already known from the cache until enrichment refreshes them.
                 val known = _games.value.associateBy { it.appId }
-                owned.forEach { g -> known[g.appId]?.let { k -> g.isVr = k.isVr; g.genres = k.genres } }
+                owned.forEach { g -> known[g.appId]?.let { k -> g.isVr = k.isVr; g.genres = k.genres; g.sizeBytes = k.sizeBytes } }
                 if (owned.isEmpty()) {
                     _games.value = emptyList()
                     _status.value = "Steam returned no games."
                     return@launch
                 }
                 _games.value = owned
+                downloads.setNames(owned.associate { it.appId to it.name })
                 downloads.refresh(owned.map { it.appId })
                 var n = 0
                 SteamApi.enrich(getApplication(), owned) {
                     n++; if (n % 50 == 0) { _status.value = "Loading genres $n/${owned.size}"; _games.value = owned.toList() }
                 }
                 _games.value = owned.toList()
-                saveCache(owned)
-                _status.value = "${owned.size} games · ${owned.count { it.isVr }} VR · synced from $source" +
+                // Real install size of every game (shown on the cards), from Steam's app info.
+                // New objects (not in-place changes) so the list really updates on screen.
+                var withSizes: List<OwnedGame> = owned
+                if (steam.isSignedIn) {
+                    _status.value = "Getting game sizes…"
+                    runCatching { steam.appSizes(owned.map { it.appId }) }.getOrNull()?.let { sizes ->
+                        withSizes = owned.map { g -> sizes[g.appId]?.takeIf { it != g.sizeBytes }?.let { g.copy(sizeBytes = it) } ?: g }
+                        _games.value = withSizes
+                    }
+                }
+                saveCache(withSizes)
+                _status.value = "${owned.size} games · ${owned.count { it.isVr }} VR · " +
+                    withSizes.sumOf { it.sizeBytes }.let { if (it > 0) "${formatBytes(it)} · " else "" } + "synced from $source" +
                     if (!steam.isSignedIn) "\nTo download games, tap your profile picture → Sign in to Steam." else ""
             } catch (e: SteamLoginException) {
                 _status.value = if (e.needsNewLogin) "Your Steam sign-in expired. Tap your profile picture → Sign in to Steam." else "Sync failed: ${e.message}"

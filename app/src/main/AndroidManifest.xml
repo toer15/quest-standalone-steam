@@ -9,6 +9,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Downloads keep going while the panel is closed. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
         android:name=".QssApp"
@@ -24,8 +27,10 @@
             </intent-filter>
         </activity>
         <activity android:name=".LoginActivity" android:exported="false" />
+        <activity android:name=".store.StoreActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
         <receiver android:name=".update.InstallResultReceiver" android:exported="false" />
         <service android:name=".gamepad.ControllerRelay" android:exported="false" />
+        <service android:name=".download.DownloadService" android:exported="false" />
         <activity android:name=".RuntimeActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>
 </manifest>

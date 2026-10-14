@@ -10,6 +10,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import com.toer15.queststeam.gamepad.PadNav
+import com.toer15.queststeam.store.StoreActivity
+import com.toer15.queststeam.store.StoreApi
+import com.toer15.queststeam.store.StoreGameDialog
+import com.toer15.queststeam.store.StoreItem
+import com.toer15.queststeam.store.StoreScreen
 import com.toer15.queststeam.ui.ControllerChip
 import com.toer15.queststeam.ui.PlayDialog
 import com.toer15.queststeam.ui.PlayMode
@@ -115,7 +120,7 @@ import com.toer15.queststeam.ui.CategoryPopup
 import com.toer15.queststeam.ui.GameCard
 import com.toer15.queststeam.ui.LetterFilter
 import com.toer15.queststeam.ui.LibraryViewModel
-import com.toer15.queststeam.ui.SteamArt
+import com.toer15.queststeam.ui.GameArt
 import com.toer15.queststeam.ui.SteamColors
 import com.toer15.queststeam.ui.SteamTheme
 import com.toer15.queststeam.ui.steamBackdrop
@@ -137,7 +142,8 @@ class MainActivity : ComponentActivity() {
         PadNav.handle(event) { super.dispatchKeyEvent(it) } ?: super.dispatchKeyEvent(event)
 }
 
-private enum class Tab { Home, Games }
+/** Top bar tabs, left to right: Home, Store (middle), Games. */
+private enum class Tab { Home, Store, Games }
 
 /** Built-in filters; genres from the Steam store are appended dynamically. */
 object Categories {
@@ -170,6 +176,9 @@ private fun LauncherApp(
     var homeFilters by remember { mutableStateOf(HomeFilters()) }
     var filtersOpen by remember { mutableStateOf(false) }
     var playFor by remember { mutableStateOf<OwnedGame?>(null) }
+    var storeItem by remember { mutableStateOf<StoreItem?>(null) }
+    // Back from Steam's checkout: sync so a game just bought shows up in the library.
+    val storeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.sync() }
     val homeTabFocus = remember { FocusRequester() }
 
     // Controller buttons (LB/RB tabs, B back, Y filters, X sync, Start updates).
@@ -177,6 +186,7 @@ private fun LauncherApp(
         PadNav.actions.collect { a ->
             when (a) {
                 PadNav.Action.Back -> when {
+                    storeItem != null -> storeItem = null
                     playFor != null -> playFor = null
                     filtersOpen -> filtersOpen = false
                     tab != Tab.Home -> tab = Tab.Home
@@ -261,6 +271,7 @@ private fun LauncherApp(
                         games, ::stateOf, ::actionsFor, onBrowse = { tab = Tab.Games }, onSync = vm::sync,
                         onCheckUpdates = updates::check, filters = homeFilters, onOpenFilters = { filtersOpen = true },
                     )
+                    Tab.Store -> StoreScreen(owned = remember(games) { games.mapTo(HashSet()) { it.appId } }, onOpenGame = { storeItem = it })
                     Tab.Games -> GamesScreen(games, ::stateOf, ::actionsFor)
                 }
             }
@@ -274,6 +285,15 @@ private fun LauncherApp(
             onChange = { homeFilters = it },
             onClose = { filtersOpen = false },
         )
+        storeItem?.let { item ->
+            StoreGameDialog(
+                item = item,
+                owned = games.any { it.appId == item.appId },
+                onBuy = { storeLauncher.launch(StoreActivity.intent(ctx, StoreApi.storeUrl(item.appId))) },
+                onOpenInLibrary = { storeItem = null; tab = Tab.Games },
+                onDismiss = { storeItem = null },
+            )
+        }
         playFor?.let { g ->
             // VR is offered for VR games when the headset bridge is in this build; SteamVR (OpenVR) games can use it.
             val canVr = VrBridge.canPlayInVr(ctx)
@@ -473,7 +493,7 @@ private fun HeroBanner(game: OwnedGame, state: GameState, actions: CardActions) 
         val wide = maxWidth >= 720.dp
         val h = ui.heroHeight
         Box(Modifier.fillMaxWidth().height(h).clip(RoundedCornerShape(28.dp)).background(SteamColors.Card)) {
-            SteamArt(game.headerUrl, game.name, Modifier.fillMaxSize(), ContentScale.Crop)
+            GameArt(game.appId, game.name, Modifier.fillMaxSize(), ContentScale.Crop, showNameIfMissing = true)
             Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xE6101418), Color(0x40101418), Color.Transparent))))
             Column(Modifier.align(Alignment.BottomStart).padding(22.dp)) {
                 if (game.isVr) Text(

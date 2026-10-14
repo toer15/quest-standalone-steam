@@ -15,7 +15,10 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 
-class SteamDownloadException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class SteamDownloadException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** No data for a while: the caller reconnects and resumes. */
+class SteamStallException(message: String) : SteamDownloadException(message)
 
 /**
  * Downloads a game's Windows depots from Steam's CDN with JavaSteam's DepotDownloader,
@@ -41,16 +44,27 @@ class SteamDownloader(private val session: SteamSession) {
         val client = session.ensureOnline()
         val licenses = session.licenses()
         dest.mkdirs()
+        // The real install size from Steam's app info, so the card shows "0% of 4.5 GB" from the start.
+        val sizeHint = runCatching { session.appSizes(listOf(appId))[appId] }.getOrNull() ?: -1L
+        if (sizeHint > 0) progress(0L, sizeHint)
 
         val tracker = DepotProgress()
         val lastActivity = AtomicLong(System.currentTimeMillis())
+        val validating = java.util.concurrent.atomic.AtomicBoolean(false)
         val done = CompletableDeferred<Unit>()
         fun touch() = lastActivity.set(System.currentTimeMillis())
+        fun report(p: Pair<Long, Long>) {
+            val (d, t) = p
+            // Depot sizes become known one by one; Steam's total is right from the start.
+            val total = if (sizeHint > 0) maxOf(sizeHint, t) else t
+            progress(d.coerceAtMost(if (total > 0) total else d), total)
+        }
 
         val dd = DepotDownloader(client, licenses, maxDownloads = 8)
         dd.addListener(object : IDownloadListener {
             override fun onStatusUpdate(message: String) {
                 touch()
+                validating.set(message.startsWith("Validating"))
                 onStatus(
                     when {
                         message.startsWith("Downloading manifest") -> "Reading game manifest…"
@@ -63,20 +77,18 @@ class SteamDownloader(private val session: SteamSession) {
 
             override fun onChunkCompleted(depotId: Int, depotPercentComplete: Float, compressedBytes: Long, uncompressedBytes: Long) {
                 touch()
-                val (d, t) = tracker.chunk(depotId, depotPercentComplete, uncompressedBytes)
-                progress(d, t)
+                validating.set(false)
+                report(tracker.chunk(depotId, depotPercentComplete, uncompressedBytes))
             }
 
             override fun onFileCompleted(depotId: Int, fileName: String, depotPercentComplete: Float) {
                 touch()
-                val (d, t) = tracker.fraction(depotId, depotPercentComplete)
-                progress(d, t)
+                report(tracker.fraction(depotId, depotPercentComplete))
             }
 
             override fun onDepotCompleted(depotId: Int, compressedBytes: Long, uncompressedBytes: Long) {
                 touch()
-                val (d, t) = tracker.depotDone(depotId, uncompressedBytes)
-                progress(d, t)
+                report(tracker.depotDone(depotId, uncompressedBytes))
             }
 
             override fun onDownloadCompleted(item: DownloadItem) { done.complete(Unit) }
@@ -100,17 +112,30 @@ class SteamDownloader(private val session: SteamSession) {
                 dd.finishAdding()
             }
             coroutineScope {
-                // DepotDownloader can wait forever if a chunk fails on every CDN server; give up after a quiet period.
-                val watchdog = launch {
+                // DepotDownloader can wait forever if a chunk fails on every CDN server: give up after a quiet
+                // period (the caller retries and resumes). Checking existing files sends no callbacks, so
+                // while files are being written or validated, growing files on disk also count as activity.
+                val watchdog = launch(Dispatchers.IO) {
+                    var lastDisk = diskBytes(dest)
+                    var ticks = 0
                     while (true) {
                         delay(5_000)
-                        if (System.currentTimeMillis() - lastActivity.get() > STALL_MS) {
-                            done.completeExceptionally(SteamDownloadException("Download stalled: Steam sent no data for ${STALL_MS / 60_000} minutes. Tap Download to resume."))
+                        if (++ticks % 3 == 0) {
+                            val disk = diskBytes(dest)
+                            if (disk != lastDisk) { lastDisk = disk; touch() }
+                        }
+                        val limit = if (validating.get()) VALIDATE_STALL_MS else STALL_MS
+                        if (System.currentTimeMillis() - lastActivity.get() > limit) {
+                            done.completeExceptionally(SteamStallException("Steam sent no data for ${limit / 60_000} minutes."))
                         }
                     }
                 }
                 try { done.await() } finally { watchdog.cancel() }
             }
+            // Finished: show 100% even if Steam's size estimate included depots this install skips.
+            val (d, t) = tracker.totals()
+            val end = maxOf(d, t, 0L).let { if (it > 0) it else maxOf(sizeHint, 0L) }
+            if (end > 0) progress(end, end)
         } finally {
             withContext(Dispatchers.IO) { runCatching { dd.close() } }
         }
@@ -121,8 +146,13 @@ class SteamDownloader(private val session: SteamSession) {
         }
     }
 
+    /** Bytes of all files under [dir] (cheap enough every 15 s, even for big games). */
+    private fun diskBytes(dir: File): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
     companion object {
-        const val STALL_MS = 3 * 60_000L
+        const val STALL_MS = 2 * 60_000L
+        /** Checking existing files of a big game can take a while on the headset. */
+        const val VALIDATE_STALL_MS = 20 * 60_000L
         /** Written into the game folder: executable, arguments, working dir (one per line); then the same for the VR entry, if any. */
         const val LAUNCH_FILE = ".qss-launch"
     }
@@ -160,7 +190,8 @@ class DepotProgress {
         return totals()
     }
 
-    private fun totals(): Pair<Long, Long> {
+    @Synchronized
+    fun totals(): Pair<Long, Long> {
         val known = depots.values.filter { it.size > 0 }
         if (known.isEmpty()) return 0L to -1L
         val total = known.sumOf { it.size }

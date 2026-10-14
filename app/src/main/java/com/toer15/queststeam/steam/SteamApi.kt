@@ -20,6 +20,8 @@ data class OwnedGame(
     val playtimeMinutes: Int,
     var isVr: Boolean = false,
     var genres: List<String> = emptyList(),
+    /** Install size from Steam (bytes), 0 until known. */
+    var sizeBytes: Long = 0L,
 ) {
     val headerUrl get() = "https://cdn.cloudflare.steamstatic.com/steam/apps/$appId/header.jpg"
     val capsuleUrl get() = "https://cdn.cloudflare.steamstatic.com/steam/apps/$appId/library_600x900.jpg"

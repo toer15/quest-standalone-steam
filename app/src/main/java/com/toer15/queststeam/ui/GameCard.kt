@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -114,31 +116,34 @@ fun ShimmerBox(modifier: Modifier = Modifier) {
 private fun CardFront(game: OwnedGame, state: GameState) {
     val ui = LocalDeviceUi.current
     Box(Modifier.fillMaxSize().background(SteamColors.Card)) {
-        SteamArt(game.headerUrl, game.name, Modifier.fillMaxSize())
+        GameArt(game.appId, game.name, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.42f to Color.Transparent, 1f to Color(0xF0101418))))
         if (game.isVr) Text(
             "VR", color = Color(0xFF0E141B), fontWeight = FontWeight.Bold, fontSize = 11.sp,
             modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).background(SteamColors.Accent, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 3.dp),
         )
-        if (state is GameState.Downloading) Box(Modifier.align(Alignment.TopStart).padding(10.dp)) {
-            if (state.total > 0) CircularProgressIndicator(
-                progress = { state.fraction.coerceIn(0f, 1f) },
-                modifier = Modifier.size(40.dp),
-                color = SteamColors.Accent,
-                trackColor = Color.White.copy(alpha = 0.2f),
-                strokeWidth = 3.5.dp,
-            ) else CircularProgressIndicator(modifier = Modifier.size(40.dp), color = SteamColors.Accent, strokeWidth = 3.5.dp)
-        }
-        Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
+        Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(14.dp)) {
             Text(game.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = ui.cardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
+            val small = if (ui.isQuest) 14.sp else 11.sp
             when (state) {
-                is GameState.Installed -> Text(
-                    "Installed", color = Color(0xFF10200A), fontSize = if (ui.isQuest) 14.sp else 11.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.background(SteamColors.GreenBright, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp),
+                is GameState.Installed -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Installed", color = Color(0xFF10200A), fontSize = small, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.background(SteamColors.GreenBright, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                    if (game.sizeBytes > 0) Text("  ${formatBytes(game.sizeBytes)}", color = Color(0xFFD5DEE6), fontSize = small)
+                }
+                // Blue bar sliding over grey, with "37% of 4.5 GB · 3m left".
+                is GameState.Downloading -> {
+                    DownloadBar(state, Modifier.fillMaxWidth().height(7.dp))
+                    Spacer(Modifier.height(4.dp))
+                    Text(progressLine(state, game.sizeBytes), color = SteamColors.Accent, fontSize = small, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                else -> Text(
+                    listOfNotNull(game.sizeBytes.takeIf { it > 0 }?.let(::formatBytes), "${game.playtimeMinutes / 60} h played").joinToString(" · "),
+                    color = Color(0xFFD5DEE6), fontSize = 13.sp,
                 )
-                is GameState.Downloading -> Text("Downloading ${(state.fraction * 100).toInt()}%", color = SteamColors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                else -> Text("${game.playtimeMinutes / 60} h played", color = Color(0xFFD5DEE6), fontSize = 13.sp)
             }
         }
     }
@@ -158,19 +163,17 @@ private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
         val green = ButtonDefaults.buttonColors(containerColor = SteamColors.Green, contentColor = Color.White)
         when (state) {
             is GameState.Downloading -> {
-                LinearProgressIndicator(
-                    progress = { state.fraction.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
-                    color = SteamColors.Accent,
-                    trackColor = Color.White.copy(alpha = 0.12f),
-                )
+                DownloadBar(state, Modifier.fillMaxWidth().height(10.dp))
                 Spacer(Modifier.height(6.dp))
+                val total = if (state.total > 0) state.total else game.sizeBytes
                 Text(
-                    if (state.total > 0) "${formatBytes(state.bytes)} / ${formatBytes(state.total)} · ${state.etaSeconds?.let { "${formatEta(it)} left" } ?: "estimating time…"}"
-                    else state.note ?: "Starting…",
-                    fontSize = if (ui.isQuest) 14.sp else 11.sp, color = SteamColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    if (total > 0) "${(state.fraction * 100).toInt()}% · ${formatBytes(state.bytes)} of ${formatBytes(total)}" else state.note ?: "Starting…",
+                    fontSize = if (ui.isQuest) 15.sp else 12.sp, color = SteamColors.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                if (state.total > 0 && state.note != null) Text(state.note, fontSize = if (ui.isQuest) 12.sp else 10.sp, color = SteamColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    state.etaSeconds?.let { "${formatEta(it)} left" } ?: state.note ?: "Estimating time left…",
+                    fontSize = if (ui.isQuest) 13.sp else 11.sp, color = SteamColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
                 Spacer(Modifier.height(6.dp))
                 OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50), modifier = Modifier.focusRing().height(ui.buttonHeight)) { Text("Cancel") }
             }
@@ -181,7 +184,9 @@ private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
             }
             else -> {
                 if (state is GameState.Failed) Text(state.message, fontSize = 11.sp, color = SteamColors.Danger, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = btn.focusRing()) { Text(if (state is GameState.Failed) "Retry download" else "Download", fontWeight = FontWeight.Bold) }
+                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = btn.focusRing()) {
+                    Text((if (state is GameState.Failed) "Retry download" else "Download") + (if (game.sizeBytes > 0) " · ${formatBytes(game.sizeBytes)}" else ""), fontWeight = FontWeight.Bold)
+                }
                 Text("Import from folder", color = SteamColors.Accent, fontSize = 13.sp, modifier = Modifier.clickable(onClick = a.onImport).padding(6.dp))
             }
         }
@@ -198,4 +203,25 @@ fun formatEta(s: Long): String = when {
     s >= 3600 -> "${s / 3600}h ${(s % 3600) / 60}m"
     s >= 60 -> "${s / 60}m ${s % 60}s"
     else -> "${s}s"
+}
+
+/** Download progress: blue sliding over grey; animated stripes while the size isn't known yet. */
+@Composable
+fun DownloadBar(state: GameState.Downloading, modifier: Modifier = Modifier) {
+    val track = Color(0xFF4A5663)
+    if (state.total > 0) {
+        val p by animateFloatAsState(state.fraction.coerceIn(0f, 1f), tween(400), label = "dl")
+        Box(modifier.clip(RoundedCornerShape(50)).background(track)) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(p).clip(RoundedCornerShape(50)).background(Brush.horizontalGradient(listOf(Color(0xFF1A9FFF), SteamColors.Accent))))
+        }
+    } else {
+        LinearProgressIndicator(modifier = modifier.clip(RoundedCornerShape(50)), color = SteamColors.Accent, trackColor = track)
+    }
+}
+
+/** "37% of 4.5 GB · 3m left" (or the current step while the size is unknown). */
+fun progressLine(s: GameState.Downloading, knownSize: Long): String {
+    val total = if (s.total > 0) s.total else knownSize
+    if (total <= 0 || s.total <= 0) return listOfNotNull(s.note ?: "Starting…", knownSize.takeIf { it > 0 }?.let { formatBytes(it) }).joinToString(" · ")
+    return "${(s.fraction * 100).toInt()}% of ${formatBytes(total)}" + (s.etaSeconds?.let { " · ${formatEta(it)} left" } ?: "")
 }

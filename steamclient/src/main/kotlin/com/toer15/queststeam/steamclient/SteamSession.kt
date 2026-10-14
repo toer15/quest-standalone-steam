@@ -307,6 +307,23 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
         fromService.ifEmpty { ownedFromLicenses(c) }
     }
 
+    /**
+     * Install size in bytes for each app (what a 64-bit Windows English install downloads to disk),
+     * from PICS app info. Apps Steam doesn't describe are left out.
+     */
+    suspend fun appSizes(appIds: Collection<Int>): Map<Int, Long> = withContext(Dispatchers.IO) {
+        if (appIds.isEmpty()) return@withContext emptyMap()
+        val c = ensureOnline()
+        val apps = c.getHandler(SteamApps::class.java)!!
+        val out = HashMap<Int, Long>()
+        for (chunk in appIds.distinct().chunked(PICS_BATCH)) {
+            val tokens = runCatching { withTimeout(PICS_TIMEOUT_MS) { apps.picsGetAccessTokens(chunk, emptyList()).await() }.appTokens }.getOrDefault(emptyMap())
+            val rs = withTimeout(PICS_TIMEOUT_MS) { apps.picsGetProductInfo(chunk.map { PICSRequest(it, tokens[it] ?: 0L) }, emptyList()).await() }
+            rs.results.forEach { cb -> cb.apps.values.forEach { a -> PicsParse.installSize(a.keyValues)?.let { out[a.id] = it } } }
+        }
+        out
+    }
+
     /** The Windows launch options Steam has for [appId] (normal and VR), from PICS app info. */
     suspend fun launchOptions(appId: Int): PicsParse.LaunchOptions = withContext(Dispatchers.IO) {
         val c = ensureOnline()
@@ -376,6 +393,33 @@ internal fun GuardPrompt.asAuthenticator(scope: CoroutineScope): IAuthenticator 
 /** PICS KeyValues → app ids / playable apps. Pure so it can be unit-tested. */
 object PicsParse {
     private val PLAYABLE_TYPES = setOf("game", "application", "demo")
+
+    /**
+     * Sum of the depots DepotDownloader fetches for a 64-bit Windows English install: depots for
+     * windows (or any OS), 64-bit (or any arch), English (or no language), not shared redistributables or DLC.
+     */
+    fun installSize(app: KeyValue): Long? {
+        var total = 0L
+        var any = false
+        for (d in app["depots"].children) {
+            if (d.name?.toIntOrNull() == null) continue
+            if (d["sharedinstall"].asString() == "1" || !d["depotfromapp"].asString().isNullOrBlank()) continue
+            if (!d["dlcappid"].asString().isNullOrBlank()) continue
+            val cfg = d["config"]
+            val os = cfg["oslist"].asString().orEmpty()
+            if (os.isNotBlank() && os.split(',').none { it.trim() == "windows" }) continue
+            val arch = cfg["osarch"].asString().orEmpty()
+            if (arch.isNotBlank() && arch != "64") continue
+            val lang = cfg["language"].asString().orEmpty()
+            if (lang.isNotBlank() && lang != "english") continue
+            if (cfg["lowviolence"].asString() == "1") continue
+            val pub = d["manifests"]["public"]
+            val size = pub["size"].asString()?.toLongOrNull() ?: d["maxsize"].asString()?.toLongOrNull() ?: continue
+            total += size
+            any = true
+        }
+        return if (any && total > 0) total else null
+    }
 
     fun packageAppIds(pkg: KeyValue): List<Int> =
         pkg["appids"].children.mapNotNull { it.asInteger().takeIf { id -> id > 0 } }

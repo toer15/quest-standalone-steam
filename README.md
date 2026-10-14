@@ -7,9 +7,20 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.8.0/quest-steam-quest3.apk)
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.9.0/quest-steam-quest3.apk)
 
 Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
+
+## v0.9.0: Store tab, reliable downloads, game sizes
+
+- **Store** tab (between Home and Games): search bar at the top, sections (top sellers, new & trending, specials,
+  VR, free, all games) and every game on Steam page by page, with prices in your currency. Buy opens Steam's own
+  checkout inside the app (`StoreActivity`); afterwards the library syncs and the game shows up with Download.
+- **Downloads keep going**: a foreground service with Wi-Fi/CPU wake locks keeps them running with the panel closed;
+  dropped connections and stalls reconnect and resume automatically; unfinished downloads resume after a restart.
+- **Sizes**: every card shows the game's real install size (Steam app info); downloading shows a blue bar over grey
+  with "37% of 4.5 GB · 3m left".
+- Game pictures fall back through Steam's newer image addresses, so cards aren't grey.
 
 ## v0.8.0: Bluetooth controllers
 
