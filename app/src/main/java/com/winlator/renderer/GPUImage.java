@@ -24,7 +24,12 @@ public class GPUImage extends Texture {
     }
 
     public GPUImage(short width, short height, boolean cpuAccess) {
-        hardwareBufferPtr = createHardwareBuffer(width, height, cpuAccess);
+        this(width, height, cpuAccess, true);
+    }
+
+    /** useBGRA=false gives an RGBA buffer (the Vortek renderer asks for either). */
+    public GPUImage(short width, short height, boolean cpuAccess, boolean useBGRA) {
+        hardwareBufferPtr = createHardwareBuffer(width, height, cpuAccess, useBGRA);
         if (cpuAccess && hardwareBufferPtr != 0) {
             virtualData = lockHardwareBuffer(hardwareBufferPtr);
             locked = true;
@@ -92,7 +97,7 @@ public class GPUImage extends Texture {
         gpuImage.destroy();
     }
 
-    private native long createHardwareBuffer(short width, short height, boolean cpuAccess);
+    private native long createHardwareBuffer(short width, short height, boolean cpuAccess, boolean useBGRA);
 
     private native void destroyHardwareBuffer(long hardwareBufferPtr, boolean locked);
 

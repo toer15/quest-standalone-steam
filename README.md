@@ -7,9 +7,20 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.11.0/quest-steam-quest3.apk)
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.12.0/quest-steam-quest3.apk)
 
 Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
+
+## v0.12.0: the Quest's own GPU driver (Vortek)
+
+Mesa Turnip can't get GPU memory on the Quest (`BO init VK_ERROR_OUT_OF_DEVICE_MEMORY`), so DXVK couldn't
+create a D3D11 device. Games now use **Vortek** from Winlator 11.2 (LGPL-2.1): the runtime's ICD
+`libvulkan_vortek.so` sends Vulkan calls over `<rootfs>/tmp/.vortek/V0` to `libvortekrenderer.so` in the app,
+which runs them on the headset's Vulkan driver and renders into AHardwareBuffers attached to the game's X
+window (`com.winlator.xenvironment.components.VortekRendererComponent`, `display/Vortek.kt`). CI copies the
+renderer from the Winlator APK; its helper library is renamed `libwlvortek.so` with its JNI names changed
+(`tools/vortek/bundle_vortek.py`) so it can sit next to our own `libwinlator.so`. DXVK 2.4.1 is used on
+Vulkan 1.3, else 1.10.3. Turnip stays selectable in the Runtime screen.
 
 ## v0.11.0: the game inside the app's window
 

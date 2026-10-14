@@ -9,6 +9,7 @@ import com.winlator.widget.XServerView
 import com.winlator.winhandler.WinHandler
 import com.winlator.xconnector.UnixSocketConfig
 import com.winlator.xconnector.XConnectorEpoll
+import com.winlator.xenvironment.components.VortekRendererComponent
 import com.winlator.xserver.SHMSegmentManager
 import com.winlator.xserver.ScreenInfo
 import com.winlator.xserver.Window
@@ -40,6 +41,7 @@ object BuiltInDisplay {
     private var xConnector: XConnectorEpoll? = null
     private var shmConnector: XConnectorEpoll? = null
     private var shm: SysVSharedMemory? = null
+    private var vortek: VortekRendererComponent? = null
 
     private val _gameWindow = MutableStateFlow(false)
     /** True once the game has drawn into an application window (Winlator's own "game started" signal). */
@@ -52,10 +54,11 @@ object BuiltInDisplay {
 
     /**
      * Starts the X server and the shared-memory server for a game. Returns the environment Wine needs.
-     * Must be called on the main thread (creates the game view).
+     * Must be called on the main thread (creates the game view). With [useVortek] the game's Vulkan
+     * runs on the headset's own driver through [VortekRendererComponent] (see [Vortek]).
      */
     @Synchronized
-    fun start(ctx: Context, rootfs: File, log: (String) -> Unit): Map<String, String> {
+    fun start(ctx: Context, rootfs: File, useVortek: Boolean, log: (String) -> Unit): Map<String, String> {
         stop()
         _gameWindow.value = false
         val xs = XServer(ScreenInfo(SCREEN))
@@ -93,14 +96,31 @@ object BuiltInDisplay {
         view = v
         _viewState.value = v
         log("Game display ready (built in, $SCREEN, ${xSocket.path}).")
-        return mapOf(
+        val env = mutableMapOf(
             "DISPLAY" to DISPLAY,
             "ANDROID_SYSVSHM_SERVER" to File(rootfs, UnixSocketConfig.SYSVSHM_SERVER_PATH).path,
         )
+        if (useVortek) {
+            try {
+                val component = VortekRendererComponent(
+                    xs, v, UnixSocketConfig.createSocket(root, Vortek.SOCKET),
+                    VortekRendererComponent.Options(), ctx.applicationInfo.nativeLibraryDir,
+                )
+                component.start()
+                vortek = component
+                env["VK_ICD_FILENAMES"] = Vortek.icd(rootfs).path
+                log("GPU: Vortek (the headset's own Vulkan driver).")
+            } catch (t: Throwable) {
+                log("GPU: Vortek couldn't start (${t.javaClass.simpleName}: ${t.message}); using Turnip.")
+            }
+        } else log("GPU: Turnip.")
+        return env
     }
 
     @Synchronized
     fun stop() {
+        runCatching { vortek?.stop() }
+        vortek = null
         runCatching { xConnector?.stop() }
         runCatching { shmConnector?.stop() }
         runCatching { shm?.deleteAll() }

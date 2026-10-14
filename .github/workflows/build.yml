@@ -24,6 +24,12 @@ jobs:
           [ -f ~/.cache/qss/Winlator_11.2.apk ] || curl -sSfL -o ~/.cache/qss/Winlator_11.2.apk https://github.com/brunodev85/winlator/releases/download/v11.2.0/Winlator_11.2.apk
           # The runtime is installed at the app's real path, like on the device.
           sudo mkdir -p /data/data/com.qssteam/files && sudo chown -R "$USER" /data
+      - name: Bundle the Vortek GPU driver + DXVK (Winlator 11.2, LGPL-2.1)
+        run: |
+          python3 tools/vortek/bundle_vortek.py ~/.cache/qss/Winlator_11.2.apk app/src/quest/jniLibs/arm64-v8a app/src/quest/assets/graphics
+          readelf -d app/src/quest/jniLibs/arm64-v8a/libvortekrenderer.so | grep -q "NEEDED.*libwlvortek.so"
+          readelf -d app/src/quest/jniLibs/arm64-v8a/libwlvortek.so | grep -q "SONAME.*libwlvortek.so"
+          ! grep -q Java_com_winlator app/src/quest/jniLibs/arm64-v8a/libwlvortek.so
       - name: Build the SteamVR + controller bridge DLLs (mingw) and test them under Wine
         run: |
           sudo apt-get update -q
@@ -74,23 +80,34 @@ jobs:
           "$bt/apksigner" verify --print-certs quest-steam-quest3.apk | grep -qi "SHA-256 digest: $want" \
             || { echo "APK is not signed with the sideload key ($want)"; exit 1; }
           "$bt/aapt2" dump badging quest-steam-quest3.apk | head -3
+          # The game's GPU path: our X server (libwinlator) + Vortek (renderer, helpers, guest driver, DXVK).
+          for f in lib/arm64-v8a/libwinlator.so lib/arm64-v8a/libvortekrenderer.so lib/arm64-v8a/libwlvortek.so \
+                   assets/graphics/vortek-2.1.tzst assets/graphics/dxvk-1.10.3.tzst assets/graphics/dxvk-2.4.1.tzst; do
+            unzip -l quest-steam-quest3.apk "$f" | grep -q "$f" || { echo "missing in APK: $f"; exit 1; }
+          done
           "$bt/aapt2" dump badging app/src/quest/assets/display/termux-x11.apk | head -1 | tee /dev/stderr | grep -q "name='com.termux.x11'"
       - uses: actions/upload-artifact@v4
         with:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.11.0
+      - name: Publish release v0.12.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.11.0
+          tag_name: v0.12.0
           target_commitish: ${{ github.sha }}
-          name: "v0.11.0: games play inside the app's own window (built-in display)"
+          name: "v0.12.0: games draw with the Quest's own GPU driver (Vortek)"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.0:**
+            - **Fixes games stopping with "BO init VK_ERROR_OUT_OF_DEVICE_MEMORY" / "Failed to create D3D11 device".** The Quest doesn't let the Turnip GPU driver use the GPU. Games now draw through **Vortek** (Winlator 11's default): the game's Vulkan calls run on the Quest's own GPU driver inside this app, and the picture goes straight into the game screen in the app's window.
+            - DXVK is matched to the headset: DXVK 2.4.1 on Vulkan 1.3, else DXVK 1.10.3 (installed automatically).
+            - Runtime settings → Game display → **GPU driver**: Vortek (recommended) or Turnip.
+            - The log shows the GPU path: "GPU: Vortek", the headset's Vulkan version and the DXVK version.
 
             **v0.11.0:**
             - **Games play inside the app's own window.** Press Play → the loading screen → the same window turns into the game. No second app, no separate window, nothing to install. When you leave the game (**✕ Leave game** or Back → **Leave game**), or the game closes, you're back in the app.

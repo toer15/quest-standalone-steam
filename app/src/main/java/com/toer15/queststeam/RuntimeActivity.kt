@@ -13,6 +13,7 @@ import com.toer15.queststeam.display.GameSurface
 import com.toer15.queststeam.display.LeaveGameDialog
 import com.toer15.queststeam.display.gameKeyEvent
 import com.toer15.queststeam.display.GameDisplayRow
+import com.toer15.queststeam.display.Vortek
 import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
 import com.toer15.queststeam.play.GameRunner
@@ -22,6 +23,7 @@ import com.toer15.queststeam.gamepad.Controllers
 import com.toer15.queststeam.gamepad.GamepadBridge
 import com.toer15.queststeam.ui.ControllerStatus
 import com.toer15.queststeam.ui.OverlayPermissionRow
+import com.toer15.queststeam.ui.focusRing
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -383,6 +385,8 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                         Text("✓ Built into this app: games show right here in this window.", color = SteamColors.GreenBright, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         Text("Nothing to install. Point and pull the trigger to click in a game; Back or ✕ Leave game returns to the app.", color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp)
                     } else GameDisplayRow(onMessage = vm::appendLog)
+                    Spacer(Modifier.height(14.dp))
+                    GpuDriverRow()
                 }
 
                 // Controllers: the exact model when connected, and the permission for flat games.
@@ -548,6 +552,32 @@ private fun DangerButton(label: String, onClick: () -> Unit) {
         onClick = onClick, shape = RoundedCornerShape(50), modifier = Modifier.height(LocalDeviceUi.current.buttonHeight),
         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A2328), contentColor = Color(0xFFFFD6D6)),
     ) { Text(label, fontWeight = FontWeight.Bold) }
+}
+
+/** GPU driver for games: Vortek (the headset's own Vulkan driver, default) or Mesa Turnip. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GpuDriverRow() {
+    val ctx = LocalContext.current
+    var driver by remember { mutableStateOf(Vortek.selected(ctx)) }
+    Text("GPU driver", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(6.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((id, label) in listOf(Vortek.VORTEK to "Vortek (recommended)", Vortek.TURNIP to "Turnip")) {
+            val on = driver == id
+            Text(
+                (if (on) "✓ " else "") + label,
+                color = if (on) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                    .focusRing().clickable { driver = id; Vortek.select(ctx, id) }.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+        }
+    }
+    Text(
+        if (driver == Vortek.VORTEK) "Games draw with the Quest's own GPU driver. Works on the Quest; pick Turnip only to test."
+        else "Mesa Turnip talks to the GPU directly; the Quest usually refuses it (\"VK_ERROR_OUT_OF_DEVICE_MEMORY\").",
+        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+    )
 }
 
 @Composable

@@ -15,4 +15,7 @@
 app/src/quest/assets/vrbridge/
 app/src/quest/assets/gamepad/
 app/src/quest/assets/display/
+# Built by CI (tools/vortek/bundle_vortek.py)
+app/src/quest/assets/graphics/
+app/src/quest/jniLibs/
 openvr-bridge/build/

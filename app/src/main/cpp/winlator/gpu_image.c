@@ -53,13 +53,13 @@ EGLImageKHR createImageKHR(AHardwareBuffer* hardwareBuffer, int textureId) {
     return imageKHR;
 }
 
-AHardwareBuffer* createHardwareBuffer(int width, int height, bool cpuAccess) {
+AHardwareBuffer* createHardwareBuffer(int width, int height, bool cpuAccess, bool useBGRA) {
     AHardwareBuffer_Desc buffDesc = {0};
     buffDesc.width = width;
     buffDesc.height = height;
     buffDesc.layers = 1;
     buffDesc.usage = cpuAccess ? AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN : AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT;
-    buffDesc.format = HAL_PIXEL_FORMAT_BGRA_8888;
+    buffDesc.format = useBGRA ? HAL_PIXEL_FORMAT_BGRA_8888 : AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
 
     AHardwareBuffer *hardwareBuffer = NULL;
     AHardwareBuffer_allocate(&buffDesc, &hardwareBuffer);
@@ -69,8 +69,8 @@ AHardwareBuffer* createHardwareBuffer(int width, int height, bool cpuAccess) {
 
 JNIEXPORT jlong JNICALL
 Java_com_winlator_renderer_GPUImage_createHardwareBuffer(JNIEnv *env, jclass obj, jshort width,
-                                                         jshort height, jboolean cpuAccess) {
-    AHardwareBuffer* hardwareBuffer = createHardwareBuffer(width, height, cpuAccess);
+                                                         jshort height, jboolean cpuAccess, jboolean useBGRA) {
+    AHardwareBuffer* hardwareBuffer = createHardwareBuffer(width, height, cpuAccess, useBGRA);
     if (hardwareBuffer) {
         jclass cls = (*env)->GetObjectClass(env, obj);
 

@@ -4,6 +4,7 @@ import android.content.Context
 import com.toer15.queststeam.RuntimeActivity
 import com.toer15.queststeam.VrBridge
 import com.toer15.queststeam.display.BuiltInDisplay
+import com.toer15.queststeam.display.Vortek
 import com.toer15.queststeam.display.GameDisplay
 import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
@@ -146,7 +147,11 @@ object GameRunner {
         var baseline = 0
         if (builtIn) {
             _stage.value = LaunchStage.Working(title, "Starting the game display…")
-            env.putAll(BuiltInDisplay.start(ctx, l.rootfs, ::appendLog))
+            val useVortek = Vortek.selected(ctx) == Vortek.VORTEK && withContext(Dispatchers.IO) {
+                runCatching { Vortek.prepare(ctx, l.rootfs, ::appendLog) }
+                    .onFailure { appendLog("Vortek GPU driver setup failed: ${it.message}") }.getOrDefault(false)
+            }
+            env.putAll(BuiltInDisplay.start(ctx, l.rootfs, useVortek, ::appendLog))
         } else if (termux) {
             if (!GameDisplay.isAppInstalled(ctx)) {
                 appendLog("The game display app (Termux:X11) isn't installed. Install it, or clear the display setting to use the built-in display.")

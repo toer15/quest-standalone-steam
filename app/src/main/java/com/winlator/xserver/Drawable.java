@@ -43,7 +43,8 @@ public class Drawable extends XResource {
     }
 
     public void setTexture(Texture texture) {
-        if (texture instanceof GPUImage) data = ((GPUImage)texture).getVirtualData();
+        // A GPU-only image (Vortek) has no CPU view: keep the old buffer so X drawing calls stay safe.
+        if (texture instanceof GPUImage && ((GPUImage)texture).getVirtualData() != null) data = ((GPUImage)texture).getVirtualData();
         this.texture = texture;
     }
 
@@ -56,7 +57,8 @@ public class Drawable extends XResource {
     }
 
     private short getStride() {
-        return texture instanceof GPUImage ? ((GPUImage)texture).getStride() : width;
+        GPUImage image = texture instanceof GPUImage ? (GPUImage)texture : null;
+        return image != null && image.getVirtualData() != null ? image.getStride() : width;
     }
 
     public Runnable getOnDrawListener() {
