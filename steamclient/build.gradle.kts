@@ -19,6 +19,11 @@ dependencies {
     api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     // JavaSteam only declares protobuf at runtime; the owned-games request is a protobuf message.
     implementation("com.google.protobuf:protobuf-java:4.31.1")
+    // Steam depot chunks are LZMA ("VZip") or Zstd ("VSZa") compressed. JavaSteam only declares these
+    // at compile time; without xz every download dies with NoClassDefFoundError (the app closed).
+    api("org.tukaani:xz:1.10")
+    // Zstd natives: the Android AAR comes from :launcher; desktop JVM tests need the jar.
+    testImplementation("com.github.luben:zstd-jni:1.5.6-3")
     testImplementation("junit:junit:4.13.2")
     // JavaSteam loads BouncyCastle on desktop JVMs (Android uses SpongyCastle, added in :app).
     testImplementation("org.bouncycastle:bcprov-jdk18on:1.80")
