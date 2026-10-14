@@ -44,6 +44,11 @@ jobs:
           echo "Termux:X11: $url"
           curl -sSfL -o app/src/quest/assets/display/termux-x11.apk "$url"
           ls -l app/src/quest/assets/display/termux-x11.apk
+          # Keyboard layouts for its X server (XKB_CONFIG_ROOT); without them it quits at start.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends xkb-data zip
+          (cd /usr/share/X11 && zip -qr "$GITHUB_WORKSPACE/app/src/quest/assets/display/xkb.zip" xkb)
+          unzip -l app/src/quest/assets/display/xkb.zip | grep -E "xkb/rules/evdev$|xkb/symbols/us$|xkb/keycodes/evdev$" | tee /dev/stderr | wc -l | grep -qx 3
+          ls -l app/src/quest/assets/display/xkb.zip
       - name: Build the Quest 3 APK
         env:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
@@ -75,17 +80,19 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.10.0
+      - name: Publish release v0.10.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.10.0
+          tag_name: v0.10.1
           target_commitish: ${{ github.sha }}
-          name: "v0.10.0: loading screen into the game, the app inside VR, cleanup after updates"
+          name: "v0.10.1: game display starts (keyboard data), loading screen into the game, the app inside VR"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.10.1:** fixes the game display stopping at once with "$XKB_CONFIG_ROOT is not set" (display server exited with code 1), so games never got a window. The keyboard layout data it needs is now included and set up automatically.
 
             **v0.10.0:**
             - **Play a game flat:** Play → choose **Play flat** → a loading screen with the game's picture shows what's happening ("Starting the game display…", "Loading R.E.P.O.… 12s"), then **Opening game now…**, then the game opens in its window. While playing: **Back to game** / **Stop game**. If a game fails to start, the screen says why and shows the log.

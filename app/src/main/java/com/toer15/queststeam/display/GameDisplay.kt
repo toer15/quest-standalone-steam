@@ -22,6 +22,7 @@ object GameDisplay {
     const val DISPLAY = "127.0.0.1:0"
     private const val ASSET = "display/termux-x11.apk"
     private const val PORT = 6000 // X display :0 over TCP
+    private const val XKB_ASSET = "display/xkb.zip"
 
     @Volatile private var server: Process? = null
 
@@ -57,6 +58,9 @@ object GameDisplay {
         val apk = runCatching { ctx.packageManager.getApplicationInfo(PACKAGE, 0).sourceDir }.getOrNull()
             ?: return "The game display app (Termux:X11) isn't installed."
         val tmp = File(rootfs, "tmp").apply { mkdirs() }
+        // Keyboard layouts: without them the X server quits at once ("$XKB_CONFIG_ROOT is not set").
+        val xkb = runCatching { xkbRoot(ctx) }.getOrElse { log("Couldn't unpack the keyboard data: $it"); null }
+            ?: return "The keyboard data for the game display is missing from this build."
         log("Starting the game display (Termux:X11 X server on :0)…")
         val pb = ProcessBuilder(
             "/system/bin/app_process", "-Xnoimage-dex2oat", "/", "com.termux.x11.CmdEntryPoint",
@@ -65,6 +69,7 @@ object GameDisplay {
         pb.environment().apply {
             put("CLASSPATH", apk)
             put("TMPDIR", tmp.path)
+            put("XKB_CONFIG_ROOT", xkb.path)
             remove("LD_PRELOAD")
             remove("LD_LIBRARY_PATH")
         }
@@ -80,6 +85,34 @@ object GameDisplay {
             Thread.sleep(150)
         }
         return "The display server didn't start within 15 seconds; see the log above."
+    }
+
+    /**
+     * The X keyboard data (xkeyboard-config, from Ubuntu's xkb-data package; bundled as
+     * assets/display/xkb.zip) unpacked to files/xkb. Re-unpacked when the bundled copy changes.
+     */
+    fun xkbRoot(ctx: Context): File? {
+        val dir = File(ctx.filesDir, "xkb")
+        val stamp = File(dir, ".qss-stamp")
+        val size = runCatching { ctx.assets.openFd(XKB_ASSET).use { it.length } }.getOrElse {
+            runCatching { ctx.assets.open(XKB_ASSET).use { s -> var n = 0L; val b = ByteArray(1 shl 16); while (true) { val k = s.read(b); if (k < 0) break; n += k }; n } }.getOrNull()
+        } ?: return null
+        if (stamp.isFile && stamp.readText() == size.toString() && File(dir, "rules").isDirectory) return dir
+        dir.deleteRecursively()
+        dir.mkdirs()
+        val base = dir.parentFile!!.canonicalPath + File.separator
+        java.util.zip.ZipInputStream(ctx.assets.open(XKB_ASSET).buffered()).use { zip ->
+            while (true) {
+                val e = zip.nextEntry ?: break
+                // Entries are "xkb/…"; never write outside files/.
+                val out = File(dir.parentFile, e.name)
+                if (!out.canonicalPath.startsWith(base)) continue
+                if (e.isDirectory) out.mkdirs() else { out.parentFile?.mkdirs(); out.outputStream().use { zip.copyTo(it) } }
+            }
+        }
+        if (!File(dir, "rules").isDirectory) return null
+        stamp.writeText(size.toString())
+        return dir
     }
 
     /** Brings the game window (Termux:X11) to the front. */
