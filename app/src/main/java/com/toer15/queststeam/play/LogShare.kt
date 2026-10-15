@@ -23,7 +23,7 @@ object LogShare {
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", file)
         // Messaging apps cut long texts: the text part is the summary, the file has everything.
         val summary = full.lineSequence().first() + "\n" +
-            GameRunner.importantLines(GameRunner.log.value, max = 60).joinToString("\n")
+            GameRunner.importantLines(GameRunner.log.value, max = 120).joinToString("\n")
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, "Quest Steam log")

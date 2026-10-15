@@ -73,6 +73,14 @@ object GameRunner {
     /** The log lines that explain a failure (Wine/DXVK errors, GPU driver, exit code), newest last. */
     fun importantLines(log: String, max: Int = 18): List<String> {
         val all = log.trimEnd().lines()
+        // Sections the app adds after a game ends are already filtered: keep them whole.
+        val section = Regex("^\\[(crash|game log|DXVK log)")
+        val start = all.indexOfFirst { section.containsMatchIn(it) }
+        if (start >= 0 && max > 18) {
+            val before = all.subList(0, start).filter { important.containsMatchIn(it) && !it.contains("I/Adreno") && !it.startsWith("  D/vulkan") }
+            val after = all.subList(start, all.size).filter { !it.startsWith("[android log]") && !it.startsWith("  D/vulkan") }
+            return before.takeLast(maxOf(10, max - after.size)) + after
+        }
         val picked = all.filter { important.containsMatchIn(it) && !it.contains("I/Adreno") }
         return (if (picked.size >= 3) picked else all).takeLast(max)
     }
@@ -328,12 +336,12 @@ object GameRunner {
         val logs = users.listFiles().orEmpty().mapNotNull { File(it, "AppData/LocalLow").takeIf(File::isDirectory) }
             .flatMap { low -> low.walkTopDown().maxDepth(3).filter { it.name == "Player.log" && it.lastModified() >= since - 5_000 }.toList() }
         val log = logs.maxByOrNull { it.lastModified() } ?: return
-        val keep = Regex("d3d|dxgi|direct3d|vulkan|gfxdevice|graphics|error|fail|exception|gpu|renderer|adapter|crash|signal|access violation|Version:|Vendor:|VRAM|Driver:|Initialize engine", RegexOption.IGNORE_CASE)
+        val keep = Regex("d3d|dxgi|direct3d|vulkan|gfxdevice|graphics|error|fail|exception|gpu|renderer|adapter|crash|signal|access violation|Version:|Vendor:|VRAM|Driver:|Initialize engine|UnityPlayer|mono-2|MonoBleeding|GameAssembly|\\.exe \\(|Mono path|Fallback handler|Crash!!!", RegexOption.IGNORE_CASE)
         // A crash dumps hundreds of symbol lookups that fail under Wine; they say nothing.
         val noise = Regex("SymGet|SymInit|SymFrom|SymLoad|\\(0x[0-9A-Fa-f]+\\) \\(|^\\s*0x[0-9A-Fa-f]+ ")
         val raw = runCatching { log.readLines() }.getOrDefault(emptyList())
         val all = raw.filter { it.isNotBlank() && !noise.containsMatchIn(it) }
-        val lines = all.filter { keep.containsMatchIn(it) }.let { if (it.size > 25) it.take(12) + it.takeLast(13) else it }
+        val lines = all.filter { keep.containsMatchIn(it) }.let { if (it.size > 40) it.take(25) + it.takeLast(15) else it }
         if (lines.isNotEmpty()) {
             appendLog("[game log: ${log.parentFile?.name}/Player.log]")
             lines.forEach { appendLog("  " + it.take(300)) }
