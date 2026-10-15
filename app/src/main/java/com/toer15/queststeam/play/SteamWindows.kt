@@ -71,6 +71,31 @@ object SteamWindows {
         }
     }.getOrDefault(emptyList())
 
+    /** What Steam's first start is doing, from its updater log: a phase and, while downloading, a fraction. */
+    data class BootStatus(val phase: String, val fraction: Float?)
+
+    private val amount = Regex("([\\d,.]+)\\s*(?:of|/)\\s*([\\d,.]+)\\s*(KB|MB|GB|bytes)?", RegexOption.IGNORE_CASE)
+
+    fun bootStatus(lines: List<String>): BootStatus {
+        val last = lines.lastOrNull().orEmpty()
+        val m = lines.asReversed().firstNotNullOfOrNull { l -> amount.find(l)?.takeIf { l.contains("download", true) } }
+        val fraction = m?.let {
+            val done = it.groupValues[1].replace(",", "").toDoubleOrNull()
+            val total = it.groupValues[2].replace(",", "").toDoubleOrNull()
+            if (done != null && total != null && total > 0) (done / total).toFloat().coerceIn(0f, 1f) else null
+        }
+        val phase = when {
+            last.contains("download", true) -> "Downloading Steam"
+            last.contains("extract", true) || last.contains("unpack", true) -> "Unpacking Steam"
+            last.contains("install", true) || last.contains("apply", true) -> "Installing Steam"
+            last.contains("verif", true) || last.contains("check", true) -> "Checking Steam's files"
+            last.contains("launch", true) || last.contains("start", true) || last.contains("complete", true) -> "Steam is starting"
+            lines.isEmpty() -> "Steam is starting up"
+            else -> "Preparing Steam"
+        }
+        return BootStatus(phase, if (last.contains("download", true)) fraction else null)
+    }
+
     /** True once Steam's connection log, past [offset], says it signed in. */
     fun loggedOnSince(l: GameLauncher, offset: Long): Boolean = runCatching {
         val f = connectionLog(l)

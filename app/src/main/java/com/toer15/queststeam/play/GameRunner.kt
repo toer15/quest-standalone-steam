@@ -434,9 +434,16 @@ object GameRunner {
                         appendLog("Steam hasn't shown a window after ${secs / 60} minutes; showing the game display anyway.")
                         break
                     }
+                    val status = SteamWindows.bootStatus(boot)
+                    val pct = status.fraction?.let { " ${(it * 100).toInt()}%" } ?: ""
                     _stage.value = LaunchStage.Working(
-                        title, "Starting Steam… ${secs / 60}:${"%02d".format(secs % 60)}",
-                        detail = (listOf("The first start downloads and installs Steam itself (a few hundred MB). This can take 10–20 minutes on the headset; leave it running. Steam's window opens by itself when it's ready.") + boot).joinToString("\n"),
+                        title, "${status.phase}…$pct  (${secs / 60}:${"%02d".format(secs % 60)})",
+                        progress = status.fraction,
+                        detail = (listOf(
+                            "Steam's first start downloads and installs Steam itself (a few hundred MB): 10–20 minutes on the headset. " +
+                                "When it's done, Steam's window opens here by itself — nothing to press.",
+                            "Steam says:",
+                        ) + boot.ifEmpty { listOf("(nothing yet)") }).joinToString("\n"),
                         canShowWindow = false,
                     )
                     delay(1000)
