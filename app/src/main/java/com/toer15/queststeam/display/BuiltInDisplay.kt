@@ -51,6 +51,9 @@ object BuiltInDisplay {
     fun soundEnabled(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean("game_sound", true)
     fun setSoundEnabled(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean("game_sound", on).apply()
 
+    /** The game exe's window class ("repo.exe"); null = any application window counts. */
+    @Volatile var expectedWindowClass: String? = null
+
     private val _gameWindow = MutableStateFlow(false)
     /** True once the game has drawn into an application window (Winlator's own "game started" signal). */
     val gameWindow: StateFlow<Boolean> = _gameWindow
@@ -80,7 +83,9 @@ object BuiltInDisplay {
         xs.windowManager.addOnWindowModificationListener(object : WindowManager.OnWindowModificationListener {
             override fun onUpdateWindowContent(window: Window) {
                 // Wine's desktop (explorer.exe) draws first; only the game's own windows count.
-                if (!_gameWindow.value && window.isApplicationWindow && !window.className.contains("explorer.exe")) {
+                val expected = expectedWindowClass
+                if (!_gameWindow.value && window.isApplicationWindow && !window.className.contains("explorer.exe") &&
+                    (expected == null || window.className.contains(expected, ignoreCase = true))) {
                     _gameWindow.value = true
                     log("Game window is open (${window.className.ifBlank { "window" }}, ${window.width}x${window.height}).")
                 }

@@ -14,6 +14,7 @@ import com.toer15.queststeam.display.LeaveGameDialog
 import com.toer15.queststeam.display.gameKeyEvent
 import com.toer15.queststeam.display.GameDisplayRow
 import com.toer15.queststeam.display.Vortek
+import com.toer15.queststeam.play.SteamWindows
 import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
 import com.toer15.queststeam.play.GameRunner
@@ -391,6 +392,13 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                     GameSoundRow()
                 }
 
+                // Steam for Windows inside the runtime, for games that need the Steam client.
+                Card {
+                    Text("Steam for Windows", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    SteamWindowsRow(vm, installed)
+                }
+
                 // Controllers: the exact model when connected, and the permission for flat games.
                 Card {
                     Text("Controllers", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
@@ -586,6 +594,49 @@ private fun DangerButton(label: String, onClick: () -> Unit) {
         onClick = onClick, shape = RoundedCornerShape(50), modifier = Modifier.height(LocalDeviceUi.current.buttonHeight),
         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A2328), contentColor = Color(0xFFFFD6D6)),
     ) { Text(label, fontWeight = FontWeight.Bold) }
+}
+
+/** Install / open / sign in Steam for Windows, and whether it starts with games. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
+    val ctx = LocalContext.current
+    val stage by vm.stage.collectAsState()
+    val steamInstalled = remember(stage) { SteamWindows.isInstalled(vm.launcher) }
+    val signedIn = remember(stage) { SteamWindows.isSignedIn(vm.launcher) }
+    var withGames by remember { mutableStateOf(SteamWindows.startWithGames(ctx)) }
+    Text(
+        "Online games (like R.E.P.O.) need Steam running, as on a PC. This installs Valve's Steam for Windows inside the runtime; it starts in the background before your games.",
+        color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+    )
+    Spacer(Modifier.height(10.dp))
+    when {
+        !runtimeInstalled -> Text("Download the Windows runtime first.", color = SteamColors.Muted, fontSize = 14.sp)
+        !steamInstalled -> PrimaryButton("Install Steam for Windows") { GameRunner.installSteam(ctx) }
+        else -> {
+            Text(
+                if (signedIn) "✓ Installed and signed in" else "✓ Installed · not signed in yet",
+                color = if (signedIn) SteamColors.GreenBright else SteamColors.Text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            )
+            if (!signedIn) Text(
+                "Open Steam: the first start updates Steam (several minutes), then sign in once — the QR code with the Steam app on your phone is easiest.",
+                color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryButton(if (signedIn) "Open Steam" else "Open Steam and sign in") { GameRunner.openSteam(ctx) }
+                for ((value, label) in listOf(true to "Start with games", false to "Don't start with games")) {
+                    val sel = withGames == value
+                    Text(
+                        (if (sel) "✓ " else "") + label,
+                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                            .focusRing().clickable { withGames = value; SteamWindows.setStartWithGames(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** Game sound on/off. Off gives Wine no audio device (for a game that crashes in its sound code). */

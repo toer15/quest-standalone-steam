@@ -91,17 +91,23 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.9
+      - name: Publish release v0.13.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.9
+          tag_name: v0.13.0
           target_commitish: ${{ github.sha }}
-          name: "v0.12.9: select and copy the log yourself, copy it in parts"
+          name: "v0.13.0: Steam for Windows inside the runtime, for online games"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.0:**
+            - **Steam for Windows** (Runtime settings → Steam for Windows): online games like R.E.P.O. need the Steam client running, as on a PC ("Steamworks failed to initialize … Could not determine Steam client install directory"). **Install Steam for Windows** downloads Valve's official installer and installs Steam inside the runtime; **Open Steam and sign in** shows Steam in the game screen (the first start updates Steam, which takes several minutes; then sign in once, e.g. with the QR code in the Steam phone app).
+            - When you press Play, the app starts Steam in the background first, waits until it is signed in ("Starting Steam… 40s"), then starts the game. Steam's overlay is off (too heavy). Can be turned off: "Don't start with games".
+            - Wine now sees the headset's network (like Winlator does): fixes "getaddrinfo Failed to resolve your host name" and lets Steam and online games connect.
+            - The loading screen waits for the game's own window (not Steam's or Wine's).
 
             **v0.12.9:**
             - **Select the log text yourself:** hold on the log (Runtime screen, or the "didn't start" screen), drag to choose, then Copy or Select all.

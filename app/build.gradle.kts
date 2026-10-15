@@ -23,8 +23,8 @@ android {
         // 28: Android 10+ forbids exec() of files in app data for targetSdk>=29 (same as Winlator/Termux).
         @Suppress("ExpiredTargetSdkVersion")
         targetSdk = 28
-        versionCode = 34
-        versionName = "0.12.9"
+        versionCode = 35
+        versionName = "0.13.0"
         ndk { abiFilters += "arm64-v8a" }
         val key = localProps.getProperty("STEAM_API_KEY", "")
         buildConfigField("String", "STEAM_API_KEY", "\"$key\"")

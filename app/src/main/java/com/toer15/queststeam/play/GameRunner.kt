@@ -6,6 +6,7 @@ import com.toer15.queststeam.VrBridge
 import com.toer15.queststeam.display.BuiltInDisplay
 import com.toer15.queststeam.display.Vortek
 import com.toer15.queststeam.display.GameDisplay
+import com.toer15.queststeam.display.NetworkInfo
 import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
 import com.toer15.queststeam.gamepad.Controllers
@@ -157,6 +158,62 @@ object GameRunner {
 
     fun dismissFailure() { if (_stage.value is LaunchStage.Failed) _stage.value = LaunchStage.Idle }
 
+    /** Installs Steam for Windows into the runtime from Valve's installer (silent install). */
+    fun installSteam(ctx: Context) {
+        if (job?.isActive == true) return
+        val app = ctx.applicationContext
+        val title = "Steam for Windows"
+        job = scope.launch {
+            try {
+                val installer = RuntimeInstaller(app)
+                if (!installer.isInstalled) {
+                    _stage.value = LaunchStage.Failed(title, "Download the Windows runtime first (Runtime settings → Download runtime).")
+                    return@launch
+                }
+                val l = launcher ?: GameLauncher(app).also { launcher = it }
+                withContext(Dispatchers.IO) { l.killLeftovers(); NetworkInfo.write(app, l.rootfs) }
+                val setup = File(l.rootfs, "tmp/SteamSetup.exe")
+                _stage.value = LaunchStage.Working(title, "Downloading Steam's installer…", 0f)
+                withContext(Dispatchers.IO) {
+                    SteamWindows.downloadSetup(setup) { p -> _stage.value = LaunchStage.Working(title, "Downloading Steam's installer…", p) }
+                }
+                appendLog("Downloaded SteamSetup.exe (${setup.length() / 1024} KB).")
+                _stage.value = LaunchStage.Working(title, "Installing Steam…", detail = "Valve's installer runs silently inside the Windows runtime.")
+                val env = BuiltInDisplay.start(app, l.rootfs, false, ::appendLog).toMutableMap()
+                val done = kotlinx.coroutines.CompletableDeferred<Int>()
+                val r = withContext(Dispatchers.IO) {
+                    l.runWine(listOf(setup.path, "/S"), BuiltInDisplay.DISPLAY, setup.parentFile, env, onExit = { done.complete(it) }, onLine = ::appendLog)
+                }
+                if (!r.ok) throw IllegalStateException(r.message)
+                val code = kotlinx.coroutines.withTimeoutOrNull(15 * 60_000L) { done.await() }
+                withContext(Dispatchers.IO) { l.killLeftovers() }
+                BuiltInDisplay.stop()
+                setup.delete()
+                if (SteamWindows.isInstalled(l)) {
+                    appendLog("Steam for Windows is installed. Next: Open Steam, let it update, and sign in once.")
+                    _stage.value = LaunchStage.Idle
+                } else {
+                    val why = if (code == null) "the installer didn't finish in 15 minutes" else "the installer ended (code $code) without steam.exe"
+                    appendLog("Steam install failed: $why.")
+                    _stage.value = LaunchStage.Failed(title, "Steam couldn't be installed: $why.")
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appendLog("Steam install failed: $e")
+                BuiltInDisplay.stop()
+                _stage.value = LaunchStage.Failed(title, e.message ?: e.toString())
+            }
+        }
+    }
+
+    /** Opens Steam for Windows in the game display (first start updates it; then the player signs in). */
+    fun openSteam(ctx: Context) {
+        val l = launcher ?: GameLauncher(ctx.applicationContext).also { launcher = it }
+        if (!SteamWindows.isInstalled(l)) { installSteam(ctx); return }
+        play(ctx, SteamWindows.exe(l), SteamWindows.STEAM_ARGS.joinToString(" "), RuntimeActivity.MODE_FLAT, "Steam")
+    }
+
     fun play(ctx: Context, exe: File, args: String, mode: String, title: String) {
         val busy = _stage.value is LaunchStage.Working || _stage.value is LaunchStage.Opening
         if (busy && job?.isActive == true) return
@@ -199,6 +256,7 @@ object GameRunner {
             }
             val k = l.killLeftovers()
             if (k > 0) appendLog("Closed $k Wine process(es) left over from the last game.")
+            runCatching { NetworkInfo.write(ctx, l.rootfs) }.onFailure { appendLog("Couldn't write the network info for Wine: ${it.message}") }
         }
         val disp = display(ctx)
         val gameDir = gameRoot(l, exe)
@@ -239,6 +297,10 @@ object GameRunner {
         var baseline = 0
         if (builtIn) {
             _stage.value = LaunchStage.Working(title, "Starting the game display…")
+            // The game's own windows have its exe name as their class; Steam's UI is drawn by other processes.
+            BuiltInDisplay.expectedWindowClass = if (SteamWindows.isSteam(exe)) null else exe.name.lowercase()
+            // No Steam overlay in games (too heavy under Box64).
+            env["WINEDLLOVERRIDES"] = (l.environment(null)["WINEDLLOVERRIDES"] ?: "") + ";" + SteamWindows.DLL_OVERRIDES
             val useVortek = Vortek.selected(ctx) == Vortek.VORTEK && withContext(Dispatchers.IO) {
                 runCatching { Vortek.prepare(ctx, l.rootfs, ::appendLog) }
                     .onFailure { appendLog("Vortek GPU driver setup failed: ${it.message}") }.getOrDefault(false)
@@ -263,6 +325,46 @@ object GameRunner {
                 bringBack(ctx)
             }
             baseline = withContext(Dispatchers.IO) { XProbe.visibleWindows()?.size ?: 0 }
+        }
+
+        // Steam for Windows in the background, for games that need the Steam client (Steamworks).
+        if (builtIn && !SteamWindows.isSteam(exe) && SteamWindows.startWithGames(ctx) && SteamWindows.isInstalled(l)) {
+            val appId = gameDir.name.toIntOrNull() ?: 0
+            if (!SteamWindows.isSignedIn(l)) {
+                appendLog("Steam for Windows isn't signed in yet (Runtime settings → Steam for Windows → Open Steam). Starting the game without it.")
+            } else {
+                _stage.value = LaunchStage.Working(title, "Starting Steam…")
+                val offset = SteamWindows.connectionLog(l).let { if (it.isFile) it.length() else 0L }
+                var steamLines = 0
+                val steam = withContext(Dispatchers.IO) {
+                    l.runWine(
+                        listOf(SteamWindows.exe(l).path, "-silent") + SteamWindows.STEAM_ARGS, BuiltInDisplay.DISPLAY,
+                        SteamWindows.dir(l), env, onExit = { appendLog("[Steam closed ($it)]") },
+                    ) { line -> if (steamLines < 30 && line.contains("err:") && !line.contains("fixme")) { steamLines++; appendLog("[steam] $line") } }
+                }
+                if (!steam.ok) appendLog("Steam didn't start: ${steam.message}")
+                else {
+                    appendLog("Steam for Windows is starting in the background…")
+                    val t0 = System.currentTimeMillis()
+                    var signedIn = false
+                    while (true) {
+                        val secs = (System.currentTimeMillis() - t0) / 1000
+                        if (withContext(Dispatchers.IO) { SteamWindows.loggedOnSince(l, offset) }) { signedIn = true; break }
+                        if (secs >= 240) break
+                        _stage.value = LaunchStage.Working(
+                            title, "Starting Steam… ${secs}s",
+                            detail = "Steam signs in before the game starts, like on a PC. This takes a minute or two under the Windows translation.",
+                        )
+                        delay(2000)
+                    }
+                    appendLog(if (signedIn) "Steam is signed in." else "Steam didn't sign in within 4 minutes; starting the game anyway.")
+                    if (appId > 0) {
+                        withContext(Dispatchers.IO) { SteamWindows.writeAppId(exe.parentFile ?: gameDir, appId) }
+                        env["SteamAppId"] = appId.toString()
+                        env["SteamGameId"] = appId.toString()
+                    }
+                }
+            }
         }
 
         _stage.value = LaunchStage.Working(title, "Starting $title…")
