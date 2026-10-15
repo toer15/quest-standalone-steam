@@ -91,17 +91,21 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.3
+      - name: Publish release v0.13.4
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.3
+          tag_name: v0.13.4
           target_commitish: ${{ github.sha }}
-          name: "v0.13.3: no Show game window button while Steam starts"
+          name: "v0.13.4: Steam downloads through the app (fast)"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.4:**
+            - **Steam for Windows downloads much faster:** the app now downloads Steam's files itself (4 at a time, from Valve's update server) and unpacks them, with a progress bar ("Downloading Steam… 120 of 380 MB"), instead of Steam's own updater doing it slowly under the Windows translation. Then Steam opens for sign-in.
+            - Works for Install Steam for Windows, Open Steam, and Play when Steam still needs signing in.
 
             **v0.13.3:**
             - **Steam's sign-in opens inside the app**, on the same screen as games (✕ Leave game brings you back). Pressing **Play** on a game before you've signed in to Steam opens Steam's sign-in first; the log says "✓ Signed in to Steam" when you're done, then press Play again.
@@ -239,13 +243,12 @@ jobs:
             **v0.6.0:** in-app updates (Update now with progress and time left; Home → Check for updates).
             **v0.5.x:** faster app (release builds), SteamVR bridge into the headset, Turnip GPU driver + DXVK.
             Untested on hardware; feedback welcome.
-      - name: Check the Steam store endpoints the Store tab uses (informational)
+      - name: Check Steam endpoints the app uses (informational)
         continue-on-error: true
         run: |
           set -x
-          curl -sS -m 30 "https://store.steampowered.com/search/results/?json=1&infinite=1&category1=998&start=0&count=5&cc=us&l=english&filter=topsellers" | head -c 1200; echo
-          curl -sS -m 30 "https://store.steampowered.com/search/results/?json=1&infinite=1&category1=998&start=0&count=3&cc=us&l=english&term=beat%20saber" | head -c 400; echo
-          curl -sS -m 30 "https://store.steampowered.com/api/featuredcategories?cc=us&l=english" | head -c 600; echo
-          curl -sS -m 30 "https://store.steampowered.com/api/appdetails?appids=620980,570,546560&filters=price_overview&cc=us" | head -c 1200; echo
+          # Steam for Windows client manifests (the app downloads these packages itself).
+          curl -sS -m 30 "https://client-update.steamstatic.com/steam_client_win64" | head -40
+          curl -sS -m 30 "https://client-update.steamstatic.com/steam_client_win32" | head -25
           curl -sS -o /dev/null -w "new header %{http_code}\n" "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3241660/header.jpg"
           curl -sS -o /dev/null -w "old header %{http_code}\n" "https://cdn.cloudflare.steamstatic.com/steam/apps/3241660/header.jpg"

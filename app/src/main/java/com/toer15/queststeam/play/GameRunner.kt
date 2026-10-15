@@ -190,7 +190,8 @@ object GameRunner {
                 BuiltInDisplay.stop()
                 setup.delete()
                 if (SteamWindows.isInstalled(l)) {
-                    appendLog("Steam for Windows is installed. Next: Open Steam, let it update, and sign in once.")
+                    appendLog("Steam for Windows is installed.")
+                    if (ensureSteamClient(l, title)) appendLog("Steam is ready. Next: Open Steam and sign in once.")
                     _stage.value = LaunchStage.Idle
                 } else {
                     val why = if (code == null) "the installer didn't finish in 15 minutes" else "the installer ended (code $code) without steam.exe"
@@ -223,11 +224,51 @@ object GameRunner {
         }
     }
 
+    /**
+     * Downloads and unpacks the Steam client through the app (fast) when Steam's folder only has the
+     * small starter. Returns false (and logs why) if that fails; Steam then updates itself as before.
+     */
+    private suspend fun ensureSteamClient(l: GameLauncher, title: String): Boolean {
+        val dir = SteamWindows.dir(l)
+        if (SteamClientDownload.isBootstrapped(dir)) return true
+        _stage.value = LaunchStage.Working(title, "Downloading Steam…", 0f, detail = "The app downloads Steam's files itself (much faster than Steam's own updater).")
+        return try {
+            var last = 0L
+            withContext(Dispatchers.IO) {
+                SteamClientDownload.install(dir, ::appendLog) { done, total, what ->
+                    val now = System.currentTimeMillis()
+                    if (now - last < 250 && done < total) return@install
+                    last = now
+                    val mb = "${done / 1_000_000} of ${total / 1_000_000} MB"
+                    _stage.value = LaunchStage.Working(
+                        title, if (what.startsWith("Downloading")) "$what… $mb" else "$what…",
+                        progress = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else null,
+                        detail = "The app downloads Steam's files itself (much faster than Steam's own updater).",
+                    )
+                }
+            }
+            true
+        } catch (e: Exception) {
+            appendLog("Couldn't download Steam through the app (${e.message}); Steam will update itself instead (slower).")
+            false
+        }
+    }
+
     /** Opens Steam for Windows in the game display (first start updates it; then the player signs in). */
     fun openSteam(ctx: Context) {
         val l = launcher ?: GameLauncher(ctx.applicationContext).also { launcher = it }
         if (!SteamWindows.isInstalled(l)) { installSteam(ctx); return }
-        play(ctx, SteamWindows.exe(l), SteamWindows.STEAM_ARGS.joinToString(" "), RuntimeActivity.MODE_FLAT, "Steam")
+        if (job?.isActive == true) return
+        val app = ctx.applicationContext
+        if (SteamClientDownload.isBootstrapped(SteamWindows.dir(l))) {
+            play(ctx, SteamWindows.exe(l), SteamWindows.STEAM_ARGS.joinToString(" "), RuntimeActivity.MODE_FLAT, "Steam")
+            return
+        }
+        job = scope.launch {
+            ensureSteamClient(l, "Steam")
+            _stage.value = LaunchStage.Idle
+            play(app, SteamWindows.exe(l), SteamWindows.STEAM_ARGS.joinToString(" "), RuntimeActivity.MODE_FLAT, "Steam")
+        }
     }
 
     fun play(ctx: Context, exe: File, args: String, mode: String, title: String) {
@@ -249,6 +290,7 @@ object GameRunner {
                 if (!SteamWindows.isSteam(exe) && SteamWindows.startWithGames(app) && SteamWindows.isInstalled(l) && !SteamWindows.isSignedIn(l)) {
                     // The game needs Steam signed in first: show Steam's sign-in in the app instead.
                     appendLog("Sign in to Steam first: opening Steam. When you're signed in, leave Steam and press Play on $title again.")
+                    ensureSteamClient(l, "Steam")
                     start(ctx, SteamWindows.exe(l), SteamWindows.STEAM_ARGS.joinToString(" "), RuntimeActivity.MODE_FLAT, "Steam: sign in, then play $title")
                 } else start(ctx, exe, args, mode, title)
                 if (SteamWindows.isSteam(exe) || _stage.value.let { it is LaunchStage.Running && it.title.startsWith("Steam") }) watchSteamSignIn(l)
