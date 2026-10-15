@@ -135,14 +135,17 @@ private fun KeyButton(label: String, onClick: () -> Unit) {
 
 /** "Leave the game?" over the game: Keep playing / Leave game. */
 @Composable
-fun LeaveGameDialog(title: String, onStay: () -> Unit, onLeave: () -> Unit) {
+fun LeaveGameDialog(
+    title: String, onStay: () -> Unit, onLeave: () -> Unit,
+    message: String = "The game closes and you go back to your library.",
+) {
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
         Column(
             Modifier.clip(RoundedCornerShape(24.dp)).background(SteamColors.Panel).padding(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text("Leave $title?", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-            Text("The game closes and you go back to your library.", color = SteamColors.Muted, fontSize = 14.sp)
+            Text(message, color = SteamColors.Muted, fontSize = 14.sp)
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(

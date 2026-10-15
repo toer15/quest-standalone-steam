@@ -62,6 +62,16 @@ object BuiltInDisplay {
      */
     @Volatile var expectedUiWindowClass: String? = null
 
+    /**
+     * The next program on an already running display (a game started in Steam's session): waits for
+     * its window again. [gameClass] / [uiClass] as in [expectedWindowClass] / [expectedUiWindowClass].
+     */
+    fun expectWindow(gameClass: String?, uiClass: String?) {
+        expectedWindowClass = gameClass
+        expectedUiWindowClass = uiClass
+        _gameWindow.value = false
+    }
+
     private fun isUiWindow(w: Window, cls: String) =
         w.className.contains(cls, ignoreCase = true) && w.width >= 300 && w.height >= 200 &&
             w.content != null && w.mapState == Window.MapState.VIEWABLE

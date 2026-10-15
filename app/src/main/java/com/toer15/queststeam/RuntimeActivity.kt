@@ -220,8 +220,11 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() = GameRunner.stop(getApplication<Application>())
 
-    /** True while a started game's process is alive. */
-    val gameRunning get() = GameRunner.isRunning
+    /** "Leave" on the game screen (Steam keeps running in the background; see GameRunner.leave). */
+    fun leave() = GameRunner.leave(getApplication<Application>())
+
+    /** True while a game (or Steam) is on screen or starting: keys and the controller go to it. */
+    val gameRunning get() = GameRunner.isPlaying
 
     /** Starts a game (see GameRunner): the loading screen follows [stage]. */
     fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR, title: String = exe.nameWithoutExtension) =
@@ -288,10 +291,15 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
     androidx.activity.compose.BackHandler(enabled = inGame) { askLeave = true }
     if (inGame) {
         GameSurface(gameView!!, onLeave = { askLeave = true })
+        val onScreen = (playStage as? LaunchStage.Running)?.title ?: title ?: "the game"
+        val steamOnScreen = onScreen.startsWith("Steam")
         if (askLeave) LeaveGameDialog(
-            title ?: "the game",
+            if (steamOnScreen) "Steam" else onScreen,
             onStay = { askLeave = false },
-            onLeave = { askLeave = false; vm.stop(); if (exePath != null) onClose() },
+            onLeave = { askLeave = false; vm.leave(); if (exePath != null) onClose() },
+            message = if (steamOnScreen) "Steam keeps running in the background, so it opens again at once and your games start faster."
+            else if (GameRunner.steamRunning()) "The game closes; Steam keeps running in the background."
+            else "The game closes and you go back to your library.",
         )
         return
     }
@@ -624,7 +632,9 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
             )
             Spacer(Modifier.height(8.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryButton(if (signedIn) "Open Steam" else "Open Steam and sign in") { GameRunner.openSteam(ctx) }
+                val running = remember(stage) { GameRunner.steamRunning() }
+                PrimaryButton(if (running) "Show Steam" else if (signedIn) "Open Steam" else "Open Steam and sign in") { GameRunner.openSteam(ctx) }
+                if (running) SecondaryButton("Close Steam") { vm.stop() }
                 for ((value, label) in listOf(true to "Start with games", false to "Don't start with games")) {
                     val sel = withGames == value
                     Text(

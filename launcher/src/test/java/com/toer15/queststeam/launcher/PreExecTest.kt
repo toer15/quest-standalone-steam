@@ -43,4 +43,11 @@ class PreExecTest {
         assertEquals("steam.exe", GameLauncher.processName("C:\\Program Files (x86)\\Steam\\steam.exe -silent"))
         assertEquals("wineserver", GameLauncher.processName("$r/opt/wine/bin/wineserver -p"))
     }
+
+    @Test fun aGameIsFoundByItsExeName() {
+        assertTrue(GameLauncher.isProcessOf("REPO.exe", "repo.exe"))
+        assertTrue(GameLauncher.isProcessOf("REPO.exe(loading)", "REPO.exe"))
+        assertFalse(GameLauncher.isProcessOf("winpreexec(REPO.exe)", "REPO.exe"))
+        assertFalse(GameLauncher.isProcessOf("explorer.exe", "REPO.exe"))
+    }
 }

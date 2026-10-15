@@ -2,6 +2,7 @@ package com.toer15.queststeam.play
 
 import android.content.Context
 import com.toer15.queststeam.launcher.GameLauncher
+import com.toer15.queststeam.launcher.WineRegistry
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
@@ -24,6 +25,18 @@ object SteamWindows {
     )
 
     /** Steam's in-game overlay and launchers stay off (too heavy under Box64). */
+    /**
+     * Steam's own settings that cost the most without a GPU (its windows are drawn by its built-in
+     * browser, in software here): smooth scrolling, and GPU / video acceleration in its web views.
+     * Written while Wine isn't running.
+     */
+    fun applyFastSettings(l: GameLauncher) {
+        val reg = File(l.prefix, "user.reg")
+        for (name in listOf("SmoothScrollWebViews", "GPUAccelWebViewsV3", "H264HWAccel")) {
+            WineRegistry.setDword(reg, "Software\\Valve\\Steam", name, 0)
+        }
+    }
+
     /** Steam's windows (sign-in, library) are drawn by its built-in browser, steamwebhelper.exe. */
     const val UI_WINDOW_CLASS = "steamwebhelper.exe"
 

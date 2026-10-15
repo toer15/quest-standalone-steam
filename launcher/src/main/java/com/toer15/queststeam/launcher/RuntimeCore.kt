@@ -78,6 +78,18 @@ object RuntimeCore {
         return done
     }
 
+    /**
+     * WINEDLLOVERRIDES ("d3d11,dxgi=n,b;winemenubuilder.exe=d") as registry values for
+     * HKCU\Software\Wine\DllOverrides: ("d3d11", "native,builtin"), ("winemenubuilder.exe", "").
+     */
+    fun dllOverrides(spec: String): List<Pair<String, String>> = spec.split(';').flatMap { part ->
+        val dlls = part.substringBefore('=', "").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val order = part.substringAfter('=', "").split(',').mapNotNull {
+            when (it.trim()) { "n" -> "native"; "b" -> "builtin"; else -> null }
+        }.joinToString(",")
+        dlls.map { it to order }
+    }
+
     /** Environment for `box64 wine ...` in the installed runtime at [r] (pure, so tests use the same one). */
     fun wineEnvironment(r: String, display: String?, mode: String, extra: Map<String, String> = emptyMap()): Map<String, String> =
         buildMap {
@@ -110,6 +122,10 @@ object RuntimeCore {
             put("BOX64_RCFILE", "$r/etc/config.box64rc")
             // Same as Winlator: no DXGI device manager (crashes some games under Wine), quiet Mesa.
             put("WINE_DO_NOT_CREATE_DXGI_DEVICE_MANAGER", "1")
+            // Winlator's default: Wine's eventfd synchronization ("esync"). Waits and locks no longer go
+            // through wineserver each time, which matters for many-threaded programs (Steam's browser,
+            // modern games). Its shared memory is the runtime's tmp/shm (Winlator's patched glibc).
+            put("WINEESYNC", "1")
             put("MESA_DEBUG", "silent")
             put("MESA_NO_ERROR", "1")
             // DXVK (installed into the prefix) for Direct3D 9/10/11, the game's own openvr_api.dll (our bridge),

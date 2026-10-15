@@ -91,17 +91,25 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.8
+      - name: Publish release v0.13.9
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.8
+          tag_name: v0.13.9
           target_commitish: ${{ github.sha }}
-          name: "v0.13.8: Steam sign-in window shows, keyboard in games"
+          name: "v0.13.9: Steam stays running, games start in it, faster Wine"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.9:**
+            - **Steam stays running, like on a PC.** Leaving Steam's screen (✕ Leave) keeps Steam running in the background: **Show Steam** brings it back at once, and **Close Steam** (Runtime settings) ends it.
+            - **Games start inside the running Steam:** pressing Play while Steam runs starts the game right away, with no Steam restart and no sign-in wait. When the game closes you're back in the app and Steam is still signed in. If Steam isn't running, Play starts it first (signed in), then the game, and Steam stays for the next game.
+            - **Your downloaded games show up in Steam's own library as installed**, so Play in Steam starts them too (Steam may first check for an update).
+            - **Faster Wine:** Wine's fast synchronization (esync) is on, as in Winlator. Waits and locks no longer go through the Wine server each time, which helps Steam's browser and modern games most.
+            - Steam's heavy visual extras are off (smooth scrolling, and GPU and video acceleration in its windows, which have no GPU here).
+            - Games started by Steam get the same graphics (DXVK) and controller DLLs as games started by the app.
 
             **v0.13.8:**
             - **Steam's sign-in window now opens on screen.** Steam was running and showing "Sign in to Steam", but the app kept the loading screen up because it waited for a GPU frame, and Steam's window is drawn without the GPU. The app now switches as soon as Steam's sign-in window appears.

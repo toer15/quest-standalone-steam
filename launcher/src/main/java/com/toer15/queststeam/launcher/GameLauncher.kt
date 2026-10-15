@@ -28,8 +28,14 @@ class GameLauncher(private val ctx: Context) {
     fun environment(display: String?, extra: Map<String, String> = emptyMap()): Map<String, String> =
         RuntimeCore.wineEnvironment(rootfs.path, display, if (DeviceMode.isQuest) "quest" else "phone", extra)
 
-    /** Starts `box64 wine args...`; streams combined stdout/stderr to [onLine]. */
-    fun runWine(args: List<String>, display: String?, workDir: File? = null, extraEnv: Map<String, String> = emptyMap(), onExit: (Int) -> Unit = {}, onLine: (String) -> Unit): LaunchResult {
+    /**
+     * Starts `box64 wine args...`; streams combined stdout/stderr to [onLine]. With [track] the process
+     * becomes [current] (the session's main process); programs started into a running session aren't.
+     */
+    fun runWine(
+        args: List<String>, display: String?, workDir: File? = null, extraEnv: Map<String, String> = emptyMap(),
+        onExit: (Int) -> Unit = {}, track: Boolean = true, onLine: (String) -> Unit,
+    ): LaunchResult {
         if (!installer.isInstalled) return LaunchResult(false, "Runtime not downloaded yet: tap Download runtime.")
         if (RuntimeCore.repairPrefix(rootfs)) onLine("Repaired the Wine prefix (linked Wine's system DLLs, fixes exit code 53).")
         if (!RuntimeCore.prefixHealthy(rootfs)) return LaunchResult(false, "Wine prefix is broken: delete the runtime and download it again.")
@@ -43,7 +49,8 @@ class GameLauncher(private val ctx: Context) {
             File(rootfs, "tmp/mesa-cache").mkdirs()
             val pb = ProcessBuilder(cmd).directory(workDir ?: prefix).redirectErrorStream(true)
             pb.environment().putAll(environment(display, extraEnv))
-            val p = pb.start(); current = p
+            val p = pb.start()
+            if (track) current = p
             Thread {
                 runCatching { p.inputStream.bufferedReader().forEachLine(onLine) }
                 val code = runCatching { p.waitFor() }.getOrDefault(-1)
@@ -62,13 +69,13 @@ class GameLauncher(private val ctx: Context) {
      */
     fun launchExe(
         exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), args: List<String> = emptyList(),
-        desktop: String? = null, onExit: (Int) -> Unit = {}, onLine: (String) -> Unit,
+        desktop: String? = null, onExit: (Int) -> Unit = {}, track: Boolean = true, onLine: (String) -> Unit,
     ): LaunchResult {
         // explorer starts the game with Windows' CreateProcess, which needs a Windows path (C:\games\…).
         // "nogui" is the bare game desktop of Winlator's Wine (what Winlator uses for games); "shell"
         // would add a taskbar and start menu.
         val cmd = if (desktop != null) listOf("explorer", "/desktop=nogui,$desktop", windowsPath(exe)) + args else listOf(exe.path) + args
-        return runWine(cmd, display, exe.parentFile, extraEnv, onExit, onLine)
+        return runWine(cmd, display, exe.parentFile, extraEnv, onExit, track, onLine)
     }
 
     /** "…/.wine/drive_c/games/1/Game.exe" -> "C:\\games\\1\\Game.exe"; outside drive_c -> "Z:" + path in the runtime. */
@@ -96,6 +103,10 @@ class GameLauncher(private val ctx: Context) {
             if (has) out += cur.toString()
             return out
         }
+
+        /** [name] (from [processName]) is the Windows program [exeName], or Wine's loader for it. */
+        fun isProcessOf(name: String, exeName: String) =
+            name.equals(exeName, ignoreCase = true) || name.startsWith("$exeName(", ignoreCase = true)
 
         /**
          * "C:\Program Files (x86)\Steam\steam.exe -silent …" -> "steam.exe"; unix programs -> their file name.
@@ -128,10 +139,19 @@ class GameLauncher(private val ctx: Context) {
      * The Windows programs running right now (Wine shows them by their Windows path) with the
      * processor time each has used, e.g. "steamwebhelper.exe 42s". For the log and loading screen.
      */
-    fun processes(): List<String> {
+    fun processes(): List<String> =
+        running().groupBy { it.name }.map { (name, list) ->
+            val secs = list.sumOf { it.cpuSeconds }
+            name + (if (list.size > 1) " ×${list.size}" else "") + " ${secs}s"
+        }.sorted()
+
+    data class Proc(val pid: Int, val name: String, val cpuSeconds: Long)
+
+    /** This app's Wine/Box64 processes (not the app itself), named as in [processName]. */
+    fun running(): List<Proc> {
         val me = android.os.Process.myPid()
         val uid = android.os.Process.myUid()
-        val out = mutableListOf<Pair<String, Long>>()
+        val out = mutableListOf<Proc>()
         File("/proc").listFiles()?.forEach { d ->
             val pid = d.name.toIntOrNull() ?: return@forEach
             if (pid == me) return@forEach
@@ -142,13 +162,18 @@ class GameLauncher(private val ctx: Context) {
             val stat = runCatching { File(d, "stat").readText() }.getOrDefault("")
             val fields = stat.substringAfterLast(')').trim().split(' ')
             val ticks = (fields.getOrNull(11)?.toLongOrNull() ?: 0) + (fields.getOrNull(12)?.toLongOrNull() ?: 0)
-            out += processName(cmd) to ticks / 100
+            out += Proc(pid, processName(cmd), ticks / 100)
         }
-        return out.groupBy { it.first }.map { (name, list) ->
-            val secs = list.sumOf { it.second }
-            name + (if (list.size > 1) " ×${list.size}" else "") + " ${secs}s"
-        }.sorted()
+        return out
     }
+
+    /** Processes of the Windows program [exeName] ("REPO.exe"), including Wine's loader for it. */
+    fun processesOf(exeName: String): List<Proc> = running().filter { isProcessOf(it.name, exeName) }
+
+    fun isRunning(exeName: String) = processesOf(exeName).isNotEmpty()
+
+    /** Ends the Windows program [exeName] only (Steam and the rest of the session keep running). */
+    fun kill(exeName: String): Int = processesOf(exeName).onEach { android.os.Process.killProcess(it.pid) }.size
 
     fun killLeftovers(): Int {
         val me = android.os.Process.myPid()

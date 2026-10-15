@@ -31,4 +31,20 @@ class WineRegistryTest {
         WineRegistry.setString(f, "Software\\Wine\\Drivers", "Audio", "alsa")
         assertTrue(f.readText(), f.readText().contains("\"Graphics\"=\"x11\"\n\"Audio\"=\"alsa\"\n\n[Other] 2"))
     }
+
+    @Test fun dwordsAndKeysIgnoringCase() {
+        val f = reg("[Software\\\\Valve\\\\Steam] 1\n\"SmoothScrollWebViews\"=dword:00000001\n")
+        WineRegistry.setDword(f, "Software\\VALVE\\Steam", "SmoothScrollWebViews", 0)
+        WineRegistry.setDword(f, "Software\\Valve\\Steam", "H264HWAccel", 0)
+        val t = f.readText()
+        assertTrue(t, t.contains("\"SmoothScrollWebViews\"=dword:00000000\n\"H264HWAccel\"=dword:00000000"))
+        assertEquals(1, Regex("\\[Software").findAll(t).count())
+    }
+
+    @Test fun overridesBecomeRegistryValues() {
+        assertEquals(
+            listOf("d3d11" to "native,builtin", "dxgi" to "native,builtin", "openvr_api" to "native,builtin", "winemenubuilder.exe" to ""),
+            RuntimeCore.dllOverrides("d3d11,dxgi=n,b;openvr_api=n,b;winemenubuilder.exe=d"),
+        )
+    }
 }
