@@ -55,6 +55,22 @@ object SteamWindows {
     private val loggedOn = Regex("logged ?on|logon.*\\bOK\\b|\\[U:1:\\d+\\].*connected", RegexOption.IGNORE_CASE)
     private val notLoggedOn = Regex("not logged ?on|logged ?off|logon fail", RegexOption.IGNORE_CASE)
 
+    /**
+     * The last lines of Steam's updater log (logs/bootstrap_log.txt) without timestamps: what Steam is
+     * doing on its first start ("Downloading update (12,345 of 98,765 KB)…").
+     */
+    fun bootstrapTail(l: GameLauncher, n: Int = 3): List<String> = runCatching {
+        val f = child(child(dir(l), "logs"), "bootstrap_log.txt")
+        if (!f.isFile) return emptyList()
+        RandomAccessFile(f, "r").use { raf ->
+            val from = (raf.length() - 8_000).coerceAtLeast(0)
+            raf.seek(from)
+            val bytes = ByteArray((raf.length() - from).toInt())
+            raf.readFully(bytes)
+            String(bytes).lines().map { it.replace(Regex("^\\[[^\\]]*\\]\\s*"), "").trim() }.filter { it.isNotBlank() }.takeLast(n)
+        }
+    }.getOrDefault(emptyList())
+
     /** True once Steam's connection log, past [offset], says it signed in. */
     fun loggedOnSince(l: GameLauncher, offset: Long): Boolean = runCatching {
         val f = connectionLog(l)

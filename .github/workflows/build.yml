@@ -91,17 +91,20 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.1
+      - name: Publish release v0.13.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.1
+          tag_name: v0.13.2
           target_commitish: ${{ github.sha }}
-          name: "v0.13.1: Steam for Windows install fix"
+          name: "v0.13.2: Steam's first start shows its progress"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.2:**
+            - **Open Steam** shows what Steam is doing on its first start (it downloads and installs the real Steam, a few hundred MB, before any window appears): the loading screen shows Steam's own update log and a timer, and waits up to 40 minutes instead of 5.
 
             **v0.13.1:**
             - Fixes "Steam install failed: the installer ended (code 0) without steam.exe": Steam was installed, but Valve names it Steam.exe and the check looked for steam.exe (Android's storage is case-sensitive). Press **Install Steam for Windows** again; it finishes right away and **Open Steam and sign in** appears.

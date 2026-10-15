@@ -370,7 +370,7 @@ object GameRunner {
 
         _stage.value = LaunchStage.Working(title, "Starting $title…")
         val argv = GameLauncher.splitArgs(args)
-        if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
+        if (argv.isNotEmpty() && !SteamWindows.isSteam(exe)) appendLog("Launch options from Steam: $args")
         val result = withContext(Dispatchers.IO) {
             l.launchExe(
                 exe, if (builtIn) BuiltInDisplay.DISPLAY else disp, env, argv,
@@ -394,6 +394,8 @@ object GameRunner {
             val started = System.currentTimeMillis()
             var lastNote = 0L
             showNow = false
+            val steamItself = SteamWindows.isSteam(exe)
+            var lastBootstrap = ""
             while (true) {
                 if (!isRunning) return // onGameExit reports it
                 if (showNow) break
@@ -422,6 +424,23 @@ object GameRunner {
                             else "[waiting ${secs}s] the game hasn't shown its window yet (${windows.size} visible, ${XProbe.lastTotal} windows in total on the display)"
                         )
                     }
+                }
+                if (steamItself) {
+                    // Steam's first start downloads the real Steam (a few hundred MB) before any window.
+                    val boot = withContext(Dispatchers.IO) { SteamWindows.bootstrapTail(l) }
+                    val last = boot.lastOrNull().orEmpty()
+                    if (last.isNotEmpty() && last != lastBootstrap) { lastBootstrap = last; appendLog("[steam] $last") }
+                    if (secs >= STEAM_TIMEOUT_S) {
+                        appendLog("Steam hasn't shown a window after ${secs / 60} minutes; showing the game display anyway.")
+                        break
+                    }
+                    _stage.value = LaunchStage.Working(
+                        title, "Starting Steam… ${secs / 60}:${"%02d".format(secs % 60)}",
+                        detail = (listOf("The first start downloads and installs Steam itself (a few hundred MB). This can take 10–20 minutes on the headset; leave it running.") + boot).joinToString("\n"),
+                        canShowWindow = secs >= 20,
+                    )
+                    delay(1000)
+                    continue
                 }
                 if (secs >= (if (builtIn) BUILT_IN_TIMEOUT_S else WINDOW_TIMEOUT_S)) {
                     appendLog("No game window after ${secs}s; showing the game display anyway.")
@@ -602,6 +621,8 @@ object GameRunner {
     private const val WINDOW_TIMEOUT_S = 90
     /** The built-in display knows exactly when the game draws, so it can wait longer for slow first starts. */
     private const val BUILT_IN_TIMEOUT_S = 300
+    /** Steam's first start downloads and installs the whole client. */
+    private const val STEAM_TIMEOUT_S = 40 * 60
 
     /** The latest lines from the game and the display (not our own waiting notes). */
     private fun logTail(n: Int) = _log.value.trimEnd().lines().filter { it.isNotBlank() && !it.startsWith("[waiting") }.takeLast(n).joinToString("\n")
