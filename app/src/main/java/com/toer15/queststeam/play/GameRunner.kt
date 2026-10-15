@@ -436,8 +436,8 @@ object GameRunner {
                     }
                     _stage.value = LaunchStage.Working(
                         title, "Starting Steam… ${secs / 60}:${"%02d".format(secs % 60)}",
-                        detail = (listOf("The first start downloads and installs Steam itself (a few hundred MB). This can take 10–20 minutes on the headset; leave it running.") + boot).joinToString("\n"),
-                        canShowWindow = secs >= 20,
+                        detail = (listOf("The first start downloads and installs Steam itself (a few hundred MB). This can take 10–20 minutes on the headset; leave it running. Steam's window opens by itself when it's ready.") + boot).joinToString("\n"),
+                        canShowWindow = false,
                     )
                     delay(1000)
                     continue
@@ -446,7 +446,7 @@ object GameRunner {
                     appendLog("No game window after ${secs}s; showing the game display anyway.")
                     break
                 }
-                _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s", detail = logTail(5), canShowWindow = secs >= 20)
+                _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s", detail = logTail(5), canShowWindow = secs >= 60)
                 delay(500)
             }
             _stage.value = LaunchStage.Opening(title)
