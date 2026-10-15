@@ -96,7 +96,7 @@ jobs:
         with:
           tag_name: v0.12.9
           target_commitish: ${{ github.sha }}
-          name: "v0.12.9: log shows the game screen's windows and frames"
+          name: "v0.12.9: select and copy the log yourself, copy it in parts"
           prerelease: true
           files: |
             quest-steam-quest3.apk
@@ -104,6 +104,8 @@ jobs:
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
 
             **v0.12.9:**
+            - **Select the log text yourself:** hold on the log (Runtime screen, or the "didn't start" screen), drag to choose, then Copy or Select all.
+            - **Copy part 1/2/3…** buttons under a long log: each part fits in one message; paste them one after another.
             - Copy log / Share log: the summary covers only the last game start and includes the GPU driver's frame lines, a list of the windows on the game screen (shown or hidden, drawn by the GPU or not) and the last lines of the game's own log.
 
             **v0.12.8:**

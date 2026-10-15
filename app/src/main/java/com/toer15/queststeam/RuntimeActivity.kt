@@ -452,12 +452,33 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                         Spacer(Modifier.width(10.dp))
                         SecondaryButton("Clear log", enabled = log.isNotBlank()) { GameRunner.clearLog(); copied = false }
                     }
+                    // Long logs don't fit in one message: copy them part by part.
+                    val parts = remember(log) { if (log.isBlank()) emptyList() else GameRunner.logParts() }
+                    if (parts.size > 1) {
+                        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                        var copiedPart by remember(log) { mutableStateOf(-1) }
+                        Spacer(Modifier.height(10.dp))
+                        Text("Too long for one message? Copy it in parts and paste them one by one:", color = SteamColors.Muted, fontSize = 13.sp)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            parts.forEachIndexed { i, part ->
+                                SecondaryButton(if (copiedPart == i) "✓ Part ${i + 1} copied" else "Copy part ${i + 1}/${parts.size}") {
+                                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(part))
+                                    copiedPart = i
+                                }
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        log.ifBlank { "Messages from the runtime and games show up here." },
-                        color = Color(0xFFC8D2DA), fontSize = 12.sp, fontFamily = FontFamily.Monospace, lineHeight = 16.sp,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.35f)).padding(12.dp),
-                    )
+                    Text("Hold on the text to select it, then Copy (or Select all).", color = SteamColors.Muted, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(
+                            log.ifBlank { "Messages from the runtime and games show up here." },
+                            color = Color(0xFFC8D2DA), fontSize = 12.sp, fontFamily = FontFamily.Monospace, lineHeight = 16.sp,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.35f)).padding(12.dp),
+                        )
+                    }
                 }
                 Spacer(Modifier.height(24.dp))
             }

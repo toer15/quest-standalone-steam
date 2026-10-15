@@ -76,6 +76,21 @@ object GameRunner {
         return head + (if (crash.isNotEmpty()) "== Why it stopped ==\n" + crash.joinToString("\n") + "\n\n== Log ==\n" else "") + body
     }
 
+    /**
+     * The shareable log cut into pieces that fit in one message each (split at line ends), each
+     * starting with "(part i/n)".
+     */
+    fun logParts(maxChars: Int = 6_000): List<String> {
+        val parts = mutableListOf(StringBuilder())
+        for (line in logForSharing().lines()) {
+            val piece = line.take(maxChars - 20)
+            if (parts.last().length + piece.length + 1 > maxChars - 20) parts += StringBuilder()
+            parts.last().append(piece).append('\n')
+        }
+        val n = parts.size
+        return parts.mapIndexed { i, sb -> "(part ${i + 1}/$n)\n" + sb.toString().trimEnd() }
+    }
+
     /** For the shared .txt file: the crash summary first, then the complete log. */
     fun fullLogForFile(): String {
         val all = _log.value.trimEnd().lines()

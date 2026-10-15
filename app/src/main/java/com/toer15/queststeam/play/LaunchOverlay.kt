@@ -129,12 +129,14 @@ fun LaunchOverlay(stage: LaunchStage, appId: Int, log: String, onShowGame: () ->
                                 Text("The game didn't start", color = SteamColors.Danger, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                                 Text(stage.message, color = SteamColors.Text, fontSize = 14.sp, textAlign = TextAlign.Center)
                                 Spacer(Modifier.height(10.dp))
+                                androidx.compose.foundation.text.selection.SelectionContainer {
                                 Text(
                                     GameRunner.importantLines(log).joinToString("\n"),
                                     color = Color(0xFFC8D2DA), fontSize = 11.sp, fontFamily = FontFamily.Monospace, lineHeight = 14.sp,
                                     modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(12.dp))
                                         .background(Color.Black.copy(alpha = 0.4f)).verticalScroll(rememberScrollState()).padding(10.dp),
                                 )
+                                }
                                 Spacer(Modifier.height(12.dp))
                                 val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
                                 var copied by remember { mutableStateOf(false) }
