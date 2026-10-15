@@ -129,6 +129,11 @@ object BuiltInDisplay {
             try {
                 File(ctx.cacheDir, "vortek").mkdirs()
                 VortekRendererComponent.logger = java.util.function.Consumer { log(it) }
+                // A Vulkan game draws into a child window Wine makes for it, not its main window:
+                // its first presented frame is the "game is on screen" signal.
+                VortekRendererComponent.onFrame = Runnable {
+                    if (!_gameWindow.value) { _gameWindow.value = true; log("The game is drawing (first frame).") }
+                }
                 val component = VortekRendererComponent(
                     xs, v, UnixSocketConfig.createSocket(root, Vortek.SOCKET),
                     VortekRendererComponent.Options(), ctx.applicationInfo.nativeLibraryDir,

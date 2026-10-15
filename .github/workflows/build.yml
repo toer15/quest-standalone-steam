@@ -91,17 +91,21 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.7
+      - name: Publish release v0.12.8
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.7
+          tag_name: v0.12.8
           target_commitish: ${{ github.sha }}
-          name: "v0.12.7: game sound, fixes Unity games crashing in the audio code"
+          name: "v0.12.8: the game's frames count as "on screen"; frame log"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.8:**
+            - The loading screen switches to the game when the game presents its first frame through the GPU driver (Vulkan/DirectX games draw into a window Wine makes inside the game's window, so the old signal could miss them).
+            - The log says which window the GPU driver draws into and how many frames have been shown ("Vortek: 120 frames shown"), so a black screen can be told apart from a game that isn't drawing yet.
 
             **v0.12.7:**
             - **Fixes R.E.P.O. (and other Unity games) crashing right after the graphics started.** The crash was in Windows' audio system (mmdevapi → ucrtbase): Wine had no sound server to talk to and handed the game a broken audio device.

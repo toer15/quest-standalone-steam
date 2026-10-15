@@ -33,6 +33,11 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
     private final XServerView xServerView;
     /** Where connection events go (the game log). */
     public static volatile Consumer<String> logger = null;
+    /** Called for every frame the game presents (the app uses the first one as "the game is on screen"). */
+    public static volatile Runnable onFrame = null;
+    private long frames = 0;
+    private long lastFrameLog = 0;
+    private final java.util.HashSet<Integer> loggedWindows = new java.util.HashSet<>();
 
     private static void log(String line) {
         Consumer<String> l = logger;
@@ -98,6 +103,13 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
         if (window == null) return 0;
         Drawable drawable = window.getContent();
         if (drawable == null) return 0;
+        if (loggedWindows.add(windowId)) {
+            Window parent = window.getParent();
+            log("Vortek: drawing into window 0x" + Integer.toHexString(windowId) + " (" + window.getWidth() + "x" + window.getHeight()
+                + ", " + window.getMapState() + ", class '" + window.getClassName() + "', parent 0x"
+                + (parent != null ? Integer.toHexString(parent.id) + " '" + parent.getClassName() + "' " + parent.getMapState() : "none")
+                + ", " + (useHALPixelFormatBGRA8888 ? "BGRA" : "RGBA") + ").");
+        }
         synchronized (drawable.renderLock) {
             Texture texture = drawable.getTexture();
             if (texture instanceof GPUImage && ((GPUImage)texture).getHardwareBufferPtr() != 0) {
@@ -120,6 +132,14 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
         drawable.getTexture().setNeedsUpdate(true);
         Runnable onDraw = drawable.getOnDrawListener();
         if (onDraw != null) onDraw.run();
+        frames++;
+        Runnable frameCallback = onFrame;
+        if (frameCallback != null) frameCallback.run();
+        long now = System.currentTimeMillis();
+        if (frames == 1 || now - lastFrameLog > 15000) {
+            lastFrameLog = now;
+            log("Vortek: " + frames + " frame" + (frames == 1 ? "" : "s") + " shown (window 0x" + Integer.toHexString(windowId) + ", " + window.getMapState() + ").");
+        }
     }
 
     @Override
