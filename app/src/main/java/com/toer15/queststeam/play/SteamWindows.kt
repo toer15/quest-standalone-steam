@@ -31,7 +31,13 @@ object SteamWindows {
      * instead of five or six processes. Under Box64 every process keeps its own translated copy of
      * the browser code, hundreds of MB each; with a game next to it the headset ran out of memory.
      */
-    private val LIGHT_ARGS = listOf("-cef-single-process", "-cef-in-process-gpu")
+    private val LIGHT_ARGS = listOf(
+        "-cef-single-process", "-cef-in-process-gpu",
+        // Steam's own friends and chat windows: the app's Friends tab shows friends and chat instead.
+        "-nofriendsui", "-nochatui",
+        // No crash-report process next to the browser, no video decoder.
+        "-cef-disable-breakpad", "-disable-winh264",
+    )
 
     private const val PREF_LIGHT = "steam_light"
     fun light(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean(PREF_LIGHT, true)
@@ -40,7 +46,6 @@ object SteamWindows {
     /** Steam's command line options, with [light] mode if it's on. */
     fun args(ctx: Context): List<String> = STEAM_ARGS + if (light(ctx)) LIGHT_ARGS else emptyList()
 
-    /** Steam's in-game overlay and launchers stay off (too heavy under Box64). */
     /**
      * Steam's own settings that cost the most without a GPU (its windows are drawn by its built-in
      * browser, in software here): smooth scrolling, and GPU / video acceleration in its web views.
@@ -72,9 +77,13 @@ object SteamWindows {
     )
     private val GPU_PROBES = listOf("vulkandriverquery.exe", "vulkandriverquery64.exe", "gldriverquery.exe", "gldriverquery64.exe")
 
-    /** Steam's windows (sign-in, library) are drawn by its built-in browser, steamwebhelper.exe. */
-    const val UI_WINDOW_CLASS = "steamwebhelper.exe"
+    /** Steam's built-in browser: it draws Steam's windows (sign-in, library, store). Games don't need it. */
+    const val WEB_HELPER = "steamwebhelper.exe"
 
+    /** Steam's windows (sign-in, library) are drawn by its built-in browser, steamwebhelper.exe. */
+    const val UI_WINDOW_CLASS = WEB_HELPER
+
+    /** Steam's in-game overlay and launchers stay off (too heavy under Box64). */
     const val DLL_OVERRIDES = "gameoverlayrenderer,gameoverlayrenderer64,gameoverlayui.exe,gameoverlayui64.exe,x86launcher.exe,x64launcher.exe=d"
 
     /**
@@ -98,6 +107,14 @@ object SteamWindows {
         val gone = copies.filter { it != keep && it.delete() }.map { it.name }
         return if (gone.isEmpty()) null else "kept ${keep.name}, removed ${gone.joinToString()}"
     }
+
+    /**
+     * Environment only Steam's own programs get (games started next to it don't): the translation
+     * cache, and in light mode two CPUs, so Steam's browser starts fewer threads (memory and CPU
+     * the game can use instead).
+     */
+    fun steamOnlyEnv(ctx: Context, l: GameLauncher): Map<String, String> =
+        translationCacheEnv(l) + if (light(ctx)) mapOf("BOX64_MAXCPU" to "2") else emptyMap()
 
     /**
      * Box64 keeps the code it translated for Steam on storage (its "DynaCache"), so later Steam starts

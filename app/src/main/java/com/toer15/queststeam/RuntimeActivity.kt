@@ -658,6 +658,13 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                     )
                 }
             }
+            if (light) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Light Steam: Steam's windows run in one process on two CPU cores, and pause when memory runs low during a game (Steam itself keeps running for the game).",
+                    color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+                )
+            }
         }
     }
 }

@@ -11,7 +11,15 @@ import java.util.Date
 import java.util.Locale
 
 /** Installs [CrashGuard] for the whole app process. */
-class QssApp : Application() {
+class QssApp : Application(), coil.ImageLoaderFactory {
+    /**
+     * Game pictures: a smaller memory cache than Coil's default (a quarter of the app's memory), so
+     * more of the headset's memory is left for games and Steam; pictures reload from the disk cache.
+     */
+    override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this)
+        .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(0.10).build() }
+        .build()
+
     override fun onCreate() {
         super.onCreate()
         // First start of a new version: delete what older versions left behind (before the crash

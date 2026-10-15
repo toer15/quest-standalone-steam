@@ -160,6 +160,12 @@ object GameRunner {
         LogFile.append(line)
     }
 
+    /** Before a game starts: the app gives back memory it can (its cache of game pictures). */
+    private fun trimAppMemory(ctx: Context) {
+        runCatching { coil.Coil.imageLoader(ctx).memoryCache?.clear() }
+        System.gc()
+    }
+
     /** Free memory, and what the Windows programs use (largest first), for the log. */
     private fun memoryNote(): String {
         val ctx = appCtx ?: return ""
@@ -262,6 +268,60 @@ object GameRunner {
 
     /** Steam's session is up: Steam's desktop process (the session's main process) is alive. */
     fun steamRunning(): Boolean = steamEnv != null && BuiltInDisplay.isRunning && isRunning
+
+    /**
+     * A game needs Steam itself (steam.exe), not Steam's built-in browser (steamwebhelper.exe: its
+     * windows, store and friends), which is the biggest part of Steam. When memory runs low while a
+     * game started in Steam's session runs, the browser is paused: it uses no CPU, and Android can
+     * compress its memory for the game. It runs again when the game ends or Steam's window is shown.
+     * (Box64's "on-demand Steam UI" does the same for Linux Steam.) Light Steam only.
+     */
+    @Volatile private var steamUiPaused = false
+    private var memoryJob: Job? = null
+
+    /** Free memory (MB) below which Steam's browser is paused while a game runs. */
+    private const val LOW_MEMORY_MB = 1024L
+
+    /** Free memory in MB, and whether Android itself calls it low. */
+    private fun freeMemory(): Pair<Long, Boolean> {
+        val am = appCtx?.getSystemService(android.app.ActivityManager::class.java) ?: return Long.MAX_VALUE to false
+        val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        return mi.availMem / 1_048_576 to mi.lowMemory
+    }
+
+    /** While the game [title] runs in Steam's session: watches memory (see [steamUiPaused]), with a note in the log each minute. */
+    private fun watchMemory(ctx: Context, title: String) {
+        if (memoryJob?.isActive == true) return
+        memoryJob = scope.launch {
+            var lastNote = System.currentTimeMillis()
+            while (sessionGame != null && steamRunning()) {
+                val (free, low) = withContext(Dispatchers.IO) { freeMemory() }
+                val steamOnScreen = _stage.value.let { it is LaunchStage.Running && it.title.startsWith("Steam") }
+                if (steamOnScreen) withContext(Dispatchers.IO) { resumeSteamUi() }
+                else if (!steamUiPaused && (low || free < LOW_MEMORY_MB) && SteamWindows.light(ctx)) {
+                    val n = withContext(Dispatchers.IO) { launcher?.pause(SteamWindows.WEB_HELPER, true) ?: 0 }
+                    if (n > 0) {
+                        steamUiPaused = true
+                        appendLog("Memory is low ($free MB free): Steam's windows are paused while $title runs, so the game gets the memory. Steam itself keeps running for the game.")
+                        appendLog("  " + withContext(Dispatchers.IO) { memoryNote() })
+                    }
+                }
+                if (System.currentTimeMillis() - lastNote >= 60_000 && _stage.value is LaunchStage.Running) {
+                    lastNote = System.currentTimeMillis()
+                    appendLog("[$title] " + withContext(Dispatchers.IO) { memoryNote() })
+                }
+                delay(1000)
+            }
+            withContext(Dispatchers.IO) { resumeSteamUi() }
+        }
+    }
+
+    /** Steam's browser runs again (see [steamUiPaused]). */
+    private fun resumeSteamUi() {
+        if (!steamUiPaused) return
+        steamUiPaused = false
+        if ((launcher?.pause(SteamWindows.WEB_HELPER, false) ?: 0) > 0) appendLog("Steam's windows are running again.")
+    }
 
     /** The display games use (Runtime screen setting; default = the built-in game display). */
     fun display(ctx: Context): String? =
@@ -436,6 +496,8 @@ object GameRunner {
         sessionGame = null
         gameStartedAt = System.currentTimeMillis()
         markBackgroundErrors()
+        trimAppMemory(ctx)
+        LogFile.setRunning(true)
         withContext(Dispatchers.IO) {
             runCatching { SteamWindows.dedupeExe(l)?.let { appendLog("Steam folder: $it (two copies of steam.exe).") } }
             // Box64's per-game settings from Winlator (bundled as an asset by CI).
@@ -445,10 +507,17 @@ object GameRunner {
                 val bytes = RuntimeCore.sanitizeBox64Rc(ctx.assets.open("graphics/default.box64rc").use { String(it.readBytes()) }).toByteArray()
                 if (!rc.isFile || !rc.readBytes().contentEquals(bytes)) { rc.parentFile?.mkdirs(); rc.writeBytes(bytes) }
             }
-            // DXVK settings, as Winlator writes them (constant buffer range checks avoid out-of-bounds reads).
+            // DXVK settings: Winlator's (constant buffer range checks avoid out-of-bounds reads), plus less
+            // memory: the Quest's GPU shares its RAM with everything else, and Steam runs next to the game.
+            // Games see 2 GB of video memory (and size their caches to it), one frame is queued instead
+            // of three, and two shader compiler threads run instead of one per CPU core.
             runCatching {
-                File(l.rootfs, "home/xuser/.config/dxvk.conf").apply { parentFile?.mkdirs() }
-                    .writeText("d3d11.constantBufferRangeCheck = \"True\"\n")
+                File(l.rootfs, "home/xuser/.config/dxvk.conf").apply { parentFile?.mkdirs() }.writeText(
+                    "d3d11.constantBufferRangeCheck = \"True\"\n" +
+                        "dxgi.maxDeviceMemory = 2048\n" +
+                        "dxgi.maxFrameLatency = 1\n" +
+                        "dxvk.numCompilerThreads = 2\n"
+                )
             }
             val k = l.killLeftovers()
             if (k > 0) appendLog("Closed $k Wine process(es) left over from the last game.")
@@ -513,7 +582,7 @@ object GameRunner {
             // The game's own windows have its exe name as their class; Steam's UI is drawn by other processes.
             BuiltInDisplay.expectedWindowClass = if (SteamWindows.isSteam(exe)) null else exe.name.lowercase()
             BuiltInDisplay.expectedUiWindowClass = if (SteamWindows.isSteam(exe)) SteamWindows.UI_WINDOW_CLASS else null
-            if (SteamWindows.isSteam(exe)) env.putAll(SteamWindows.translationCacheEnv(l))
+            if (SteamWindows.isSteam(exe)) env.putAll(SteamWindows.steamOnlyEnv(ctx, l))
             // No Steam overlay in games (too heavy under Box64).
             env["WINEDLLOVERRIDES"] = (l.environment(null)["WINEDLLOVERRIDES"] ?: "") + ";" + SteamWindows.DLL_OVERRIDES
             val useVortek = Vortek.selected(ctx) == Vortek.VORTEK && withContext(Dispatchers.IO) {
@@ -561,9 +630,9 @@ object GameRunner {
                     // so the next game starts at once. VR games keep the old way (Steam beside the game).
                     if (inVr) l.runWine(
                         listOf(steamExe.path, "-silent") + SteamWindows.args(ctx), BuiltInDisplay.DISPLAY,
-                        SteamWindows.dir(l), env + SteamWindows.translationCacheEnv(l), onExit = { appendLog("[Steam closed ($it)]") }, onLine = onSteamLine,
+                        SteamWindows.dir(l), env + SteamWindows.steamOnlyEnv(ctx, l), onExit = { appendLog("[Steam closed ($it)]") }, onLine = onSteamLine,
                     ) else l.launchExe(
-                        steamExe, BuiltInDisplay.DISPLAY, env + SteamWindows.translationCacheEnv(l), listOf("-silent") + SteamWindows.args(ctx),
+                        steamExe, BuiltInDisplay.DISPLAY, env + SteamWindows.steamOnlyEnv(ctx, l), listOf("-silent") + SteamWindows.args(ctx),
                         desktop = BuiltInDisplay.SCREEN, onExit = { code -> if (gen == launchGen) onGameExit(ctx, "Steam", code) }, onLine = onSteamLine,
                     )
                 }
@@ -613,7 +682,7 @@ object GameRunner {
         if (!result.ok) { _stage.value = LaunchStage.Failed(title, result.message); return }
         // Steam itself: its session stays up for games (see steamEnv); games don't get Steam's translation cache.
         if (builtIn && SteamWindows.isSteam(exe)) {
-            steamEnv = env - SteamWindows.translationCacheEnv(l).keys
+            steamEnv = env - SteamWindows.steamOnlyEnv(ctx, l).keys
             watchPriority()
         }
         PlayingService.start(ctx, title)
@@ -739,6 +808,8 @@ object GameRunner {
         }
         appendLog("Starting $title next to the running Steam.")
         markBackgroundErrors()
+        trimAppMemory(ctx)
+        LogFile.setRunning(true)
         appendLog(withContext(Dispatchers.IO) { memoryNote() })
         foreground(steamLow = true)
         BuiltInDisplay.expectWindow(exe.name.lowercase(), null)
@@ -752,6 +823,7 @@ object GameRunner {
         if (!result.ok) { appendLog(result.message); _stage.value = LaunchStage.Failed(title, result.message); return }
         val name = exe.name
         sessionGame = name
+        watchMemory(ctx, title)
         PlayingService.start(ctx, title)
         val started = System.currentTimeMillis()
         var seenAt = 0L
@@ -823,6 +895,7 @@ object GameRunner {
         scope.launch {
             foreground(steamLow = false)
             withContext(Dispatchers.IO) {
+                resumeSteamUi()
                 l.launchExe(SteamWindows.exe(l), BuiltInDisplay.DISPLAY, env, listOf("steam://open/main"), desktop = BuiltInDisplay.SCREEN, track = false, desktopName = nextDesktop("steam")) { }
             }
         }
@@ -859,6 +932,8 @@ object GameRunner {
         // The session's main process ended (the game, or Steam with any game started in it).
         steamEnv = null
         sessionGame = null
+        steamUiPaused = false
+        LogFile.setRunning(false)
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         appendNativeLog()
@@ -1026,6 +1101,9 @@ object GameRunner {
         appendSteamLogs()
         appendUnityLog()
         job?.cancel()
+        // A paused Steam browser couldn't close with Steam.
+        resumeSteamUi()
+        LogFile.setRunning(false)
         val gen = ++launchGen
         val l = launcher
         val steam = steamEnv?.takeIf { steamRunning() }

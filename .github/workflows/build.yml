@@ -91,17 +91,25 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.14.1
+      - name: Publish release v0.14.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.14.1
+          tag_name: v0.14.2
           target_commitish: ${{ github.sha }}
-          name: "v0.14.1: lighter Steam, the log survives the app closing"
+          name: "v0.14.2: much less memory for Steam next to a game"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.14.2:**
+            - **Steam's browser pauses when memory runs low during a game.** A game only needs Steam itself, not the browser that draws Steam's windows, which is the biggest part of Steam. When the headset gets low on memory while a game runs next to Steam, that browser is paused: it uses no CPU, and Android can compress its memory for the game. Steam stays signed in and keeps running for the game, and its windows come back when the game ends or you tap **Show Steam**. Box64's developers close it in the same situation for Steam on Linux. (Light Steam, on by default.)
+            - **Light Steam is lighter:** no Steam friends and chat windows (the app's FRIENDS tab has them), no crash-report process and no video decoder next to Steam's browser, and Steam sees two CPU cores, so its browser starts fewer threads.
+            - **Games' graphics use less memory:** games see 2 GB of video memory (the Quest shares its memory between the GPU and everything else), one frame is queued instead of three, and two shader compilers run instead of one per CPU core.
+            - The app empties its own picture cache before a game starts, and keeps a smaller one.
+            - **The log now survives however the app closes while a game or Steam runs**, also when you close the app yourself because the headset stopped responding. The next start shows what happened, then the log from before.
+            - While a game runs, the log notes free memory and what Steam and the game use, every minute.
 
             **v0.14.1:**
             - **The log survives the app being closed.** When Android closes the app while a game starts (for example because the headset ran out of memory), the next start shows that run's log again, starting with Android's own reason ("ran out of memory", "crashed in native code"…), the app's memory use at that moment, and errors the app caught in the background. Copy it or share it as usual.

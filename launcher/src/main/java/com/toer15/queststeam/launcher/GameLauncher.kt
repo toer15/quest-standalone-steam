@@ -93,6 +93,9 @@ class GameLauncher(private val ctx: Context) {
         /** The game desktop of the session's main program (see [launchExe]). */
         const val DESKTOP = "nogui"
 
+        private const val SIGCONT = 18
+        private const val SIGSTOP = 19
+
         /** Splits a Steam launch-arguments string, keeping "quoted parts" together. */
         fun splitArgs(s: String): List<String> {
             val out = mutableListOf<String>()
@@ -192,6 +195,14 @@ class GameLauncher(private val ctx: Context) {
 
     /** Ends the Windows program [exeName] only (Steam and the rest of the session keep running). */
     fun kill(exeName: String): Int = processesOf(exeName).onEach { android.os.Process.killProcess(it.pid) }.size
+
+    /**
+     * Pauses ([pause]) or resumes the Windows program [exeName], all its processes. A paused program
+     * keeps its memory but uses no CPU, and Android can compress that memory when it runs short.
+     * Returns the number of processes.
+     */
+    fun pause(exeName: String, pause: Boolean): Int =
+        processesOf(exeName).onEach { android.os.Process.sendSignal(it.pid, if (pause) SIGSTOP else SIGCONT) }.size
 
     /**
      * CPU priority of every Wine/Box64 thread: the lowest for Steam's programs when [steamLow], and
