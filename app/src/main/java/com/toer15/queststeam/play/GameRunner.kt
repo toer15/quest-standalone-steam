@@ -11,6 +11,7 @@ import com.toer15.queststeam.gamepad.ControllerRelay
 import com.toer15.queststeam.gamepad.Controllers
 import com.toer15.queststeam.gamepad.GamepadBridge
 import com.toer15.queststeam.launcher.GameLauncher
+import com.toer15.queststeam.launcher.WineRegistry
 import com.toer15.queststeam.launcher.RuntimeInstaller
 import com.toer15.queststeam.launcher.XProbe
 import kotlinx.coroutines.CoroutineScope
@@ -226,6 +227,7 @@ object GameRunner {
                     .onFailure { appendLog("Vortek GPU driver setup failed: ${it.message}") }.getOrDefault(false)
             }
             env.putAll(BuiltInDisplay.start(ctx, l.rootfs, useVortek, ::appendLog))
+            setWineAudio(l, env.containsKey("ANDROID_ALSA_SERVER"))
         } else if (termux) {
             if (!GameDisplay.isAppInstalled(ctx)) {
                 appendLog("The game display app (Termux:X11) isn't installed. Install it, or clear the display setting to use the built-in display.")
@@ -236,6 +238,7 @@ object GameRunner {
             _stage.value = LaunchStage.Working(title, "Starting the game display…")
             val problem = withContext(Dispatchers.IO) { GameDisplay.ensureRunning(ctx, l.rootfs, ::appendLog) }
             if (problem != null) { appendLog(problem); _stage.value = LaunchStage.Failed(title, problem); return }
+            setWineAudio(l, false) // no sound server with Termux:X11: no audio device instead of a broken one
             GameDisplay.configureApp(ctx)
             if (!inVr) {
                 GameDisplay.show(ctx)
@@ -330,6 +333,16 @@ object GameRunner {
                 else -> LaunchStage.Idle
             }
         }
+    }
+
+    /**
+     * Wine's audio driver: "alsa" (Winlator's android_aserver plugin, to the app's ALSA server) or
+     * none at all. Written into user.reg while Wine isn't running.
+     */
+    private suspend fun setWineAudio(l: GameLauncher, alsa: Boolean) = withContext(Dispatchers.IO) {
+        runCatching {
+            WineRegistry.setString(File(l.prefix, "user.reg"), "Software\\Wine\\Drivers", "Audio", if (alsa) "alsa" else "")
+        }.onFailure { appendLog("Couldn't set Wine's sound driver: ${it.message}") }
     }
 
     @Volatile private var gameStartedAt = 0L

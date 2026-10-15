@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.6
+      - name: Publish release v0.12.7
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.6
+          tag_name: v0.12.7
           target_commitish: ${{ github.sha }}
-          name: "v0.12.6: copied/shared logs start with why the game stopped"
+          name: "v0.12.7: game sound, fixes Unity games crashing in the audio code"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.7:**
+            - **Fixes R.E.P.O. (and other Unity games) crashing right after the graphics started.** The crash was in Windows' audio system (mmdevapi → ucrtbase): Wine had no sound server to talk to and handed the game a broken audio device.
+            - **Game sound:** the app now runs Winlator's sound server (Wine's ALSA output → Android audio), so games play sound through the headset.
+            - Runtime settings → Game display → **Game sound** On/Off. Off gives games no audio device (for a game that has trouble with sound).
 
             **v0.12.6:**
             - **Copy log / Share log start with "== Why it stopped =="**: the crash (in which DLL), the game's own errors and DXVK's errors come first, so they survive when a messaging app cuts a long text. DXVK's long info lists (memory types, extensions) are left out of the copied text; the shared .txt file still has the complete log.

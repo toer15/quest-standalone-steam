@@ -2,6 +2,9 @@ package com.toer15.queststeam.display
 
 import android.content.Context
 import android.view.ViewGroup
+import com.winlator.alsaserver.ALSAClient
+import com.winlator.alsaserver.ALSAClientConnectionHandler
+import com.winlator.alsaserver.ALSARequestHandler
 import com.winlator.sysvshm.SysVSHMConnectionHandler
 import com.winlator.sysvshm.SysVSHMRequestHandler
 import com.winlator.sysvshm.SysVSharedMemory
@@ -42,6 +45,11 @@ object BuiltInDisplay {
     private var shmConnector: XConnectorEpoll? = null
     private var shm: SysVSharedMemory? = null
     private var vortek: VortekRendererComponent? = null
+    private var alsa: XConnectorEpoll? = null
+
+    /** Game sound on/off (Runtime settings). Off = Wine gets no audio device. */
+    fun soundEnabled(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean("game_sound", true)
+    fun setSoundEnabled(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean("game_sound", on).apply()
 
     private val _gameWindow = MutableStateFlow(false)
     /** True once the game has drawn into an application window (Winlator's own "game started" signal). */
@@ -101,6 +109,22 @@ object BuiltInDisplay {
             "DISPLAY" to DISPLAY,
             "ANDROID_SYSVSHM_SERVER" to File(rootfs, UnixSocketConfig.SYSVSHM_SERVER_PATH).path,
         )
+        // Sound: Winlator's ALSA server (Wine's ALSA output -> Android AudioTrack). Without it Wine's
+        // audio driver hands games garbage devices and they crash in mmdevapi (seen with Unity).
+        if (soundEnabled(ctx)) {
+            try {
+                ALSAClient.assignFramesPerBuffer(ctx)
+                alsa = XConnectorEpoll(
+                    UnixSocketConfig.createSocket(root, UnixSocketConfig.ALSA_SERVER_PATH),
+                    ALSAClientConnectionHandler(ALSAClient.Options()), ALSARequestHandler(),
+                ).also { it.setMultithreadedClients(true); it.start() }
+                env["ANDROID_ALSA_SERVER"] = File(rootfs, UnixSocketConfig.ALSA_SERVER_PATH).path
+                env["ANDROID_ASERVER_USE_SHM"] = "true"
+                log("Sound: on (Android audio).")
+            } catch (t: Throwable) {
+                log("Sound: couldn't start (${t.javaClass.simpleName}: ${t.message}); the game runs without sound.")
+            }
+        } else log("Sound: off (Runtime settings).")
         if (useVortek) {
             try {
                 File(ctx.cacheDir, "vortek").mkdirs()
@@ -124,6 +148,8 @@ object BuiltInDisplay {
     fun stop() {
         runCatching { vortek?.stop() }
         vortek = null
+        runCatching { alsa?.stop() }
+        alsa = null
         runCatching { xConnector?.stop() }
         runCatching { shmConnector?.stop() }
         runCatching { shm?.deleteAll() }
