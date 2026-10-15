@@ -91,17 +91,21 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.5
+      - name: Publish release v0.13.6
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.5
+          tag_name: v0.13.6
           target_commitish: ${{ github.sha }}
-          name: "v0.13.5: Steam starts faster after the first time"
+          name: "v0.13.6: see what Steam is doing while it starts"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.6:**
+            - While Steam starts, the loading screen lists the Windows programs that are running and how much processor time each has used (e.g. "Steam.exe 40s, steamwebhelper.exe ×3 25s"), so you can see it's working.
+            - The log adds the same list every 15 seconds, and when you stop, the last lines of Steam's own log files (why Steam didn't open its window).
 
             **v0.13.5:**
             - Steam starts faster after its first start: Box64 now keeps the code it translated for Steam on storage (its translation cache), so Steam doesn't have to be translated from scratch every time. Games keep Winlator's setting.

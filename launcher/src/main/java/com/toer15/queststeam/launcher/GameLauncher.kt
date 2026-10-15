@@ -105,6 +105,35 @@ class GameLauncher(private val ctx: Context) {
      * wineserver that remembers the old display's windows (X error BadWindow on X_CreateWindow).
      * Returns how many were killed. Keeps this app's own processes and the Termux:X11 server.
      */
+    /**
+     * The Windows programs running right now (Wine shows them by their Windows path) with the
+     * processor time each has used, e.g. "steamwebhelper.exe 42s". For the log and loading screen.
+     */
+    fun processes(): List<String> {
+        val me = android.os.Process.myPid()
+        val uid = android.os.Process.myUid()
+        val out = mutableListOf<Pair<String, Long>>()
+        File("/proc").listFiles()?.forEach { d ->
+            val pid = d.name.toIntOrNull() ?: return@forEach
+            if (pid == me) return@forEach
+            val status = runCatching { File(d, "status").readText() }.getOrNull() ?: return@forEach
+            if (Regex("(?m)^Uid:\\s+(\\d+)").find(status)?.groupValues?.get(1)?.toIntOrNull() != uid) return@forEach
+            val cmd = runCatching { File(d, "cmdline").readText().replace('\u0000', ' ').trim() }.getOrDefault("")
+            if (cmd.isEmpty() || cmd.startsWith(ctx.packageName) || cmd.startsWith("logcat")) return@forEach
+            val stat = runCatching { File(d, "stat").readText() }.getOrDefault("")
+            val fields = stat.substringAfterLast(')').trim().split(' ')
+            val ticks = (fields.getOrNull(11)?.toLongOrNull() ?: 0) + (fields.getOrNull(12)?.toLongOrNull() ?: 0)
+            // "C:\Program Files (x86)\Steam\steam.exe -silent …" -> "steam.exe"; unix programs -> their file name.
+            val exe = Regex("([^\\\\/]+\\.exe)\\b", RegexOption.IGNORE_CASE).find(cmd)?.value
+                ?: cmd.substringBefore(' ').substringAfterLast('/')
+            out += exe to ticks / 100
+        }
+        return out.groupBy { it.first }.map { (name, list) ->
+            val secs = list.sumOf { it.second }
+            name + (if (list.size > 1) " ×${list.size}" else "") + " ${secs}s"
+        }.sorted()
+    }
+
     fun killLeftovers(): Int {
         val me = android.os.Process.myPid()
         val uid = android.os.Process.myUid()

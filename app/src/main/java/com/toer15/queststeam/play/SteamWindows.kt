@@ -105,6 +105,18 @@ object SteamWindows {
         return BootStatus(phase, if (last.contains("download", true)) fraction else null)
     }
 
+    /** The last lines of every Steam log written since [since] (Steam's own view of what went wrong). */
+    fun logTails(l: GameLauncher, since: Long, lines: Int = 8): List<String> = runCatching {
+        val logs = child(dir(l), "logs").listFiles().orEmpty().filter { it.isFile && it.lastModified() >= since - 5_000 }
+        logs.sortedBy { it.name }.flatMap { f ->
+            val text = RandomAccessFile(f, "r").use { raf ->
+                val from = (raf.length() - 6_000).coerceAtLeast(0); raf.seek(from)
+                ByteArray((raf.length() - from).toInt()).also { raf.readFully(it) }.let { String(it) }
+            }
+            listOf("  ${f.name}:") + text.lines().filter { it.isNotBlank() }.takeLast(lines).map { "    " + it.take(250) }
+        }
+    }.getOrDefault(emptyList())
+
     /** True once Steam's connection log, past [offset], says it signed in. */
     fun loggedOnSince(l: GameLauncher, offset: Long): Boolean = runCatching {
         val f = connectionLog(l)

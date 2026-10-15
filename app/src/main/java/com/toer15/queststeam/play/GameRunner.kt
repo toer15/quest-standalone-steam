@@ -106,9 +106,9 @@ object GameRunner {
         // Only the last game start: the log can hold several runs.
         val runStart = all.indexOfLast { it.startsWith("$ ") }.coerceAtLeast(0)
         val run = all.subList(runStart, all.size)
-        val section = Regex("^\\[(crash|game log|DXVK log|windows)")
+        val section = Regex("^\\[(crash|game log|DXVK log|windows|processes|steam logs)")
         val firstSection = run.indexOfFirst { section.containsMatchIn(it) }.let { if (it < 0) run.size else it }
-        val key = Regex("Unhandled|page fault|^err:|^\\w{4}:err:(?!winediag:getaddrinfo|wineboot|nsi)|exited with code|Couldn't|Failed to|^Vortek:|^Sound:|^GPU:|^Headset Vulkan|game is drawing|Game window is open|\\[waiting|^  +0x")
+        val key = Regex("Unhandled|page fault|^err:|^\\w{4}:err:(?!winediag:getaddrinfo|wineboot|nsi)|exited with code|Couldn't|Failed to|^Vortek:|^Sound:|^GPU:|^Headset Vulkan|game is drawing|Game window is open|\\[waiting|^  +0x|^  running:|^\\[steam")
         val out = run.subList(0, firstSection).filter { key.containsMatchIn(it) }.takeLast(30).toMutableList()
         if (firstSection < run.size) out += run.subList(firstSection, run.size).filter { !it.startsWith("[android log]") && !it.startsWith("  D/vulkan") }.take(110)
         return out
@@ -460,6 +460,7 @@ object GameRunner {
             showNow = false
             val steamItself = SteamWindows.isSteam(exe)
             var lastBootstrap = ""
+            var steamProcs = emptyList<String>()
             while (true) {
                 if (!isRunning) return // onGameExit reports it
                 if (showNow) break
@@ -470,6 +471,7 @@ object GameRunner {
                         lastNote = secs
                         val n = BuiltInDisplay.server?.windowManager?.rootWindow?.children?.size ?: 0
                         appendLog("[waiting ${secs}s] the game hasn't drawn its window yet ($n windows on the display)")
+                        withContext(Dispatchers.IO) { l.processes() }.takeIf { it.isNotEmpty() }?.let { appendLog("  running: " + it.joinToString(", ")) }
                         if (secs in 45..59) BuiltInDisplay.describeWindows().takeIf { it.isNotEmpty() }?.let { w ->
                             appendLog("[waiting] windows on the game screen:"); w.forEach(::appendLog)
                         }
@@ -499,6 +501,7 @@ object GameRunner {
                         break
                     }
                     val status = SteamWindows.bootStatus(boot)
+                    if (secs % 5 == 0L) steamProcs = withContext(Dispatchers.IO) { l.processes() }
                     val pct = status.fraction?.let { " ${(it * 100).toInt()}%" } ?: ""
                     _stage.value = LaunchStage.Working(
                         title, "${status.phase}…$pct  (${secs / 60}:${"%02d".format(secs % 60)})",
@@ -506,6 +509,7 @@ object GameRunner {
                         detail = (listOf(
                             "Steam's first start downloads and installs Steam itself (a few hundred MB): 10–20 minutes on the headset. " +
                                 "When it's done, Steam's window opens here by itself — nothing to press.",
+                            "Running: " + steamProcs.joinToString(", ").ifEmpty { "…" },
                             "Steam says:",
                         ) + boot.ifEmpty { listOf("(nothing yet)") }).joinToString("\n"),
                         canShowWindow = false,
@@ -536,7 +540,9 @@ object GameRunner {
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         appendNativeLog()
+        launcher?.processes()?.takeIf { it.isNotEmpty() }?.let { appendLog("[processes] " + it.joinToString(", ")) }
         appendWindows()
+        appendSteamLogs()
         appendUnityLog()
         launcher?.killLeftovers()
         scope.launch {
@@ -660,6 +666,15 @@ object GameRunner {
         }
     }
 
+    private fun appendSteamLogs() {
+        val l = launcher ?: return
+        if (!SteamWindows.isInstalled(l)) return
+        val tails = SteamWindows.logTails(l, gameStartedAt)
+        if (tails.isEmpty()) { appendLog("[steam logs] none written since the start"); return }
+        appendLog("[steam logs]")
+        tails.forEach(::appendLog)
+    }
+
     private fun appendWindows() {
         val w = BuiltInDisplay.describeWindows()
         if (w.isEmpty()) return
@@ -669,7 +684,9 @@ object GameRunner {
 
     fun stop(ctx: Context) {
         appendNativeLog()
+        launcher?.processes()?.takeIf { it.isNotEmpty() }?.let { appendLog("[processes] " + it.joinToString(", ")) }
         appendWindows()
+        appendSteamLogs()
         appendUnityLog()
         job?.cancel()
         launcher?.stop()
