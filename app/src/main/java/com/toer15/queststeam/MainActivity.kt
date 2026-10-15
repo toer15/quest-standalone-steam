@@ -131,7 +131,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = 0xFF0E141B.toInt()
         window.navigationBarColor = 0xFF070B10.toInt()
-        if (SessionStore(this).steamId == null && !SteamAccount.get(this).session.isSignedIn) {
+        val demo = DemoShots.prepare(this, intent)
+        if (!demo && SessionStore(this).steamId == null && !SteamAccount.get(this).session.isSignedIn) {
             startActivity(Intent(this, LoginActivity::class.java)); finish(); return
         }
         if (intent.getBooleanExtra(com.toer15.queststeam.update.UpdatedReceiver.EXTRA_JUST_UPDATED, false)) {

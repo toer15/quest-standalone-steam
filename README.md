@@ -11,6 +11,16 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 
 Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
 
+## Screenshots
+
+Emulator captures of the v0.13.8 Quest build at the panel size the VR view uses (1920×1200, 192 dpi). The library is the real UI fed by a debug-only sample list so Steam's CDN art can load without an account. Release builds ignore that mode.
+
+![Home, with the hero and the installed and downloading shelves](docs/screenshots/home.png)
+
+![Home filters: VR, installed, played, sort, and genres](docs/screenshots/home-filters.png)
+
+![Games grid, category pills, and a download in progress](docs/screenshots/games-grid.png)
+
 ## v0.12.0: the Quest's own GPU driver (Vortek)
 
 Mesa Turnip can't get GPU memory on the Quest (`BO init VK_ERROR_OUT_OF_DEVICE_MEMORY`), so DXVK couldn't
