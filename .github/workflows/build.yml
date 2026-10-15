@@ -96,7 +96,7 @@ jobs:
         with:
           tag_name: v0.12.8
           target_commitish: ${{ github.sha }}
-          name: "v0.12.8: the game's frames count as "on screen"; frame log"
+          name: "v0.12.8: Winlator's game desktop, clicks reach the game, frame log"
           prerelease: true
           files: |
             quest-steam-quest3.apk
@@ -104,6 +104,8 @@ jobs:
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
 
             **v0.12.8:**
+            - Games start on Winlator's game desktop ("nogui": no taskbar or start menu), like Winlator does, instead of Wine's desktop with a shell.
+            - **Clicks and the pointer reach the game:** hiding Wine's desktop also blocked input to every window inside it, including the game.
             - The loading screen switches to the game when the game presents its first frame through the GPU driver (Vulkan/DirectX games draw into a window Wine makes inside the game's window, so the old signal could miss them).
             - The log says which window the GPU driver draws into and how many frames have been shown ("Vortek: 120 frames shown"), so a black screen can be told apart from a game that isn't drawing yet.
 

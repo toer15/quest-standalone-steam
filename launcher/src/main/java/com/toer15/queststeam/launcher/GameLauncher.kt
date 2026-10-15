@@ -61,7 +61,9 @@ class GameLauncher(private val ctx: Context) {
         desktop: String? = null, onExit: (Int) -> Unit = {}, onLine: (String) -> Unit,
     ): LaunchResult {
         // explorer starts the game with Windows' CreateProcess, which needs a Windows path (C:\games\…).
-        val cmd = if (desktop != null) listOf("explorer", "/desktop=shell,$desktop", windowsPath(exe)) + args else listOf(exe.path) + args
+        // "nogui" is the bare game desktop of Winlator's Wine (what Winlator uses for games); "shell"
+        // would add a taskbar and start menu.
+        val cmd = if (desktop != null) listOf("explorer", "/desktop=nogui,$desktop", windowsPath(exe)) + args else listOf(exe.path) + args
         return runWine(cmd, display, exe.parentFile, extraEnv, onExit, onLine)
     }
 

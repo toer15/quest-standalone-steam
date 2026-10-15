@@ -301,7 +301,7 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
                 String wmClass = window.getClassName();
                 for (String unviewableWMClass : unviewableWMClasses) {
                     if (wmClass.contains(unviewableWMClass)) {
-                        if (window.attributes.isEnabled()) window.disableAllDescendants();
+                        // Not drawn, but its children (the game's windows in Wine's desktop) still take input.
                         viewable = false;
                         break;
                     }
