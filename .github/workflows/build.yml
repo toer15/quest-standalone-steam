@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.3
+      - name: Publish release v0.12.4
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.3
+          tag_name: v0.12.4
           target_commitish: ${{ github.sha }}
-          name: "v0.12.3: Share/Copy log, Winlator's Box64/Wine settings, clearer crash info"
+          name: "v0.12.4: Direct3D 11 works on the Quest; crash locator and Winlator's DXVK settings"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.4:**
+            - Direct3D 11 now starts on the Quest: DXVK 2.4.1 on Vortek (Adreno 740, Vulkan 1.3) creates a feature level 11_1 device.
+            - DXVK gets Winlator's settings file (dxvk.conf: constant buffer range checks).
+            - When a game crashes, the log now says in which DLL ("[crash] read of 0x… in UnityPlayer.dll+0x…") and lists the crash's call stack by DLL, from Unity's own module list.
 
             **v0.12.3:**
             - **Share log** button (Runtime screen → Log, and on the "game didn't start" screen): opens Android's share menu so the log can go straight to Messenger, Discord, email, Drive… The whole log is attached as a .txt file, with the important lines as the message text.

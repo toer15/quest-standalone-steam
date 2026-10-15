@@ -132,6 +132,11 @@ object GameRunner {
                 val bytes = ctx.assets.open("graphics/default.box64rc").use { it.readBytes() }
                 if (!rc.isFile || !rc.readBytes().contentEquals(bytes)) { rc.parentFile?.mkdirs(); rc.writeBytes(bytes) }
             }
+            // DXVK settings, as Winlator writes them (constant buffer range checks avoid out-of-bounds reads).
+            runCatching {
+                File(l.rootfs, "home/xuser/.config/dxvk.conf").apply { parentFile?.mkdirs() }
+                    .writeText("d3d11.constantBufferRangeCheck = \"True\"\n")
+            }
             val k = l.killLeftovers()
             if (k > 0) appendLog("Closed $k Wine process(es) left over from the last game.")
         }
@@ -326,13 +331,40 @@ object GameRunner {
         val keep = Regex("d3d|dxgi|direct3d|vulkan|gfxdevice|graphics|error|fail|exception|gpu|renderer|adapter|crash|signal|access violation|Version:|Vendor:|VRAM|Driver:|Initialize engine", RegexOption.IGNORE_CASE)
         // A crash dumps hundreds of symbol lookups that fail under Wine; they say nothing.
         val noise = Regex("SymGet|SymInit|SymFrom|SymLoad|\\(0x[0-9A-Fa-f]+\\) \\(|^\\s*0x[0-9A-Fa-f]+ ")
-        val all = runCatching { log.readLines() }.getOrDefault(emptyList()).filter { it.isNotBlank() && !noise.containsMatchIn(it) }
+        val raw = runCatching { log.readLines() }.getOrDefault(emptyList())
+        val all = raw.filter { it.isNotBlank() && !noise.containsMatchIn(it) }
         val lines = all.filter { keep.containsMatchIn(it) }.let { if (it.size > 25) it.take(12) + it.takeLast(13) else it }
         if (lines.isNotEmpty()) {
             appendLog("[game log: ${log.parentFile?.name}/Player.log]")
             lines.forEach { appendLog("  " + it.take(300)) }
         }
+        locateCrash(raw)
         appendDxvkLogs()
+    }
+
+    /**
+     * Names the DLL a crash happened in: Wine's "page fault … at address X" and Unity's stack addresses,
+     * matched against the module list Unity writes ("C:\…\Foo.dll:Foo.dll (BASE), size: N").
+     */
+    private fun locateCrash(playerLog: List<String>) {
+        val moduleLine = Regex("([^\\\\:]+\\.(?:dll|exe|drv)) \\(([0-9A-Fa-f]{8,16})\\), size: (\\d+)", RegexOption.IGNORE_CASE)
+        val modules = playerLog.mapNotNull { line ->
+            val m = moduleLine.find(line) ?: return@mapNotNull null
+            val base = m.groupValues[2].toULongOrNull(16) ?: return@mapNotNull null
+            val size = m.groupValues[3].toULongOrNull() ?: return@mapNotNull null
+            Triple(m.groupValues[1], base, size)
+        }.distinctBy { it.second }
+        if (modules.isEmpty()) return
+        fun where(addr: ULong): String = modules.firstOrNull { addr >= it.second && addr < it.second + it.third }
+            ?.let { "${it.first}+0x${(addr - it.second).toString(16)}" } ?: "0x${addr.toString(16)} (outside any loaded DLL)"
+        val wineFault = Regex("page fault on (\\w+) access to ([0-9A-Fa-f]+) at address ([0-9A-Fa-f]+)").findAll(_log.value).lastOrNull()
+        if (wineFault != null) {
+            val at = wineFault.groupValues[3].toULongOrNull(16)
+            if (at != null) appendLog("[crash] ${wineFault.groupValues[1]} of 0x${wineFault.groupValues[2]} in ${where(at)}")
+        }
+        val addrRegex = Regex("Address: ([0-9A-Fa-f]{8,16})")
+        val stack = playerLog.mapNotNull { addrRegex.find(it)?.groupValues?.get(1)?.toULongOrNull(16) }.distinct().take(8)
+        if (stack.isNotEmpty()) appendLog("[crash stack] " + stack.joinToString(" <- ") { where(it) })
     }
 
     @Volatile var lastGameDir: File? = null

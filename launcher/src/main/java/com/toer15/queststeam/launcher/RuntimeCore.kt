@@ -88,6 +88,8 @@ object RuntimeCore {
             put("vblank_mode", "0")
             put("DXVK_LOG_LEVEL", "info")
             put("DXVK_STATE_CACHE_PATH", "$r/tmp")
+            // Written by the app before each game (Winlator's settings); Z: is the runtime's root.
+            put("DXVK_CONFIG_FILE", "Z:\\home\\xuser\\.config\\dxvk.conf")
             put("QSS_MODE", mode)
             if (!display.isNullOrBlank()) put("DISPLAY", display)
             putAll(extra)
