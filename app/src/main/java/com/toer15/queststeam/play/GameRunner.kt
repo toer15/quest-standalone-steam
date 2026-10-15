@@ -13,6 +13,7 @@ import com.toer15.queststeam.gamepad.Controllers
 import com.toer15.queststeam.gamepad.GamepadBridge
 import com.toer15.queststeam.launcher.GameLauncher
 import com.toer15.queststeam.launcher.WineRegistry
+import com.toer15.queststeam.launcher.RuntimeCore
 import com.toer15.queststeam.launcher.RuntimeInstaller
 import com.toer15.queststeam.launcher.XProbe
 import kotlinx.coroutines.CoroutineScope
@@ -303,14 +304,16 @@ object GameRunner {
         }
     }
 
-    private suspend fun start(ctx: Context, exe: File, args: String, mode: String, title: String) {
+    private suspend fun start(ctx: Context, requested: File, args: String, mode: String, title: String) {
         val l = launcher ?: GameLauncher(ctx.applicationContext).also { launcher = it }
         gameStartedAt = System.currentTimeMillis()
         withContext(Dispatchers.IO) {
+            runCatching { SteamWindows.dedupeExe(l)?.let { appendLog("Steam folder: $it (two copies of steam.exe).") } }
             // Box64's per-game settings from Winlator (bundled as an asset by CI).
             runCatching {
                 val rc = File(l.rootfs, "etc/config.box64rc")
-                val bytes = ctx.assets.open("graphics/default.box64rc").use { it.readBytes() }
+                // Without Winlator's pre-exec hook (see RuntimeCore.disablePreExec): it made Steam.exe wait forever.
+                val bytes = RuntimeCore.sanitizeBox64Rc(ctx.assets.open("graphics/default.box64rc").use { String(it.readBytes()) }).toByteArray()
                 if (!rc.isFile || !rc.readBytes().contentEquals(bytes)) { rc.parentFile?.mkdirs(); rc.writeBytes(bytes) }
             }
             // DXVK settings, as Winlator writes them (constant buffer range checks avoid out-of-bounds reads).
@@ -322,6 +325,8 @@ object GameRunner {
             if (k > 0) appendLog("Closed $k Wine process(es) left over from the last game.")
             runCatching { NetworkInfo.write(ctx, l.rootfs) }.onFailure { appendLog("Couldn't write the network info for Wine: ${it.message}") }
         }
+        // The copy of steam.exe that was asked for may have been the stale one removed above.
+        val exe = if (SteamWindows.isSteam(requested) && !requested.isFile) SteamWindows.exe(l) else requested
         val disp = display(ctx)
         val gameDir = gameRoot(l, exe)
         lastGameDir = exe.parentFile
@@ -405,7 +410,10 @@ object GameRunner {
                     l.runWine(
                         listOf(SteamWindows.exe(l).path, "-silent") + SteamWindows.STEAM_ARGS, BuiltInDisplay.DISPLAY,
                         SteamWindows.dir(l), env + SteamWindows.translationCacheEnv(l), onExit = { appendLog("[Steam closed ($it)]") },
-                    ) { line -> if (steamLines < 30 && line.contains("err:") && !line.contains("fixme")) { steamLines++; appendLog("[steam] $line") } }
+                    ) { line ->
+                        val keep = (line.contains("err:") || line.startsWith("wine:") || line.contains("Box64", ignoreCase = true)) && !line.contains("fixme")
+                        if (steamLines < 60 && keep) { steamLines++; appendLog("[steam] $line") }
+                    }
                 }
                 if (!steam.ok) appendLog("Steam didn't start: ${steam.message}")
                 else {

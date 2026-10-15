@@ -91,17 +91,23 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.6
+      - name: Publish release v0.13.7
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.6
+          tag_name: v0.13.7
           target_commitish: ${{ github.sha }}
-          name: "v0.13.6: see what Steam is doing while it starts"
+          name: "v0.13.7: Steam no longer hangs at start"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.7:**
+            - **Fixes Steam never opening** (Steam.exe stuck at 0 seconds of processor time, no window, no Steam logs). The Winlator settings file the app uses tells Wine to run a helper before steam.exe; that helper waits for an answer from the Winlator app itself, which isn't there, so Steam waited forever. The app now removes that hook (the log says "Runtime fix: removed WINPREEXEC…" once).
+            - Steam's files are unpacked without leaving two copies of steam.exe (Steam.exe from the installer and steam.exe from Valve's package); an existing duplicate is cleaned up.
+            - An interrupted Steam download/unpack is finished on the next start instead of being taken as done.
+            - The running-programs list names helper processes (e.g. "Steam.exe(loading)"), and more of Steam's startup messages go to the log.
 
             **v0.13.6:**
             - While Steam starts, the loading screen lists the Windows programs that are running and how much processor time each has used (e.g. "Steam.exe 40s, steamwebhelper.exe ×3 25s"), so you can see it's working.

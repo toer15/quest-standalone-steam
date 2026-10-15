@@ -33,8 +33,12 @@ class GameLauncher(private val ctx: Context) {
         if (!installer.isInstalled) return LaunchResult(false, "Runtime not downloaded yet: tap Download runtime.")
         if (RuntimeCore.repairPrefix(rootfs)) onLine("Repaired the Wine prefix (linked Wine's system DLLs, fixes exit code 53).")
         if (!RuntimeCore.prefixHealthy(rootfs)) return LaunchResult(false, "Wine prefix is broken: delete the runtime and download it again.")
+        // Every Wine launch goes through here, so installs from older app versions get fixed too.
+        runCatching { RuntimeCore.disablePreExec(rootfs) }.getOrNull()?.forEach {
+            onLine("Runtime fix: $it (Winlator's pre-exec hook made Steam.exe wait forever).")
+        }
         val cmd = listOf(File(rootfs, "usr/local/bin/box64").path, File(rootfs, "opt/wine/bin/wine").path) + args
-        onLine("$ " + cmd.joinToString(" "))
+        onLine("$ " + cmd.joinToString(" ") { if (' ' in it) "\"$it\"" else it })
         return try {
             File(rootfs, "tmp/mesa-cache").mkdirs()
             val pb = ProcessBuilder(cmd).directory(workDir ?: prefix).redirectErrorStream(true)
@@ -92,6 +96,21 @@ class GameLauncher(private val ctx: Context) {
             if (has) out += cur.toString()
             return out
         }
+
+        /**
+         * "C:\Program Files (x86)\Steam\steam.exe -silent …" -> "steam.exe"; unix programs -> their file name.
+         * Helpers named after the program they start say so: "winpreexec(Steam.exe)" is Winlator's pre-exec
+         * hook, "Steam.exe(loading)" is Wine's loader before the program itself runs.
+         */
+        fun processName(cmd: String): String {
+            val argv0 = cmd.substringBefore(' ').substringAfterLast('/')
+            val exe = Regex("([^\\\\/]+\\.exe)\\b", RegexOption.IGNORE_CASE).find(cmd)?.value ?: return argv0
+            return when (argv0) {
+                "winpreexec", "winpreexec.disabled" -> "winpreexec($exe)"
+                "wine", "wine64" -> "$exe(loading)"
+                else -> exe
+            }
+        }
     }
 
     /** Sanity check that needs no display. */
@@ -123,10 +142,7 @@ class GameLauncher(private val ctx: Context) {
             val stat = runCatching { File(d, "stat").readText() }.getOrDefault("")
             val fields = stat.substringAfterLast(')').trim().split(' ')
             val ticks = (fields.getOrNull(11)?.toLongOrNull() ?: 0) + (fields.getOrNull(12)?.toLongOrNull() ?: 0)
-            // "C:\Program Files (x86)\Steam\steam.exe -silent …" -> "steam.exe"; unix programs -> their file name.
-            val exe = Regex("([^\\\\/]+\\.exe)\\b", RegexOption.IGNORE_CASE).find(cmd)?.value
-                ?: cmd.substringBefore(' ').substringAfterLast('/')
-            out += exe to ticks / 100
+            out += processName(cmd) to ticks / 100
         }
         return out.groupBy { it.first }.map { (name, list) ->
             val secs = list.sumOf { it.second }

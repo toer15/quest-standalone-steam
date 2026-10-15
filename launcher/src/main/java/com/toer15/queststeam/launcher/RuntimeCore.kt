@@ -43,6 +43,41 @@ object RuntimeCore {
     /** Bumped when [ASSETS] change so existing installs are redone. */
     const val LAYOUT_VERSION = 3
 
+    /**
+     * Winlator's box64 rc makes its patched Wine loader run usr/local/bin/winpreexec before steam.exe,
+     * Launcher.exe and CNC3.exe (BOX64_ENV…=WINPREEXEC=winpreexec). That helper asks Winlator's Java
+     * WinHandler over UDP 127.0.0.1:7947 and waits for the answer with no timeout; this app has no
+     * WinHandler, so those programs never started (Steam.exe at 0 s CPU, no window, no logs).
+     */
+    private val PRE_EXEC_LINE = Regex("^\\s*BOX64_ENV\\d*\\s*=\\s*WINPREEXEC\\s*=", RegexOption.IGNORE_CASE)
+
+    /** The rc text without its WINPREEXEC lines; everything else (Winlator's per-game fixes) stays. */
+    fun sanitizeBox64Rc(text: String): String =
+        text.lineSequence().filterNot { PRE_EXEC_LINE.containsMatchIn(it) }.joinToString("\n")
+
+    /**
+     * Removes the pre-exec hook from an installed runtime: the WINPREEXEC lines in etc/config.box64rc,
+     * and the helper itself (moved aside, so a WINPREEXEC from anywhere else fails fast instead of
+     * waiting: the loader only cancels a launch when the helper exits with code 2).
+     * Returns what it changed (empty = nothing to do).
+     */
+    fun disablePreExec(rootfs: File): List<String> {
+        val done = mutableListOf<String>()
+        val rc = File(rootfs, "etc/config.box64rc")
+        if (rc.isFile) {
+            val text = rc.readText()
+            val clean = sanitizeBox64Rc(text)
+            if (clean != text) { rc.writeText(clean); done += "removed WINPREEXEC from etc/config.box64rc" }
+        }
+        val helper = File(rootfs, "usr/local/bin/winpreexec")
+        if (helper.exists()) {
+            val off = File(helper.path + ".disabled")
+            off.delete()
+            if (helper.renameTo(off) || helper.delete()) done += "moved usr/local/bin/winpreexec aside"
+        }
+        return done
+    }
+
     /** Environment for `box64 wine ...` in the installed runtime at [r] (pure, so tests use the same one). */
     fun wineEnvironment(r: String, display: String?, mode: String, extra: Map<String, String> = emptyMap()): Map<String, String> =
         buildMap {
@@ -204,6 +239,7 @@ object RuntimeCore {
                 progress(a.label, 1f)
             }
         }
+        disablePreExec(rootfs)
         File(rootfs, "tmp/shm").mkdirs()
         File(rootfs, "home/xuser/.wine/drive_c/games").mkdirs()
     }

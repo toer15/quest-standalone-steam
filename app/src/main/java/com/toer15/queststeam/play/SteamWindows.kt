@@ -26,9 +26,27 @@ object SteamWindows {
     /** Steam's in-game overlay and launchers stay off (too heavy under Box64). */
     const val DLL_OVERRIDES = "gameoverlayrenderer,gameoverlayrenderer64,gameoverlayui.exe,gameoverlayui64.exe,x86launcher.exe,x64launcher.exe=d"
 
-    /** [name] in [parent], ignoring case (Android's file system is case-sensitive, Windows isn't). */
-    private fun child(parent: File, name: String): File =
-        parent.listFiles()?.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: File(parent, name)
+    /**
+     * [name] in [parent], ignoring case (Android's file system is case-sensitive, Windows isn't):
+     * the exact spelling if it exists, otherwise the newest file spelled differently.
+     */
+    private fun child(parent: File, name: String): File {
+        val exact = File(parent, name)
+        if (exact.exists()) return exact
+        return parent.listFiles()?.filter { it.name.equals(name, ignoreCase = true) }?.maxByOrNull { it.lastModified() } ?: exact
+    }
+
+    /**
+     * Earlier versions could leave both "Steam.exe" (Valve's installer) and "steam.exe" (the client
+     * package) in the Steam folder. Keeps the newest one so Wine doesn't start the stale copy.
+     */
+    fun dedupeExe(l: GameLauncher): String? {
+        val copies = dir(l).listFiles()?.filter { it.isFile && it.name.equals("steam.exe", ignoreCase = true) }.orEmpty()
+        if (copies.size < 2) return null
+        val keep = copies.maxByOrNull { it.lastModified() } ?: return null
+        val gone = copies.filter { it != keep && it.delete() }.map { it.name }
+        return if (gone.isEmpty()) null else "kept ${keep.name}, removed ${gone.joinToString()}"
+    }
 
     /**
      * Box64 keeps the code it translated for Steam on storage (its "DynaCache"), so later Steam starts

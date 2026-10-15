@@ -22,8 +22,13 @@ object SteamClientDownload {
     data class Package(val file: String, val size: Long)
     data class Manifest(val platform: String, val version: String, val text: String, val packages: List<Package>)
 
-    /** True when the client has been unpacked (steamui.dll is part of every Steam client). */
-    fun isBootstrapped(steamDir: File) = steamDir.listFiles()?.any { it.name.equals("steamui.dll", true) } == true
+    /**
+     * True when the client has been fully unpacked: steamui.dll is part of every Steam client, and the
+     * manifest is only written after every package was unpacked (so an interrupted unpack is redone).
+     */
+    fun isBootstrapped(steamDir: File) =
+        steamDir.listFiles()?.any { it.name.equals("steamui.dll", true) } == true &&
+            File(steamDir, "package").listFiles()?.any { it.name.startsWith("steam_client_") && it.name.endsWith(".manifest") } == true
 
     fun fetchManifest(): Manifest {
         var lastError: Exception? = null
@@ -124,14 +129,36 @@ object SteamClientDownload {
         }
     }
 
-    private fun unzip(zip: File, dest: File) {
+    /**
+     * Unpacks [zip] into [dest]. Windows names are case-insensitive but Android's aren't: an entry
+     * goes into an existing folder spelled differently ("Bin" vs "bin"), and replaces a file spelled
+     * differently (Valve's installer writes "Steam.exe", the client package "steam.exe") instead of
+     * leaving two copies for Wine to choose between.
+     */
+    internal fun unzip(zip: File, dest: File) {
         val root = dest.canonicalPath
+        val names = HashMap<String, MutableMap<String, String>>()
+        fun listing(dir: File) = names.getOrPut(dir.path) {
+            dir.list().orEmpty().associateByTo(HashMap()) { it.lowercase() }
+        }
+        fun resolve(dir: File, name: String): File {
+            val known = listing(dir)
+            val existing = known[name.lowercase()]
+            if (existing != null && existing != name) {
+                val old = File(dir, existing)
+                if (old.isDirectory) return old
+                old.delete()
+            }
+            known[name.lowercase()] = name
+            return File(dir, name)
+        }
         ZipInputStream(zip.inputStream().buffered()).use { z ->
             while (true) {
                 val e = z.nextEntry ?: break
-                val name = e.name.replace('\\', '/').trimStart('/')
-                if (name.isEmpty() || name.split('/').contains("..")) continue
-                val out = File(dest, name)
+                val parts = e.name.replace('\\', '/').split('/').filter { it.isNotEmpty() }
+                if (parts.isEmpty() || parts.contains("..")) continue
+                var out = dest
+                for (part in parts) out = resolve(out, part)
                 if (!out.canonicalPath.startsWith(root)) continue
                 if (e.isDirectory) { out.mkdirs(); continue }
                 out.parentFile?.mkdirs()
