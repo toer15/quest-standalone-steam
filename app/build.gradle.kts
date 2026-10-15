@@ -51,7 +51,11 @@ android {
         }
     }
     buildTypes {
-        getByName("debug") { signingConfig = signingConfigs.getByName("sideload") }
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("sideload")
+            // Screenshot builds run on an x86_64 emulator. Release stays arm64 (Quest).
+            ndk { abiFilters += "x86_64" }
+        }
         // Release = not debuggable, so ART fully compiles the app; Compose UI is far faster than in debug.
         getByName("release") {
             isMinifyEnabled = false

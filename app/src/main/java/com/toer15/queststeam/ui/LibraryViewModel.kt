@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.toer15.queststeam.BuildConfig
+import com.toer15.queststeam.DemoShots
 import com.toer15.queststeam.download.DownloadManager
 import com.toer15.queststeam.steam.OwnedGame
 import com.toer15.queststeam.steam.PlayerSummary
@@ -43,7 +44,12 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         loadCache()
-        sync()
+        if (DemoShots.armed) {
+            DemoShots.applyCardStates(downloads)
+            _profile.value = DemoShots.profile()
+            val list = _games.value
+            _status.value = "${list.size} games · ${list.count { it.isVr }} VR · via Steam session"
+        } else sync()
     }
 
     private fun loadCache() = runCatching {

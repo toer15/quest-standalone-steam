@@ -269,4 +269,9 @@ class DownloadManager private constructor(private val ctx: Context) {
         File(dirFor(appId), com.toer15.queststeam.steamclient.SteamDownloader.LAUNCH_FILE).takeIf { it.isFile }?.readLines()
 
     private fun set(appId: Int, s: GameState) = _states.update { it + (appId to s) }
+
+    /** Debug screenshots only. Release builds ignore it. */
+    fun demoState(appId: Int, state: GameState) {
+        if (com.toer15.queststeam.BuildConfig.DEBUG) set(appId, state)
+    }
 }
