@@ -30,6 +30,15 @@ object SteamWindows {
     private fun child(parent: File, name: String): File =
         parent.listFiles()?.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: File(parent, name)
 
+    /**
+     * Box64 keeps the code it translated for Steam on storage (its "DynaCache"), so later Steam starts
+     * skip most of the translation work. Only for Steam; games keep Winlator's setting (off).
+     */
+    fun translationCacheEnv(l: GameLauncher): Map<String, String> {
+        val dir = File(l.rootfs, "home/xuser/.cache/box64").apply { mkdirs() }
+        return mapOf("BOX64_DYNACACHE" to "1", "BOX64_DYNACACHE_FOLDER" to dir.path)
+    }
+
     fun dir(l: GameLauncher) = child(child(File(l.prefix, "drive_c"), "Program Files (x86)"), "Steam")
     /** Valve's installer writes "Steam.exe". */
     fun exe(l: GameLauncher) = child(dir(l), "steam.exe")

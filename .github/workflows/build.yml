@@ -91,17 +91,20 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.4
+      - name: Publish release v0.13.5
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.4
+          tag_name: v0.13.5
           target_commitish: ${{ github.sha }}
-          name: "v0.13.4: Steam downloads through the app (fast)"
+          name: "v0.13.5: Steam starts faster after the first time"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.5:**
+            - Steam starts faster after its first start: Box64 now keeps the code it translated for Steam on storage (its translation cache), so Steam doesn't have to be translated from scratch every time. Games keep Winlator's setting.
 
             **v0.13.4:**
             - **Steam for Windows downloads much faster:** the app now downloads Steam's files itself (4 at a time, from Valve's update server) and unpacks them, with a progress bar ("Downloading Steam… 120 of 380 MB"), instead of Steam's own updater doing it slowly under the Windows translation. Then Steam opens for sign-in.

@@ -363,6 +363,7 @@ object GameRunner {
             _stage.value = LaunchStage.Working(title, "Starting the game display…")
             // The game's own windows have its exe name as their class; Steam's UI is drawn by other processes.
             BuiltInDisplay.expectedWindowClass = if (SteamWindows.isSteam(exe)) null else exe.name.lowercase()
+            if (SteamWindows.isSteam(exe)) env.putAll(SteamWindows.translationCacheEnv(l))
             // No Steam overlay in games (too heavy under Box64).
             env["WINEDLLOVERRIDES"] = (l.environment(null)["WINEDLLOVERRIDES"] ?: "") + ";" + SteamWindows.DLL_OVERRIDES
             val useVortek = Vortek.selected(ctx) == Vortek.VORTEK && withContext(Dispatchers.IO) {
@@ -403,7 +404,7 @@ object GameRunner {
                 val steam = withContext(Dispatchers.IO) {
                     l.runWine(
                         listOf(SteamWindows.exe(l).path, "-silent") + SteamWindows.STEAM_ARGS, BuiltInDisplay.DISPLAY,
-                        SteamWindows.dir(l), env, onExit = { appendLog("[Steam closed ($it)]") },
+                        SteamWindows.dir(l), env + SteamWindows.translationCacheEnv(l), onExit = { appendLog("[Steam closed ($it)]") },
                     ) { line -> if (steamLines < 30 && line.contains("err:") && !line.contains("fixme")) { steamLines++; appendLog("[steam] $line") } }
                 }
                 if (!steam.ok) appendLog("Steam didn't start: ${steam.message}")
