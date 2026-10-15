@@ -208,6 +208,21 @@ object GameRunner {
         }
     }
 
+    /** While Steam runs in the game display, tells when the player has signed in. */
+    private fun watchSteamSignIn(l: GameLauncher) {
+        if (SteamWindows.isSignedIn(l)) return
+        val offset = SteamWindows.connectionLog(l).let { if (it.isFile) it.length() else 0L }
+        scope.launch {
+            while (isRunning) {
+                if (withContext(Dispatchers.IO) { SteamWindows.loggedOnSince(l, offset) || SteamWindows.isSignedIn(l) }) {
+                    appendLog("✓ Signed in to Steam. Leave Steam (✕ Leave game) and press Play on your game.")
+                    return@launch
+                }
+                delay(3000)
+            }
+        }
+    }
+
     /** Opens Steam for Windows in the game display (first start updates it; then the player signs in). */
     fun openSteam(ctx: Context) {
         val l = launcher ?: GameLauncher(ctx.applicationContext).also { launcher = it }
@@ -230,7 +245,13 @@ object GameRunner {
                     }
                     appendLog("Runtime downloaded and installed.")
                 }
-                start(ctx, exe, args, mode, title)
+                val l = launcher ?: GameLauncher(app).also { launcher = it }
+                if (!SteamWindows.isSteam(exe) && SteamWindows.startWithGames(app) && SteamWindows.isInstalled(l) && !SteamWindows.isSignedIn(l)) {
+                    // The game needs Steam signed in first: show Steam's sign-in in the app instead.
+                    appendLog("Sign in to Steam first: opening Steam. When you're signed in, leave Steam and press Play on $title again.")
+                    start(ctx, SteamWindows.exe(l), SteamWindows.STEAM_ARGS.joinToString(" "), RuntimeActivity.MODE_FLAT, "Steam: sign in, then play $title")
+                } else start(ctx, exe, args, mode, title)
+                if (SteamWindows.isSteam(exe) || _stage.value.let { it is LaunchStage.Running && it.title.startsWith("Steam") }) watchSteamSignIn(l)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {

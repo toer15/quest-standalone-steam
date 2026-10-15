@@ -104,6 +104,7 @@ jobs:
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
 
             **v0.13.3:**
+            - **Steam's sign-in opens inside the app**, on the same screen as games (✕ Leave game brings you back). Pressing **Play** on a game before you've signed in to Steam opens Steam's sign-in first; the log says "✓ Signed in to Steam" when you're done, then press Play again.
             - Steam's first start shows what it's doing: **Downloading Steam… 45%** with a progress bar, then **Unpacking / Installing Steam**, then Steam's window opens by itself. The lines under it are Steam's own messages.
             - While Steam starts, the loading screen has no **Show game window** button any more (it only showed a black screen while Steam was still downloading); Steam's window opens by itself when it's ready.
             - For games the button appears after 60 seconds instead of 20, as a fallback for a game that seems stuck.
