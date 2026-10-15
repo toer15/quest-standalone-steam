@@ -69,12 +69,15 @@ class GameLauncher(private val ctx: Context) {
      */
     fun launchExe(
         exe: File, display: String?, extraEnv: Map<String, String> = emptyMap(), args: List<String> = emptyList(),
-        desktop: String? = null, onExit: (Int) -> Unit = {}, track: Boolean = true, onLine: (String) -> Unit,
+        desktop: String? = null, onExit: (Int) -> Unit = {}, track: Boolean = true, desktopName: String = DESKTOP,
+        onLine: (String) -> Unit,
     ): LaunchResult {
         // explorer starts the game with Windows' CreateProcess, which needs a Windows path (C:\games\…).
         // "nogui" is the bare game desktop of Winlator's Wine (what Winlator uses for games); "shell"
-        // would add a taskbar and start menu.
-        val cmd = if (desktop != null) listOf("explorer", "/desktop=nogui,$desktop", windowsPath(exe)) + args else listOf(exe.path) + args
+        // would add a taskbar and start menu. A program started while another one owns that desktop
+        // gets its own [desktopName]: Wine can't hand it to a desktop another explorer owns (it ends
+        // up with no window driver: "nodrv_CreateWindow … The explorer process failed to start").
+        val cmd = if (desktop != null) listOf("explorer", "/desktop=$desktopName,$desktop", windowsPath(exe)) + args else listOf(exe.path) + args
         return runWine(cmd, display, exe.parentFile, extraEnv, onExit, track, onLine)
     }
 
@@ -87,6 +90,9 @@ class GameLauncher(private val ctx: Context) {
     }
 
     companion object {
+        /** The game desktop of the session's main program (see [launchExe]). */
+        const val DESKTOP = "nogui"
+
         /** Splits a Steam launch-arguments string, keeping "quoted parts" together. */
         fun splitArgs(s: String): List<String> {
             val out = mutableListOf<String>()
@@ -115,6 +121,14 @@ class GameLauncher(private val ctx: Context) {
          */
         fun processName(cmd: String): String {
             val argv0 = cmd.substringBefore(' ').substringAfterLast('/')
+            // "box64 …/wine explorer /desktop=… C:\games\1\Game.exe" is Wine's launcher for the game,
+            // not the game (before Wine renames it "C:\windows\system32\explorer.exe …").
+            if (argv0 == "box64" || argv0 == "wine" || argv0 == "wine64") {
+                val words = cmd.split(' ').filter { it.isNotEmpty() }
+                val prog = words.getOrNull(if (argv0 == "box64") 2 else 1)?.substringAfterLast('/')?.substringAfterLast('\\')?.lowercase()
+                if (prog == "explorer" || prog == "explorer.exe") return "explorer.exe"
+                if (prog == "start" || prog == "start.exe") return "start.exe"
+            }
             val exe = Regex("([^\\\\/]+\\.exe)\\b", RegexOption.IGNORE_CASE).find(cmd)?.value ?: return argv0
             return when (argv0) {
                 "winpreexec", "winpreexec.disabled" -> "winpreexec($exe)"
@@ -174,6 +188,22 @@ class GameLauncher(private val ctx: Context) {
 
     /** Ends the Windows program [exeName] only (Steam and the rest of the session keep running). */
     fun kill(exeName: String): Int = processesOf(exeName).onEach { android.os.Process.killProcess(it.pid) }.size
+
+    /**
+     * Lowest (or normal again) CPU priority for every Wine/Box64 thread: Steam idling in the
+     * background then doesn't slow the app down. Returns the number of threads changed.
+     */
+    fun setBackground(background: Boolean): Int {
+        val prio = if (background) android.os.Process.THREAD_PRIORITY_LOWEST else android.os.Process.THREAD_PRIORITY_DEFAULT
+        var n = 0
+        for (p in running()) {
+            File("/proc/${p.pid}/task").list()?.forEach { tid ->
+                val t = tid.toIntOrNull() ?: return@forEach
+                if (runCatching { android.os.Process.setThreadPriority(t, prio) }.isSuccess) n++
+            }
+        }
+        return n
+    }
 
     fun killLeftovers(): Int {
         val me = android.os.Process.myPid()

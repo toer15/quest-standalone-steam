@@ -44,6 +44,17 @@ class PreExecTest {
         assertEquals("wineserver", GameLauncher.processName("$r/opt/wine/bin/wineserver -p"))
     }
 
+    @Test fun winesLauncherForAGameIsNotTheGame() {
+        val r = "/data/user/0/com.qssteam/files/rootfs"
+        val launcher = "$r/usr/local/bin/box64 $r/opt/wine/bin/wine explorer /desktop=game1,1280x720 C:\\games\\3241660\\REPO.exe"
+        assertEquals("explorer.exe", GameLauncher.processName(launcher))
+        assertFalse(GameLauncher.isProcessOf(GameLauncher.processName(launcher), "REPO.exe"))
+        assertEquals("start.exe", GameLauncher.processName("$r/opt/wine/bin/wine start /unix $r/x/Game.exe"))
+        // The game itself, before and after Wine names it by its Windows path.
+        assertEquals("REPO.exe", GameLauncher.processName("$r/usr/local/bin/box64 $r/opt/wine/bin/wine C:\\games\\3241660\\REPO.exe"))
+        assertEquals("REPO.exe", GameLauncher.processName("C:\\games\\3241660\\REPO.exe"))
+    }
+
     @Test fun aGameIsFoundByItsExeName() {
         assertTrue(GameLauncher.isProcessOf("REPO.exe", "repo.exe"))
         assertTrue(GameLauncher.isProcessOf("REPO.exe(loading)", "REPO.exe"))

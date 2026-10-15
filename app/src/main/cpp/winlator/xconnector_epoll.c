@@ -12,10 +12,9 @@
 #include <android/log.h>
 
 #define printf(...) __android_log_print(ANDROID_LOG_DEBUG, "System.out", __VA_ARGS__);
-#define MAX_EVENTS 10
+#define MAX_EVENTS 64
+#define LISTEN_BACKLOG 128
 #define MAX_FDS 32
-
-struct epoll_event events[MAX_EVENTS];
 
 JNIEXPORT jint JNICALL
 Java_com_winlator_xconnector_XConnectorEpoll_createAFUnixSocket(JNIEnv *env, jobject obj,
@@ -36,7 +35,7 @@ Java_com_winlator_xconnector_XConnectorEpoll_createAFUnixSocket(JNIEnv *env, job
 
     unlink(serverAddr.sun_path);
     if (bind(fd, (struct sockaddr*) &serverAddr, addrLength) < 0) goto error;
-    if (listen(fd, MAX_EVENTS) < 0) goto error;
+    if (listen(fd, LISTEN_BACKLOG) < 0) goto error;
 
     return fd;
     error:
@@ -62,6 +61,9 @@ Java_com_winlator_xconnector_XConnectorEpoll_doEpollIndefinitely(JNIEnv *env, jo
     jmethodID handleNewConnection = (*env)->GetMethodID(env, cls, "handleNewConnection", "(I)V");
     jmethodID handleExistingConnection = (*env)->GetMethodID(env, cls, "handleExistingConnection", "(I)V");
 
+    // Per call: the X server, shared-memory and sound servers each poll on their own thread, and a
+    // shared (global) array let one thread overwrite another's results.
+    struct epoll_event events[MAX_EVENTS];
     int numFds = epoll_wait(epollFd, events, MAX_EVENTS, -1);
     for (int i = 0; i < numFds; i++) {
         if (events[i].data.fd == serverFd) {

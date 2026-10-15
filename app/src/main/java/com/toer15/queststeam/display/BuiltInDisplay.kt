@@ -102,6 +102,9 @@ object BuiltInDisplay {
 
     val isRunning get() = server != null
 
+    /** X clients connected to the display right now (Wine processes and their GUI threads). */
+    fun clientCount(): Int = server?.resourceIDs?.inUse() ?: 0
+
     /** True when [display] (the Runtime screen setting) means this built-in display. */
     fun isBuiltIn(display: String?) = display == null || display == DISPLAY || display.isBlank()
 

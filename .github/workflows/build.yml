@@ -91,17 +91,27 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.9
+      - name: Publish release v0.14.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.9
+          tag_name: v0.14.0
           target_commitish: ${{ github.sha }}
-          name: "v0.13.9: Steam stays running, games start in it, faster Wine"
+          name: "v0.14.0: games start next to Steam, fast Friends tab"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.14.0:**
+            - **Games start next to a running Steam again.** In v0.13.9, R.E.P.O. stayed on loading: the log showed "no driver could be loaded / The explorer process failed to start", meaning the game couldn't open its window. Games now get their own game screen (a Wine desktop) next to Steam's, exactly as when no Steam runs.
+            - **Fixed the game display running out of room for programs:** Winlator's display allowed 128 connections, and Steam uses many (every Wine program and its window threads). When it ran full, every later program got a broken connection and couldn't open a window. Now 1024, a full display refuses cleanly, and a broken slot is never handed out again. The display's three servers also no longer share one event buffer.
+            - The app no longer took a game that was still starting for one that had closed ("R.E.P.O. closed while starting" while it was loading).
+            - **New FRIENDS tab, fast like the Store:** your Steam friends with who's online and what they play, and chat with them. It uses the app's own Steam connection, not Steam for Windows' slow window. The card on top says whether Steam for online games is running, with **Show its window** and **Close it**.
+            - **The app stays fast while Steam runs in the background:** Steam's programs get the lowest CPU priority while you're in the app, and normal priority again when a game or Steam is on screen.
+            - **Steam starts faster:** its own programs no longer load DXVK and its GPU probes no longer start Vulkan. Each did a full GPU-driver handshake (your log had many), and one Steam process crashed doing it.
+            - **Close Steam lets Steam close itself**, so it saves its sign-in and settings, instead of ending it at once.
+            - While a game loads, the log shows the last lines the game wrote (Unity's Player.log) and how many programs are connected to the display, so a game stuck on loading shows where.
 
             **v0.13.9:**
             - **Steam stays running, like on a PC.** Leaving Steam's screen (✕ Leave) keeps Steam running in the background: **Show Steam** brings it back at once, and **Close Steam** (Runtime settings) ends it.

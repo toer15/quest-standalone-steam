@@ -11,6 +11,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import com.toer15.queststeam.gamepad.PadNav
 import com.toer15.queststeam.play.GameRunner
+import com.toer15.queststeam.steam.FriendsScreen
 import com.toer15.queststeam.store.StoreActivity
 import com.toer15.queststeam.store.StoreApi
 import com.toer15.queststeam.store.StoreGameDialog
@@ -148,7 +149,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Top bar tabs, left to right: Home, Store (middle), Games. */
-private enum class Tab { Home, Store, Games }
+private enum class Tab { Home, Store, Games, Friends }
 
 /** Built-in filters; genres from the Steam store are appended dynamically. */
 object Categories {
@@ -288,6 +289,14 @@ internal fun LauncherApp(
                     )
                     Tab.Store -> StoreScreen(owned = remember(games) { games.mapTo(HashSet()) { it.appId } }, onOpenGame = { storeItem = it })
                     Tab.Games -> GamesScreen(games, ::stateOf, ::actionsFor)
+                    Tab.Friends -> FriendsScreen(
+                        profile?.personaName, profile?.avatarUrl,
+                        knownGame = { id -> games.firstOrNull { it.appId == id }?.name },
+                        onSignIn = onSteamSignIn,
+                        onOpenSteamWindow = {
+                            ctx.startActivity(Intent(ctx, RuntimeActivity::class.java).putExtra(RuntimeActivity.EXTRA_OPEN_STEAM, true))
+                        },
+                    )
                 }
             }
         }

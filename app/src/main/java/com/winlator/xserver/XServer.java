@@ -24,7 +24,9 @@ public class XServer {
     public final SparseArray<Extension> extensions = new SparseArray<>();
     public final ScreenInfo screenInfo;
     public final PixmapManager pixmapManager;
-    public final ResourceIDs resourceIDs = new ResourceIDs(128);
+    // Steam for Windows alone opens dozens of connections (one per Wine process and per GUI thread);
+    // with Winlator's 128 a game started next to it found the server full and got no window.
+    public final ResourceIDs resourceIDs = new ResourceIDs(1024);
     public final GraphicsContextManager graphicsContextManager = new GraphicsContextManager();
     public final SelectionManager selectionManager;
     public final DrawableManager drawableManager;

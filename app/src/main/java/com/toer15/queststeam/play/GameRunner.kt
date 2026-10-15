@@ -167,6 +167,39 @@ object GameRunner {
      */
     @Volatile private var launchGen = 0
 
+    /** Names the extra Wine desktops of programs started into a running session ("game1", "steam2"…). */
+    private var desktops = 0
+    private fun nextDesktop(prefix: String) = prefix + (++desktops)
+
+    /**
+     * While Steam idles in the background (you're in the app, no game on screen), its Wine processes
+     * run at the lowest CPU priority so the app stays smooth; on screen they get normal priority back.
+     */
+    private var priorityJob: Job? = null
+    @Volatile private var backgroundPriority = false
+
+    private fun watchPriority() {
+        if (priorityJob?.isActive == true) return
+        priorityJob = scope.launch {
+            while (steamRunning()) {
+                val idle = sessionGame == null && _stage.value.let { it is LaunchStage.Idle || it is LaunchStage.Failed }
+                // Re-applied while idle: Steam starts new helper processes now and then.
+                if (idle || backgroundPriority) {
+                    withContext(Dispatchers.IO) { launcher?.setBackground(idle) }
+                    backgroundPriority = idle
+                }
+                delay(4000)
+            }
+            backgroundPriority = false
+        }
+    }
+
+    private suspend fun foreground() {
+        if (!backgroundPriority) return
+        withContext(Dispatchers.IO) { launcher?.setBackground(false) }
+        backgroundPriority = false
+    }
+
     /** Steam's session is up: Steam's desktop process (the session's main process) is alive. */
     fun steamRunning(): Boolean = steamEnv != null && BuiltInDisplay.isRunning && isRunning
 
@@ -368,6 +401,7 @@ object GameRunner {
                 }
             }.onFailure { appendLog("Couldn't write Wine's DLL settings: ${it.message}") }
             if (SteamWindows.isInstalled(l)) runCatching {
+                SteamWindows.keepOffGpu(l)
                 SteamWindows.applyFastSettings(l)
                 val names = DownloadManager.get(ctx)
                 val added = SteamLibrary.register(SteamWindows.dir(l), l.gamesDir) { id -> names.nameOf(id).takeIf { it != "game" } }
@@ -491,6 +525,7 @@ object GameRunner {
                     appendLog(if (signedIn) "Steam is signed in." else "Steam didn't sign in within 4 minutes; starting the game anyway.")
                     if (!inVr) {
                         steamEnv = env.toMap()
+                        watchPriority()
                         startInSteam(ctx, exe, args, title)
                         return
                     }
@@ -516,7 +551,10 @@ object GameRunner {
         appendLog(result.message)
         if (!result.ok) { _stage.value = LaunchStage.Failed(title, result.message); return }
         // Steam itself: its session stays up for games (see steamEnv); games don't get Steam's translation cache.
-        if (builtIn && SteamWindows.isSteam(exe)) steamEnv = env - SteamWindows.translationCacheEnv(l).keys
+        if (builtIn && SteamWindows.isSteam(exe)) {
+            steamEnv = env - SteamWindows.translationCacheEnv(l).keys
+            watchPriority()
+        }
         PlayingService.start(ctx, title)
 
         if (inVr) {
@@ -533,6 +571,7 @@ object GameRunner {
             showNow = false
             val steamItself = SteamWindows.isSteam(exe)
             var lastBootstrap = ""
+            var lastGameLog = ""
             var steamProcs = emptyList<String>()
             while (true) {
                 if (!isRunning) return // onGameExit reports it
@@ -543,10 +582,15 @@ object GameRunner {
                     if (secs - lastNote >= 15) {
                         lastNote = secs
                         val n = BuiltInDisplay.server?.windowManager?.rootWindow?.children?.size ?: 0
-                        appendLog("[waiting ${secs}s] the game hasn't drawn its window yet ($n windows on the display)")
+                        appendLog("[waiting ${secs}s] the game hasn't drawn its window yet ($n windows, ${BuiltInDisplay.clientCount()} X clients on the display)")
                         withContext(Dispatchers.IO) { l.processes() }.takeIf { it.isNotEmpty() }?.let { appendLog("  running: " + it.joinToString(", ")) }
                         if (secs in 45..59) BuiltInDisplay.describeWindows().takeIf { it.isNotEmpty() }?.let { w ->
                             appendLog("[waiting] windows on the game screen:"); w.forEach(::appendLog)
+                        }
+                        // What the game itself says while it loads (Unity's Player.log), so a hang shows where.
+                        withContext(Dispatchers.IO) { gameLogTail(4) }.takeIf { it.isNotEmpty() && it.joinToString() != lastGameLog }?.let { t ->
+                            lastGameLog = t.joinToString()
+                            appendLog("  game says:"); t.forEach { appendLog("    $it") }
                         }
                         withContext(Dispatchers.IO) { appendNativeLog() }
                     }
@@ -630,39 +674,49 @@ object GameRunner {
             env["SteamAppId"] = appId.toString()
             env["SteamGameId"] = appId.toString()
         }
-        appendLog("Starting $title in the running Steam session.")
+        appendLog("Starting $title next to the running Steam.")
+        foreground()
         BuiltInDisplay.expectWindow(exe.name.lowercase(), null)
         _stage.value = LaunchStage.Working(title, "Starting $title…")
         val argv = GameLauncher.splitArgs(args)
         if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
+        // Its own game desktop on the same display (Steam's desktop belongs to Steam's explorer).
         val result = withContext(Dispatchers.IO) {
-            l.launchExe(exe, BuiltInDisplay.DISPLAY, env, argv, desktop = BuiltInDisplay.SCREEN, track = false, onLine = ::appendLog)
+            l.launchExe(exe, BuiltInDisplay.DISPLAY, env, argv, desktop = BuiltInDisplay.SCREEN, track = false, desktopName = nextDesktop("game"), onLine = ::appendLog)
         }
         if (!result.ok) { appendLog(result.message); _stage.value = LaunchStage.Failed(title, result.message); return }
         val name = exe.name
         sessionGame = name
         PlayingService.start(ctx, title)
         val started = System.currentTimeMillis()
-        var seen = false
+        var seenAt = 0L
         var lastNote = 0L
+        var lastGameLog = ""
         showNow = false
         while (true) {
             if (!steamRunning()) return // onGameExit reports it
             if (showNow || BuiltInDisplay.gameWindow.value) break
-            val secs = (System.currentTimeMillis() - started) / 1000
-            val alive = withContext(Dispatchers.IO) { l.isRunning(name) }
-            if (alive) seen = true
-            if (!alive && (seen || secs >= 45)) {
+            val now = System.currentTimeMillis()
+            val secs = (now - started) / 1000
+            if (withContext(Dispatchers.IO) { l.isRunning(name) }) seenAt = now
+            // Ended: its process has been gone for a while after running (Wine renames a process
+            // while it starts), or it never showed up at all.
+            if (if (seenAt > 0) now - seenAt > 8_000 else secs >= 60) {
                 sessionGame = null
-                appendLog("$title closed while starting${if (seen) "" else " (it never appeared)"}.")
+                appendLog("$title closed while starting${if (seenAt > 0) "" else " (it never appeared)"}.")
                 withContext(Dispatchers.IO) { appendNativeLog(); appendUnityLog(); appendDxvkLogs() }
                 _stage.value = LaunchStage.Failed(title, "The game closed while starting. The log below shows why.")
                 return
             }
             if (secs - lastNote >= 15) {
                 lastNote = secs
-                appendLog("[waiting ${secs}s] $title hasn't drawn its window yet")
+                appendLog("[waiting ${secs}s] $title hasn't drawn its window yet (${BuiltInDisplay.clientCount()} X clients on the display)")
                 withContext(Dispatchers.IO) { l.processes() }.takeIf { it.isNotEmpty() }?.let { appendLog("  running: " + it.joinToString(", ")) }
+                // What the game itself says while it loads (Unity's Player.log), so a hang shows where.
+                withContext(Dispatchers.IO) { gameLogTail(4) }.takeIf { it.isNotEmpty() && it.joinToString() != lastGameLog }?.let { t ->
+                    lastGameLog = t.joinToString()
+                    appendLog("  game says:"); t.forEach { appendLog("    $it") }
+                }
             }
             if (secs >= BUILT_IN_TIMEOUT_S) { appendLog("No game window after ${secs}s; showing the game display anyway."); break }
             _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s", detail = logTail(5), canShowWindow = secs >= 60)
@@ -672,9 +726,11 @@ object GameRunner {
         delay(900)
         _stage.value = LaunchStage.Running(title, vr = false)
         scope.launch {
+            var misses = 0
             while (sessionGame == name && steamRunning()) {
                 delay(2000)
-                if (!withContext(Dispatchers.IO) { l.isRunning(name) }) break
+                misses = if (withContext(Dispatchers.IO) { l.isRunning(name) }) 0 else misses + 1
+                if (misses >= 3) break
             }
             if (sessionGame != name) return@launch // left with "Leave game", or another game started
             sessionGame = null
@@ -695,8 +751,11 @@ object GameRunner {
         val l = launcher ?: return
         val env = steamEnv ?: return
         BuiltInDisplay.expectWindow(null, SteamWindows.UI_WINDOW_CLASS)
-        scope.launch(Dispatchers.IO) {
-            l.launchExe(SteamWindows.exe(l), BuiltInDisplay.DISPLAY, env, listOf("steam://open/main"), desktop = BuiltInDisplay.SCREEN, track = false) { }
+        scope.launch {
+            foreground()
+            withContext(Dispatchers.IO) {
+                l.launchExe(SteamWindows.exe(l), BuiltInDisplay.DISPLAY, env, listOf("steam://open/main"), desktop = BuiltInDisplay.SCREEN, track = false, desktopName = nextDesktop("steam")) { }
+            }
         }
         PlayingService.start(ctx, "Steam")
         _stage.value = LaunchStage.Running("Steam", vr = false)
@@ -784,6 +843,17 @@ object GameRunner {
             appendLog("[android log]")
             picked.forEach { appendLog("  " + it.substringAfter(' ').substringAfter(' ').take(300)) }
         }
+    }
+
+    /** The last [n] lines the game wrote to its Unity Player.log since it started (nothing for other games). */
+    private fun gameLogTail(n: Int): List<String> {
+        val l = launcher ?: return emptyList()
+        val since = gameStartedAt
+        val log = File(l.prefix, "drive_c/users").listFiles().orEmpty()
+            .mapNotNull { File(it, "AppData/LocalLow").takeIf(File::isDirectory) }
+            .flatMap { low -> low.walkTopDown().maxDepth(3).filter { it.name == "Player.log" && it.lastModified() >= since - 5_000 }.toList() }
+            .maxByOrNull { it.lastModified() } ?: return emptyList()
+        return runCatching { log.readLines() }.getOrDefault(emptyList()).filter { it.isNotBlank() }.takeLast(n).map { it.take(200) }
     }
 
     /**
@@ -883,15 +953,35 @@ object GameRunner {
         appendSteamLogs()
         appendUnityLog()
         job?.cancel()
-        launchGen++
+        val gen = ++launchGen
+        val l = launcher
+        val steam = steamEnv?.takeIf { steamRunning() }
         steamEnv = null
         sessionGame = null
-        launcher?.stop()
-        BuiltInDisplay.stop()
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         _stage.value = LaunchStage.Idle
         appendLog("[stopped]")
+        if (l == null || steam == null) {
+            l?.stop()
+            BuiltInDisplay.stop()
+            return
+        }
+        // Steam saves its sign-in and settings when it closes itself; killed, it can lose them.
+        appendLog("Closing Steam…")
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    l.launchExe(SteamWindows.exe(l), BuiltInDisplay.DISPLAY, steam, listOf("-shutdown"), desktop = BuiltInDisplay.SCREEN, track = false, desktopName = nextDesktop("steam")) { }
+                }
+                val t0 = System.currentTimeMillis()
+                while (System.currentTimeMillis() - t0 < 20_000 && l.isRunning("steam.exe")) delay(1000)
+            }
+            if (gen != launchGen) return@launch // something new started; it closes what's left itself
+            appendLog(if (withContext(Dispatchers.IO) { l.isRunning("steam.exe") }) "Steam didn't close in 20s; ended it." else "Steam closed.")
+            withContext(Dispatchers.IO) { l.stop() }
+            BuiltInDisplay.stop()
+        }
     }
 
     /** The game's install folder: <games>/<appId>/..., or the exe's folder for loose imports. */

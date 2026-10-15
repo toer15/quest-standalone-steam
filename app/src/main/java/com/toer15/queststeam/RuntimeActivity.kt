@@ -107,6 +107,8 @@ class RuntimeActivity : ComponentActivity() {
         const val MODE_FLAT = "flat"
         /** Steam app id, for the game's picture on the loading screen. */
         const val EXTRA_APPID = "appid"
+        /** Open Steam for Windows' own window (from the Friends tab). */
+        const val EXTRA_OPEN_STEAM = "open_steam"
     }
 
     private val vm by lazy { androidx.lifecycle.ViewModelProvider(this)[RuntimeViewModel::class.java] }
@@ -142,6 +144,7 @@ class RuntimeActivity : ComponentActivity() {
         val args = intent.getStringExtra(EXTRA_ARGS).orEmpty()
         val mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_VR
         val appId = intent.getIntExtra(EXTRA_APPID, 0)
+        if (savedInstanceState == null && intent.getBooleanExtra(EXTRA_OPEN_STEAM, false)) GameRunner.openSteam(this)
         setContent { SteamTheme { RuntimeScreen(title, exe, args, mode, appId, onClose = { finish() }) } }
     }
 }

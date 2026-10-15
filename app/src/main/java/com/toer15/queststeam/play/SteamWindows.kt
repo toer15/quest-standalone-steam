@@ -37,6 +37,25 @@ object SteamWindows {
         }
     }
 
+    /**
+     * Steam's own programs keep Wine's built-in Direct3D (no DXVK, which games get through the global
+     * DLL settings) and its GPU probes get no Vulkan: each Direct3D/Vulkan start goes through the GPU
+     * driver bridge and costs Steam seconds (and a Steam process crashed in DXVK on the headset).
+     */
+    fun keepOffGpu(l: GameLauncher) {
+        val reg = File(l.prefix, "user.reg")
+        for (exe in OWN_PROGRAMS) for (dll in listOf("d3d9", "d3d10core", "d3d11", "dxgi")) {
+            WineRegistry.setString(reg, "Software\\Wine\\AppDefaults\\$exe\\DllOverrides", dll, "builtin")
+        }
+        for (exe in GPU_PROBES) WineRegistry.setString(reg, "Software\\Wine\\AppDefaults\\$exe\\DllOverrides", "vulkan-1", "")
+    }
+
+    private val OWN_PROGRAMS = listOf(
+        "steam.exe", "steamwebhelper.exe", "steamservice.exe", "steamsysinfo.exe",
+        "steamerrorreporter.exe", "steamerrorreporter64.exe", "gameoverlayui.exe", "gameoverlayui64.exe",
+    )
+    private val GPU_PROBES = listOf("vulkandriverquery.exe", "vulkandriverquery64.exe", "gldriverquery.exe", "gldriverquery64.exe")
+
     /** Steam's windows (sign-in, library) are drawn by its built-in browser, steamwebhelper.exe. */
     const val UI_WINDOW_CLASS = "steamwebhelper.exe"
 

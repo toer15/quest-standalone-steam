@@ -139,6 +139,21 @@ public class XClientRequestHandler implements RequestHandler {
         if (nameLength > 0) inputStream.readString8(nameLength);
         if (dataLength > 0) inputStream.readString8(dataLength);
 
+        if (client.resourceIDBase < 0) {
+            // Every client slot is taken: refuse the connection as X servers do ("Failed" + reason),
+            // instead of handing out an invalid resource ID range.
+            String reason = "Maximum number of clients reached";
+            try (XStreamLock lock = outputStream.lock()) {
+                outputStream.writeByte(RESPONSE_CODE_ERROR);
+                outputStream.writeByte((byte)reason.length());
+                outputStream.writeShort((short)11);
+                outputStream.writeShort((short)0);
+                outputStream.writeShort((short)((reason.length() + 3) / 4));
+                outputStream.writeString8(reason);
+            }
+            throw new IOException(reason);
+        }
+
         try (XLock lock = client.xServer.lock(XServer.Lockable.WINDOW_MANAGER)) {
             sendServerInformation(client, outputStream);
         }

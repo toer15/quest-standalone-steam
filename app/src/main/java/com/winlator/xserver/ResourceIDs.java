@@ -7,8 +7,10 @@ import java.util.Iterator;
 public class ResourceIDs {
     private final ArraySet<Integer> idBases = new ArraySet<>();
     public final int idMask;
+    private final int maxClients;
 
     public ResourceIDs(int maxClients) {
+        this.maxClients = maxClients;
         int clientsBits = 32 - Integer.numberOfLeadingZeros(maxClients);
         clientsBits = Integer.bitCount(maxClients) == 1 ? clientsBits - 1 : clientsBits;
         int base = 29 - clientsBits;
@@ -16,6 +18,7 @@ public class ResourceIDs {
         for (int i = 1; i < maxClients; i++) idBases.add(i << base);
     }
 
+    /** A free client's resource ID base, or -1 when every client slot is taken (the client must be refused). */
     public synchronized Integer get() {
         if (idBases.isEmpty()) return -1;
         Iterator<Integer> iter = idBases.iterator();
@@ -29,6 +32,14 @@ public class ResourceIDs {
     }
 
     public synchronized void free(Integer idBase) {
+        // A refused client had no slot (-1): putting -1 back would hand it out first (lowest in
+        // the set) to every later client, whose windows would then all fail.
+        if (idBase == null || idBase < 0) return;
         idBases.add(idBase);
+    }
+
+    /** Clients connected right now. */
+    public synchronized int inUse() {
+        return maxClients - 1 - idBases.size();
     }
 }

@@ -1,5 +1,8 @@
 package com.toer15.queststeam.steamclient
 
+import `in`.dragonbra.javasteam.enums.EChatEntryType
+import `in`.dragonbra.javasteam.enums.EFriendRelationship
+import `in`.dragonbra.javasteam.enums.EPersonaState
 import `in`.dragonbra.javasteam.enums.EResult
 import `in`.dragonbra.javasteam.protobufs.steamclient.SteammessagesPlayerSteamclient.CPlayer_GetOwnedGames_Request
 import `in`.dragonbra.javasteam.rpc.service.Player
@@ -11,6 +14,10 @@ import `in`.dragonbra.javasteam.steam.handlers.steamapps.License
 import `in`.dragonbra.javasteam.steam.handlers.steamapps.PICSRequest
 import `in`.dragonbra.javasteam.steam.handlers.steamapps.SteamApps
 import `in`.dragonbra.javasteam.steam.handlers.steamapps.callback.LicenseListCallback
+import `in`.dragonbra.javasteam.steam.handlers.steamfriends.SteamFriends
+import `in`.dragonbra.javasteam.steam.handlers.steamfriends.callback.FriendMsgCallback
+import `in`.dragonbra.javasteam.steam.handlers.steamfriends.callback.FriendsListCallback
+import `in`.dragonbra.javasteam.steam.handlers.steamfriends.callback.PersonaStateCallback
 import `in`.dragonbra.javasteam.steam.handlers.steamunifiedmessages.SteamUnifiedMessages
 import `in`.dragonbra.javasteam.steam.handlers.steamuser.LogOnDetails
 import `in`.dragonbra.javasteam.steam.handlers.steamuser.SteamUser
@@ -23,6 +30,7 @@ import `in`.dragonbra.javasteam.steam.steamclient.callbacks.ConnectedCallback
 import `in`.dragonbra.javasteam.steam.steamclient.callbacks.DisconnectedCallback
 import `in`.dragonbra.javasteam.steam.steamclient.configuration.SteamConfiguration
 import `in`.dragonbra.javasteam.types.KeyValue
+import `in`.dragonbra.javasteam.types.SteamID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +38,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.future.future
@@ -62,6 +72,29 @@ interface GuardPrompt {
 }
 
 data class OwnedApp(val appId: Int, val name: String, val playtimeMinutes: Int)
+
+/** A friend as the Steam client shows them. [avatarHash] is the name of their avatar picture on Steam's CDN. */
+data class SteamFriend(
+    val steamId: Long,
+    val name: String,
+    val state: EPersonaState,
+    val gameAppId: Int,
+    val gameName: String?,
+    val avatarHash: String?,
+    val lastLogoff: Long,
+) {
+    val online get() = state != EPersonaState.Offline && state != EPersonaState.Invisible
+    val inGame get() = online && (gameAppId != 0 || !gameName.isNullOrBlank())
+    val avatarUrl get() = "https://avatars.steamstatic.com/${avatarHash ?: DEFAULT_AVATAR}_medium.jpg"
+
+    companion object {
+        /** Steam's "?" avatar, for accounts without a picture. */
+        const val DEFAULT_AVATAR = "fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb"
+    }
+}
+
+/** A chat message to or from a friend ([incoming] = from them). */
+data class FriendMessage(val friendId: Long, val text: String, val incoming: Boolean, val time: Long)
 
 class SteamLoginException(message: String, val needsNewLogin: Boolean = false, cause: Throwable? = null) : Exception(message, cause)
 
@@ -96,6 +129,21 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
     @Volatile private var loggedOn: CompletableDeferred<LoggedOnCallback>? = null
     @Volatile private var licenses = CompletableDeferred<List<License>>()
 
+    // Friends: who they are comes in FriendsListCallback, names and status in PersonaStateCallback.
+    private val friendIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+    private val people = java.util.concurrent.ConcurrentHashMap<Long, SteamFriend>()
+    private val _friends = MutableStateFlow<List<SteamFriend>>(emptyList())
+    /** Your Steam friends with their status, updated live while signed in (see [openFriends]). */
+    val friends: StateFlow<List<SteamFriend>> = _friends
+    private val _messages = MutableSharedFlow<FriendMessage>(extraBufferCapacity = 64)
+    /** Chat messages from friends (and the ones sent with [sendMessage]) as they happen. */
+    val messages: SharedFlow<FriendMessage> = _messages
+    @Volatile private var onlineClient: SteamClient? = null
+
+    private fun publishFriends() {
+        _friends.value = friendIds.map { id -> people[id] ?: SteamFriend(id, "", EPersonaState.Offline, 0, null, null, 0) }
+    }
+
     // region connection
 
     private fun newClient(): SteamClient {
@@ -111,6 +159,35 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
         m.subscribe(LoggedOffCallback::class.java) { if (client === c) _status.value = if (isSignedIn) Status.Offline else Status.SignedOut }
         m.subscribe(LicenseListCallback::class.java) { if (it.result == EResult.OK) licenses.complete(it.licenseList) }
         m.subscribe(AccountInfoCallback::class.java) { _personaName.value = it.personaName }
+        m.subscribe(FriendsListCallback::class.java) { cb ->
+            if (!cb.isIncremental) friendIds.clear()
+            for (f in cb.friendList) {
+                val id = f.steamID
+                if (!id.isIndividualAccount) continue
+                if (f.relationship == EFriendRelationship.Friend) friendIds += id.convertToUInt64() else friendIds -= id.convertToUInt64()
+            }
+            publishFriends()
+            requestFriendInfo(c)
+        }
+        m.subscribe(PersonaStateCallback::class.java) { cb ->
+            val id = cb.friendId.convertToUInt64()
+            val old = people[id]
+            val name: String? = cb.playerName
+            val game: String? = cb.gameName
+            val hash: ByteArray? = cb.avatarHash
+            val hex = hash?.joinToString("") { "%02x".format(it) }?.takeIf { h -> h.any { it != '0' } }
+            people[id] = SteamFriend(
+                id, name?.takeIf { it.isNotBlank() } ?: old?.name.orEmpty(), cb.personaState, cb.gamePlayedAppId,
+                game?.takeIf { it.isNotBlank() }, hex ?: old?.avatarHash, cb.lastLogoff?.time ?: old?.lastLogoff ?: 0L,
+            )
+            if (id in friendIds) publishFriends()
+        }
+        m.subscribe(FriendMsgCallback::class.java) { cb ->
+            val text: String? = cb.message
+            if (cb.entryType == EChatEntryType.ChatMsg && !text.isNullOrBlank()) {
+                _messages.tryEmit(FriendMessage(cb.sender.convertToUInt64(), text.trimEnd('\u0000'), incoming = true, time = System.currentTimeMillis()))
+            }
+        }
         pump?.cancel()
         pump = scope.launch {
             while (isActive) {
@@ -176,6 +253,35 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
             }
         }
     }
+
+    // region friends
+
+    private fun requestFriendInfo(c: SteamClient) {
+        if (friendIds.isEmpty()) return
+        runCatching { c.getHandler(SteamFriends::class.java)?.requestFriendInfo(friendIds.map { SteamID(it) }) }
+    }
+
+    /**
+     * Signs in if needed and goes online (like the Steam client on a device), so friends' names and
+     * status arrive in [friends] and their messages in [messages].
+     */
+    suspend fun openFriends() = withContext(Dispatchers.IO) {
+        val c = ensureOnline()
+        if (onlineClient !== c) {
+            c.getHandler(SteamFriends::class.java)?.setPersonaState(EPersonaState.Online)
+            onlineClient = c
+        }
+        requestFriendInfo(c)
+    }
+
+    /** Sends [text] to the friend [friendId] (Steam chat). */
+    suspend fun sendMessage(friendId: Long, text: String) = withContext(Dispatchers.IO) {
+        val f = ensureOnline().getHandler(SteamFriends::class.java) ?: throw SteamLoginException("Steam chat isn't available.")
+        f.sendChatMessage(SteamID(friendId), EChatEntryType.ChatMsg, text)
+        _messages.tryEmit(FriendMessage(friendId, text, incoming = false, time = System.currentTimeMillis()))
+    }
+
+    // endregion
 
     /** Connects and logs on with the saved token if needed. */
     suspend fun ensureOnline(): SteamClient = withContext(Dispatchers.IO) {
@@ -265,6 +371,10 @@ class SteamSession(private val store: LoginStore, private val deviceName: String
     fun signOut() {
         store.save(null)
         _personaName.value = null
+        friendIds.clear()
+        people.clear()
+        onlineClient = null
+        publishFriends()
         scope.launch {
             lock.withLock {
                 runCatching { client?.getHandler(SteamUser::class.java)?.logOff() }
