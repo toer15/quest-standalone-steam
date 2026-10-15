@@ -34,13 +34,15 @@ object AppCleanup {
             freed += if (f.isDirectory) f.walkBottomUp().filter { it.isFile }.sumOf { it.length() } else f.length()
             f.deleteRecursively()
         }
-        // Update downloads and other cached files from older versions.
-        ctx.cacheDir.listFiles()?.forEach(::del)
+        // Update downloads and other cached files from older versions. Vortek's texture cache stays: it
+        // makes the next game start faster, and its files don't depend on the app's version.
+        ctx.cacheDir.listFiles()?.filter { it.name != "vortek" }?.forEach(::del)
         ctx.externalCacheDir?.listFiles()?.forEach(::del)
         // Old logs (a crash report from the previous version is no longer useful).
         del(File(ctx.filesDir, "errors.log"))
         del(File(ctx.filesDir, "last-crash.txt"))
-        // Runtime temp files: shared memory and shader caches are recreated on the next game start.
+        // Runtime temp files: shared memory and old shader caches (DXVK's state cache now lives in
+        // home/xuser/.cache/dxvk, which stays).
         val tmp = File(ctx.filesDir, "rootfs/tmp")
         tmp.listFiles()?.forEach { f ->
             val n = f.name

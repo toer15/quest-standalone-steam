@@ -86,9 +86,20 @@ object BuiltInDisplay {
         val last = VortekRendererComponent.lastFrameTime
         if (last == 0L || server == null) return null
         val size = "${VortekRendererComponent.frameWidth}×${VortekRendererComponent.frameHeight}"
-        val age = android.os.SystemClock.uptimeMillis() - last
+        val now = android.os.SystemClock.uptimeMillis()
+        val age = now - last
         val shown = if (view?.renderer?.isShowingGameFrames == true) "" else " · desktop view"
-        return if (age > 2000) "$size · no new frame for ${age / 1000}s$shown" else "$size · ${VortekRendererComponent.fps} fps$shown"
+        val start = startTime?.takeIf { now - startTimeAt < 20_000 }?.let { " · $it" } ?: ""
+        return (if (age > 2000) "$size · no new frame for ${age / 1000}s$shown" else "$size · ${VortekRendererComponent.fps} fps$shown") + start
+    }
+
+    @Volatile private var startTime: String? = null
+    @Volatile private var startTimeAt = 0L
+
+    /** Shown with the stats for the game's first 20 seconds on screen ("on screen 25s after Play"). */
+    fun showStartTime(text: String) {
+        startTime = text
+        startTimeAt = android.os.SystemClock.uptimeMillis()
     }
 
     /** Game sound on/off (Runtime settings). Off = Wine gets no audio device. */

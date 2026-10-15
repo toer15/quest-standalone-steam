@@ -62,7 +62,9 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
     public static class Options {
         @Keep public int vkMaxVersion = VK_MAX_VERSION;
         @Keep public short maxDeviceMemory = 0;
-        @Keep public short imageCacheSize = 256;
+        // MB on storage (Vortek's cache/vortek/*.imd): textures the Quest's GPU can't read (the BCn formats PC
+        // games ship) are decoded once and kept there, so a game's next start loads them instead of decoding again.
+        @Keep public short imageCacheSize = 2048;
         @Keep public byte resourceMemoryType = 0;
         @Keep public String[] exposedDeviceExtensions = null;
         @Keep public String libvulkanPath = null;

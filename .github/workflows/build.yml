@@ -91,17 +91,26 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.14.3
+      - name: Publish release v0.14.4
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.14.3
+          tag_name: v0.14.4
           target_commitish: ${{ github.sha }}
-          name: "v0.14.3: direct game view, like a game stream"
+          name: "v0.14.4: faster game starts, Steam ready before you press Play"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.14.4:** toward the goal of Play → game on screen in 20–30 seconds.
+            - **Steam gets ready when the app opens** (Runtime settings → Steam for Windows → **Get Steam ready when the app opens**, on by default). Steam starts and signs in in the background while you look around the app, so Play starts the game right away instead of first waiting a minute or two for Steam. Press Play before Steam is signed in and the game starts the moment it is.
+            - **Steam's windows only run while they're on screen.** Once Steam has signed in, its browser (most of Steam's memory and processor time) waits paused, and comes back when you tap **Show Steam**. Games keep working: R.E.P.O. signed in to Steam that way in your last log. The app stays fast while Steam waits in the background.
+            - **Faster translation** (Runtime settings → Game display → **Game speed: Fast**, the default): Box64's own settings instead of Winlator's safer preset, so the game's and Steam's Windows code runs much faster. Box64 also keeps its translation on storage for games, so a game's second start skips most of the translating. If a game crashes at start, pick **Safe**.
+            - **Game caches survive app updates.** The Quest's GPU can't read the texture formats PC games ship, so Vortek decodes them and keeps the results on storage. That cache now holds up to 2 GB instead of 256 MB, and app updates no longer wipe it. DXVK's pipeline cache is kept too. Until now every update emptied both, so every first start after an update did all that work again.
+            - **Cancel on the loading screen keeps Steam running**, so the next Play doesn't wait for Steam to start again.
+            - **The time from Play to the game on screen** is in the log ("⏱ R.E.P.O. is on screen 28s after Play") and shows next to the fps at the top of the game screen.
+            - Games can queue up to three frames again, for more frames per second (v0.14.2 had cut it to one to save memory).
 
             **v0.14.3:**
             - **Direct game view, like a game stream** (Runtime settings → Game display → Game picture, on by default). Cloud gaming shows a video of the game's frames; the app now does the same with the frames the game sends to the headset's GPU: the screen shows exactly those frames, scaled to fill it. Steam's windows and Wine's desktop can no longer cover them or keep them hidden (for example when Wine draws a game into a window it keeps off screen). When the game isn't sending frames (loading, a Windows dialog, Steam's own window), the whole Windows desktop shows as before.

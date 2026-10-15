@@ -141,6 +141,8 @@ class MainActivity : ComponentActivity() {
         }
         val toLogin = { startActivity(Intent(this, LoginActivity::class.java)); finish() }
         setContent { SteamTheme { LauncherApp(onSignedOut = toLogin, onSteamSignIn = toLogin) } }
+        // Steam for Windows gets ready in the background, so it's signed in by the time a game starts.
+        window.decorView.postDelayed({ GameRunner.warmUpSteam(this) }, 3000)
     }
 
     // A Bluetooth controller drives the app like a console (see PadNav).

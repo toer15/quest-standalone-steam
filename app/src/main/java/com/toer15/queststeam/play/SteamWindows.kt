@@ -145,6 +145,10 @@ object SteamWindows {
     fun startWithGames(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean(PREF, true)
     fun setStartWithGames(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean(PREF, on).apply()
 
+    /** "Get Steam ready when the app opens" (see GameRunner.warmUpSteam): on by default. */
+    fun warmUp(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean("steam_warm_up", true)
+    fun setWarmUp(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean("steam_warm_up", on).apply()
+
     fun connectionLog(l: GameLauncher) = child(child(dir(l), "logs"), "connection_log.txt")
 
     private val loggedOn = Regex("logged ?on|logon.*\\bOK\\b|\\[U:1:\\d+\\].*connected", RegexOption.IGNORE_CASE)

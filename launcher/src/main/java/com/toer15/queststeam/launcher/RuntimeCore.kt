@@ -30,6 +30,19 @@ object RuntimeCore {
     const val WINLATOR_APK_SHA256 = "ea5c81bf0e5b90a6b9ccb8007121ab6738c8646a5a60b341ce0ac2b33f1d100a"
     const val FROM_PREFIX = "/data/data/com.winlator/"
 
+    /** A value in [wineEnvironment]'s extra map that removes the variable (the program's own default applies). */
+    const val UNSET = "\u0000unset"
+
+    /**
+     * Box64's dynarec settings of Winlator's "Intermediate" preset (set by [wineEnvironment]). Unset
+     * them all (see [UNSET]) for Box64's own defaults, which run translated code much faster.
+     */
+    val BOX64_PRESET_KEYS = listOf(
+        "BOX64_DYNAREC_SAFEFLAGS", "BOX64_DYNAREC_FASTNAN", "BOX64_DYNAREC_FASTROUND", "BOX64_DYNAREC_X87DOUBLE",
+        "BOX64_DYNAREC_BIGBLOCK", "BOX64_DYNAREC_STRONGMEM", "BOX64_DYNAREC_FORWARD", "BOX64_DYNAREC_CALLRET",
+        "BOX64_DYNAREC_WAIT", "BOX64_DYNAREC_NATIVEFLAGS", "BOX64_DYNAREC_WEAKBARRIER",
+    )
+
     val ASSETS = listOf(
         Asset("assets/rootfs.tzst", "", "Extracting rootfs + Wine"),
         Asset("assets/box64/box64-0.4.4.tzst", "", "Extracting Box64"),
@@ -138,12 +151,13 @@ object RuntimeCore {
             put("MESA_SHADER_CACHE_DIR", "$r/tmp/mesa-cache")
             put("vblank_mode", "0")
             put("DXVK_LOG_LEVEL", "info")
-            put("DXVK_STATE_CACHE_PATH", "$r/tmp")
+            // DXVK's pipeline state cache: kept (not in tmp, which app updates clean), so later starts compile ahead.
+            put("DXVK_STATE_CACHE_PATH", "$r/home/xuser/.cache/dxvk")
             // Written by the app before each game (Winlator's settings); Z: is the runtime's root.
             put("DXVK_CONFIG_FILE", "Z:\\home\\xuser\\.config\\dxvk.conf")
             put("QSS_MODE", mode)
             if (!display.isNullOrBlank()) put("DISPLAY", display)
-            putAll(extra)
+            for ((k, v) in extra) if (v == UNSET) remove(k) else put(k, v)
         }
 
     /** "/data/data/<pkg>" padded with '/' to the same length as [FROM_PREFIX]. */

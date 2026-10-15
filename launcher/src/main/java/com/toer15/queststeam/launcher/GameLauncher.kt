@@ -47,6 +47,7 @@ class GameLauncher(private val ctx: Context) {
         onLine("$ " + cmd.joinToString(" ") { if (' ' in it) "\"$it\"" else it })
         return try {
             File(rootfs, "tmp/mesa-cache").mkdirs()
+            File(rootfs, "home/xuser/.cache/dxvk").mkdirs()
             val pb = ProcessBuilder(cmd).directory(workDir ?: prefix).redirectErrorStream(true)
             pb.environment().putAll(environment(display, extraEnv))
             val p = pb.start()

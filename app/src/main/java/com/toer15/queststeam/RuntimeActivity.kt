@@ -400,6 +400,8 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                     Spacer(Modifier.height(14.dp))
                     GamePictureRow()
                     Spacer(Modifier.height(14.dp))
+                    GameSpeedRow()
+                    Spacer(Modifier.height(14.dp))
                     GpuDriverRow()
                     Spacer(Modifier.height(14.dp))
                     GameSoundRow()
@@ -514,7 +516,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
     LaunchOverlay(
         stage = stage, appId = appId, log = log,
         onShowGame = { GameRunner.showGameNow(ctx) },
-        onStop = { vm.stop(); if (fromCard) onClose() },
+        onStop = { GameRunner.cancelStart(ctx); if (fromCard) onClose() },
         onDismiss = { GameRunner.dismissFailure(); if (fromCard) onClose() },
     )
 
@@ -619,6 +621,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     val signedIn = remember(stage) { SteamWindows.isSignedIn(vm.launcher) }
     var withGames by remember { mutableStateOf(SteamWindows.startWithGames(ctx)) }
     var light by remember { mutableStateOf(SteamWindows.light(ctx)) }
+    var warm by remember { mutableStateOf(SteamWindows.warmUp(ctx)) }
     Text(
         "Online games (like R.E.P.O.) need Steam running, as on a PC. This installs Valve's Steam for Windows inside the runtime; it starts in the background before your games.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
@@ -659,6 +662,22 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                             .focusRing().clickable { withGames = value; SteamWindows.setStartWithGames(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
                     )
                 }
+                for ((value, label) in listOf(true to "Get Steam ready when the app opens", false to "Only when I play")) {
+                    val sel = warm == value
+                    Text(
+                        (if (sel) "✓ " else "") + label,
+                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                            .focusRing().clickable { warm = value; SteamWindows.setWarmUp(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
+            }
+            if (warm && withGames) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Steam starts in the background when you open the app and signs in, so pressing Play starts the game right away instead of waiting a minute or two for Steam first.",
+                    color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+                )
             }
             if (light) {
                 Spacer(Modifier.height(6.dp))
@@ -744,6 +763,32 @@ private fun GamePictureRow() {
             color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
         )
     }
+}
+
+/** How fast the Windows translation runs games and Steam: Box64's own settings (Fast) or Winlator's safer preset. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GameSpeedRow() {
+    val ctx = LocalContext.current
+    var mode by remember { mutableStateOf(com.toer15.queststeam.play.GameSpeed.selected(ctx)) }
+    Text("Game speed", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(6.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((value, label) in listOf(com.toer15.queststeam.play.GameSpeed.FAST to "Fast (recommended)", com.toer15.queststeam.play.GameSpeed.SAFE to "Safe")) {
+            val sel = mode == value
+            Text(
+                (if (sel) "✓ " else "") + label,
+                color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                    .focusRing().clickable { mode = value; com.toer15.queststeam.play.GameSpeed.select(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+        }
+    }
+    Text(
+        if (mode == com.toer15.queststeam.play.GameSpeed.FAST) "Box64's own settings translate Windows code into much faster code, and keep the translation on storage so a game's next start skips most of the work. If a game crashes at start, try Safe."
+        else "Winlator's safer, slower settings. Use them for a game that crashes with Fast.",
+        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+    )
 }
 
 /** GPU driver for games: Vortek (the headset's own Vulkan driver, default) or Mesa Turnip. */
