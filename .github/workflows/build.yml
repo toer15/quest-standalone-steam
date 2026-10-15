@@ -91,17 +91,20 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.5
+      - name: Publish release v0.12.6
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.5
+          tag_name: v0.12.6
           target_commitish: ${{ github.sha }}
-          name: "v0.12.5: shared logs always include the crash details"
+          name: "v0.12.6: copied/shared logs start with why the game stopped"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.6:**
+            - **Copy log / Share log start with "== Why it stopped =="**: the crash (in which DLL), the game's own errors and DXVK's errors come first, so they survive when a messaging app cuts a long text. DXVK's long info lists (memory types, extensions) are left out of the copied text; the shared .txt file still has the complete log.
 
             **v0.12.5:**
             - **Share log**'s message text now always includes the crash details ([crash], [crash stack], Unity's graphics/GPU lines from Player.log, DXVK's log), not only the attached file.

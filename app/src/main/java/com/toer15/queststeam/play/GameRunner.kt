@@ -62,10 +62,44 @@ object GameRunner {
 
     fun clearLog() { _log.value = "" }
 
-    /** The whole log for pasting into a message: app version first, at most the last 60k characters. */
+    /**
+     * The log for pasting into a message. Messaging apps cut long texts, so the crash details come
+     * first ("== Why it stopped =="), then the log without DXVK's long info lists.
+     */
     fun logForSharing(): String {
         val head = "Quest Steam ${com.toer15.queststeam.BuildConfig.VERSION_NAME} log\n"
-        return head + _log.value.takeLast(60_000)
+        val all = _log.value.trimEnd().lines()
+        val crash = crashSummary(all)
+        val compact = all.filter { keepInSharedLog(it) }
+        val body = compact.joinToString("\n").takeLast(40_000)
+        return head + (if (crash.isNotEmpty()) "== Why it stopped ==\n" + crash.joinToString("\n") + "\n\n== Log ==\n" else "") + body
+    }
+
+    /** For the shared .txt file: the crash summary first, then the complete log. */
+    fun fullLogForFile(): String {
+        val all = _log.value.trimEnd().lines()
+        val crash = crashSummary(all)
+        return "Quest Steam ${com.toer15.queststeam.BuildConfig.VERSION_NAME} log\n" +
+            (if (crash.isNotEmpty()) "== Why it stopped ==\n" + crash.joinToString("\n") + "\n\n" else "") +
+            "== Complete log ==\n" + _log.value
+    }
+
+    /** The app's crash sections ([crash], [game log], [DXVK log]) plus Wine/DXVK errors, newest last. */
+    fun crashSummary(all: List<String>): List<String> {
+        val out = mutableListOf<String>()
+        all.filter { Regex("Unhandled|page fault|^err:|^\\w{4}:err:(?!winediag:getaddrinfo|wineboot|nsi)|exited with code|Couldn't|Failed to").containsMatchIn(it) }
+            .takeLast(12).forEach { out += it }
+        val section = Regex("^\\[(crash|game log|DXVK log)")
+        val start = all.indexOfFirst { section.containsMatchIn(it) }
+        if (start >= 0) out += all.subList(start, all.size).filter { !it.startsWith("[android log]") && !it.startsWith("  D/vulkan") }.take(80)
+        return out
+    }
+
+    /** Drops DXVK's long info lists (memory types, extensions, features) and Vulkan loader chatter. */
+    private fun keepInSharedLog(line: String): Boolean {
+        if (line.startsWith("  D/vulkan")) return false
+        if (!line.startsWith("info:")) return true
+        return Regex("Game:|DXVK: v|config|Device :|Driver :|feature level|Feature level|Vulkan: Found|pipeline|Creating|Swap|Present", RegexOption.IGNORE_CASE).containsMatchIn(line)
     }
 
     private val important = Regex("err:|warn:|Found device|Driver:|error|fail|DXVK|Vortek|Vulkan|exited with code|D3D|wine:|X Error|\\[android log\\]|\\b[EF]/[A-Za-z]", RegexOption.IGNORE_CASE)
