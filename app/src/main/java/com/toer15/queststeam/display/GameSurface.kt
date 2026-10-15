@@ -47,6 +47,7 @@ import com.toer15.queststeam.ui.focusRing
 import com.winlator.widget.XServerView
 import com.winlator.xserver.Pointer
 import com.winlator.xserver.XKeycode
+import kotlinx.coroutines.delay
 
 /**
  * The game, drawn by the built-in display, filling the app's window. Pointing and clicking
@@ -72,6 +73,7 @@ fun GameSurface(view: XServerView, onLeave: () -> Unit) {
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         )
         var typing by remember { mutableStateOf(false) }
+        if (!typing) FrameStats(Modifier.align(Alignment.TopCenter))
         if (typing) TypingBar(Modifier.align(Alignment.TopCenter), onClose = { typing = false })
         else Text(
             "⌨  Keyboard", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
@@ -80,6 +82,28 @@ fun GameSurface(view: XServerView, onLeave: () -> Unit) {
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         )
     }
+}
+
+/**
+ * The game picture's stats at the top, like a game stream's: its size and the frames per second the
+ * game sends. Tap: switch between the game's own frames (direct view) and the whole Windows desktop.
+ */
+@Composable
+private fun FrameStats(modifier: Modifier) {
+    var text by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            text = BuiltInDisplay.frameStatsText()
+            delay(1000)
+        }
+    }
+    val shown = text ?: return
+    Text(
+        shown, color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp,
+        modifier = modifier.padding(top = 14.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.35f))
+            .focusRing().clickable { BuiltInDisplay.toggleDirectViewNow(); text = BuiltInDisplay.frameStatsText() }
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+    )
 }
 
 /**

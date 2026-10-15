@@ -47,6 +47,50 @@ object BuiltInDisplay {
     private var vortek: VortekRendererComponent? = null
     private var alsa: XConnectorEpoll? = null
 
+    /**
+     * Direct game view (Runtime settings → Game picture), like a game stream: the screen shows the
+     * game's own frames as its GPU driver sends them, scaled to fill the screen, so Steam's windows
+     * or Wine's desktop can't cover or hide them. The whole Windows desktop is shown when the game
+     * isn't sending frames (loading, dialogs, Steam). Off: always the whole desktop, as Wine draws it.
+     */
+    fun directView(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean("direct_game_view", true)
+    fun setDirectView(ctx: Context, on: Boolean) {
+        ctx.getSharedPreferences("runtime", 0).edit().putBoolean("direct_game_view", on).apply()
+        view?.renderer?.setDirectGameView(on)
+    }
+
+    /** The game screen's button: direct game view on/off until the display stops (doesn't change the setting). */
+    fun toggleDirectViewNow(): Boolean? {
+        val r = view?.renderer ?: return null
+        r.setDirectGameView(!r.isDirectGameView)
+        return r.isDirectGameView
+    }
+
+    /** Sizes a game can draw at in the direct view (scaled up to the screen, like a stream's quality). */
+    val GAME_RESOLUTIONS = listOf("1280x720", "960x540")
+
+    /** The size games draw at (their Windows desktop), Runtime settings → Game picture. */
+    fun gameResolution(ctx: Context): String =
+        ctx.getSharedPreferences("runtime", 0).getString("game_resolution", SCREEN)?.takeIf { it in GAME_RESOLUTIONS } ?: SCREEN
+    fun setGameResolution(ctx: Context, res: String) =
+        ctx.getSharedPreferences("runtime", 0).edit().putString("game_resolution", res).apply()
+
+    /** A game's Windows desktop: the chosen resolution in the direct view (it's scaled up), else the screen. */
+    fun gameDesktop(ctx: Context): String = if (directView(ctx)) gameResolution(ctx) else SCREEN
+
+    /**
+     * "1280×720 · 30 fps" while the game sends frames (like a game stream's stats), how long since the
+     * last one when it stopped, null before its first frame.
+     */
+    fun frameStatsText(): String? {
+        val last = VortekRendererComponent.lastFrameTime
+        if (last == 0L || server == null) return null
+        val size = "${VortekRendererComponent.frameWidth}×${VortekRendererComponent.frameHeight}"
+        val age = android.os.SystemClock.uptimeMillis() - last
+        val shown = if (view?.renderer?.isShowingGameFrames == true) "" else " · desktop view"
+        return if (age > 2000) "$size · no new frame for ${age / 1000}s$shown" else "$size · ${VortekRendererComponent.fps} fps$shown"
+    }
+
     /** Game sound on/off (Runtime settings). Off = Wine gets no audio device. */
     fun soundEnabled(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean("game_sound", true)
     fun setSoundEnabled(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean("game_sound", on).apply()
@@ -70,6 +114,9 @@ object BuiltInDisplay {
         expectedWindowClass = gameClass
         expectedUiWindowClass = uiClass
         _gameWindow.value = false
+        // The stats at the top of the game screen start again with the next program's frames.
+        VortekRendererComponent.lastFrameTime = 0L
+        VortekRendererComponent.fps = 0
     }
 
     private fun isUiWindow(w: Window, cls: String) =
@@ -122,6 +169,7 @@ object BuiltInDisplay {
         val v = XServerView(ctx.applicationContext, xs)
         val renderer = v.renderer
         renderer.setCursorVisible(true)
+        renderer.setDirectGameView(directView(ctx))
         // Wine's virtual desktop (explorer.exe) stays invisible; only the game's own windows are drawn.
         renderer.setUnviewableWMClasses("explorer.exe")
         xs.setRenderer(renderer)
@@ -245,13 +293,18 @@ object BuiltInDisplay {
         return out
     }
 
-    /** View coordinates -> game screen coordinates (the picture is letterboxed to keep its aspect ratio). */
+    /**
+     * View coordinates -> game screen coordinates (the picture is letterboxed to keep its aspect ratio;
+     * in the direct game view, the game's frames are scaled to the screen, so the point is mapped back).
+     */
     fun toScreen(x: Float, y: Float): Pair<Int, Int>? {
         val xs = server ?: return null
-        val t = view?.renderer?.viewTransformation ?: return null
+        val r = view?.renderer ?: return null
+        val t = r.viewTransformation
         if (t.aspect <= 0f) return null
-        val sx = ((x - t.viewOffsetX) / t.aspect).toInt().coerceIn(0, xs.screenInfo.width - 1)
-        val sy = ((y - t.viewOffsetY) / t.aspect).toInt().coerceIn(0, xs.screenInfo.height - 1)
+        val p = r.screenToDesktop((x - t.viewOffsetX) / t.aspect, (y - t.viewOffsetY) / t.aspect)
+        val sx = p[0].toInt().coerceIn(0, xs.screenInfo.width - 1)
+        val sy = p[1].toInt().coerceIn(0, xs.screenInfo.height - 1)
         return sx to sy
     }
 }

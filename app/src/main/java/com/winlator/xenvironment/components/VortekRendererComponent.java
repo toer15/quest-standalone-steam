@@ -1,7 +1,10 @@
 package com.winlator.xenvironment.components;
 
+import android.os.SystemClock;
+
 import androidx.annotation.Keep;
 
+import com.winlator.renderer.GLRenderer;
 import com.winlator.renderer.GPUImage;
 import com.winlator.renderer.Texture;
 import com.winlator.widget.XServerView;
@@ -35,6 +38,13 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
     public static volatile Consumer<String> logger = null;
     /** Called for every frame the game presents (the app uses the first one as "the game is on screen"). */
     public static volatile Runnable onFrame = null;
+    /** For the game screen's stats, like a game stream's: frames per second over the last second, the picture's size, and when the last frame came (uptime ms, 0 = none yet). */
+    public static volatile int fps = 0;
+    public static volatile int frameWidth = 0;
+    public static volatile int frameHeight = 0;
+    public static volatile long lastFrameTime = 0;
+    private long fpsStart = 0;
+    private int fpsFrames = 0;
     private long frames = 0;
     private long lastFrameLog = 0;
     private final java.util.HashSet<Integer> loggedWindows = new java.util.HashSet<>();
@@ -72,6 +82,10 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
 
     public synchronized void start() {
         if (connector != null) return;
+        fps = 0;
+        frameWidth = 0;
+        frameHeight = 0;
+        lastFrameTime = 0;
         connector = new XConnectorEpoll(socketConfig, this, this);
         connector.setInitialInputBufferCapacity(8);
         connector.setInitialOutputBufferCapacity(0);
@@ -132,6 +146,10 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
         drawable.getTexture().setNeedsUpdate(true);
         Runnable onDraw = drawable.getOnDrawListener();
         if (onDraw != null) onDraw.run();
+        // The direct game view shows this window's frames, scaled to the screen.
+        GLRenderer renderer = xServerView.getRenderer();
+        if (renderer != null) renderer.onGameFrame(window);
+        countFrame(window);
         frames++;
         Runnable frameCallback = onFrame;
         if (frameCallback != null) frameCallback.run();
@@ -140,6 +158,23 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
             lastFrameLog = now;
             log("Vortek: " + frames + " frame" + (frames == 1 ? "" : "s") + " shown (window 0x" + Integer.toHexString(windowId) + ", " + window.getMapState() + ").");
         }
+    }
+
+    private void countFrame(Window window) {
+        long now = SystemClock.uptimeMillis();
+        if (now - fpsStart > 3000) {
+            fpsStart = now;
+            fpsFrames = 0;
+        }
+        fpsFrames++;
+        if (now - fpsStart >= 1000) {
+            fps = Math.round(fpsFrames * 1000f / (now - fpsStart));
+            fpsStart = now;
+            fpsFrames = 0;
+        }
+        frameWidth = window.getWidth();
+        frameHeight = window.getHeight();
+        lastFrameTime = now;
     }
 
     @Override

@@ -398,6 +398,8 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
                         Text("Nothing to install. Point and pull the trigger to click in a game; Back or ✕ Leave game returns to the app.", color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp)
                     } else GameDisplayRow(onMessage = vm::appendLog)
                     Spacer(Modifier.height(14.dp))
+                    GamePictureRow()
+                    Spacer(Modifier.height(14.dp))
                     GpuDriverRow()
                     Spacer(Modifier.height(14.dp))
                     GameSoundRow()
@@ -692,6 +694,56 @@ private fun GameSoundRow() {
         if (on) "Games play sound through the headset." else "Games run without sound.",
         color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
     )
+}
+
+/**
+ * How the game's picture is shown: the direct view (only the frames the game sends, scaled to fill
+ * the screen, like a game stream) or the whole Windows desktop; and the size the game draws at.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GamePictureRow() {
+    val ctx = LocalContext.current
+    var direct by remember { mutableStateOf(BuiltInDisplay.directView(ctx)) }
+    var res by remember { mutableStateOf(BuiltInDisplay.gameResolution(ctx)) }
+    Text("Game picture", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(6.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((value, label) in listOf(true to "Direct (like a game stream)", false to "Whole Windows desktop")) {
+            val sel = direct == value
+            Text(
+                (if (sel) "✓ " else "") + label,
+                color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                    .focusRing().clickable { direct = value; BuiltInDisplay.setDirectView(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+        }
+    }
+    Text(
+        if (direct) "The screen shows exactly the frames the game sends, scaled to fill it, so Steam's windows can't cover them. When the game isn't sending frames (loading, a dialog, Steam), the whole Windows desktop shows. Tap the size/fps label at the top of the game screen to switch while playing."
+        else "The screen shows the whole Windows desktop as Wine draws it, with the game's window in it.",
+        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+    )
+    if (direct) {
+        Spacer(Modifier.height(10.dp))
+        Text("Game resolution", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for ((value, label) in listOf("1280x720" to "1280×720", "960x540" to "960×540 (faster)")) {
+                val sel = res == value
+                Text(
+                    (if (sel) "✓ " else "") + label,
+                    color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                        .focusRing().clickable { res = value; BuiltInDisplay.setGameResolution(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                )
+            }
+        }
+        Text(
+            "The game draws at this size and its picture is scaled up to the screen, like a game stream. Smaller is faster for the headset and uses a little less memory. Applies from the next game start.",
+            color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+        )
+    }
 }
 
 /** GPU driver for games: Vortek (the headset's own Vulkan driver, default) or Mesa Turnip. */

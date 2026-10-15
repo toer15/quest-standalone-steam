@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
+import android.os.SystemClock;
 
 import com.toer15.queststeam.R;
 import com.winlator.XrActivity;
@@ -51,6 +52,23 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
     private boolean magnifierEnabled = true;
     private int surfaceWidth;
     private int surfaceHeight;
+
+    // Direct game view, like a game stream: while the game's GPU driver (Vortek) sends frames, only
+    // those frames are drawn, scaled to fill the screen. The rest of the Windows desktop (Steam's
+    // windows, dialogs) is drawn again when the game hasn't sent a frame for a few seconds.
+    private static final long GAME_FRAME_TIMEOUT_MS = 4000;
+    private static final long GAME_FRAME_SWITCH_MS = 500;
+    private volatile boolean directGameView = true;
+    private volatile Window gameFrameWindow = null;
+    private volatile long lastGameFrameTime = 0;
+    private final float[] streamXForm = XForm.getInstance();
+    // The direct view's mapping while it's on: screen = (desktop - streamRoot) * streamScale + streamOffset.
+    private volatile boolean streamActive = false;
+    private volatile float streamScale = 1.0f;
+    private volatile float streamOffsetX = 0;
+    private volatile float streamOffsetY = 0;
+    private volatile int streamRootX = 0;
+    private volatile int streamRootY = 0;
 
     public GLRenderer(XServerView xServerView, XServer xServer) {
         this.xServerView = xServerView;
@@ -157,7 +175,10 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
             else XForm.identity(tmpXForm2);
         }
 
-        renderWindows();
+        Window streamWindow = currentStreamWindow();
+        if (streamWindow != null) XForm.multiply(tmpXForm2, streamXForm, tmpXForm2);
+
+        renderWindows(streamWindow);
         if (cursorVisible) renderCursor();
 
         if (!magnifierEnabled && !fullscreen) GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
@@ -238,18 +259,92 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
         }
     }
 
-    private void renderWindows() {
+    private void renderWindows(Window streamWindow) {
         windowMaterial.use();
         GLES20.glUniform2f(windowMaterial.getUniformLocation("viewSize"), xServer.screenInfo.width, xServer.screenInfo.height);
         quadVertices.bind(windowMaterial.programId);
 
         try (XLock lock = xServer.lock(XServer.Lockable.DRAWABLE_MANAGER)) {
-            for (RenderableWindow window : renderableWindows) {
-                renderDrawable(window.content, window.rootX, window.rootY, windowMaterial, window.forceFullscreen);
+            Drawable streamContent = streamWindow != null ? streamWindow.getContent() : null;
+            if (streamContent != null) {
+                renderDrawable(streamContent, streamRootX, streamRootY, windowMaterial);
+            }
+            else {
+                for (RenderableWindow window : renderableWindows) {
+                    renderDrawable(window.content, window.rootX, window.rootY, windowMaterial, window.forceFullscreen);
+                }
             }
         }
 
         quadVertices.disable();
+    }
+
+    /** Direct game view on (the default) or off (the whole Windows desktop is always drawn). */
+    public void setDirectGameView(boolean enabled) {
+        directGameView = enabled;
+        xServerView.requestRender();
+    }
+
+    public boolean isDirectGameView() {
+        return directGameView;
+    }
+
+    /** The game's GPU driver presented a frame into [window]. */
+    public void onGameFrame(Window window) {
+        long now = SystemClock.uptimeMillis();
+        Window current = gameFrameWindow;
+        // Another window takes over when the current one has stopped sending frames, or when it's bigger
+        // (a game can present to a small helper window before its real one).
+        if (current == window || current == null || now - lastGameFrameTime > GAME_FRAME_SWITCH_MS
+                || window.getWidth() * window.getHeight() > current.getWidth() * current.getHeight()) {
+            gameFrameWindow = window;
+            lastGameFrameTime = now;
+        }
+        xServerView.requestRender();
+    }
+
+    /** True while the screen shows the game's own frames (direct game view). */
+    public boolean isShowingGameFrames() {
+        return streamActive;
+    }
+
+    /** A point on the screen (in screen coordinates, as drawn) -> the point of the Windows desktop shown there. */
+    public float[] screenToDesktop(float x, float y) {
+        if (!streamActive) return new float[]{x, y};
+        float scale = streamScale;
+        return new float[]{(x - streamOffsetX) / scale + streamRootX, (y - streamOffsetY) / scale + streamRootY};
+    }
+
+    /**
+     * The window whose frames fill the screen now (direct game view), with [streamXForm] set to map
+     * it there keeping its aspect ratio; null to draw the whole desktop.
+     */
+    private Window currentStreamWindow() {
+        Window window = gameFrameWindow;
+        boolean active = false;
+        if (directGameView && window != null && SystemClock.uptimeMillis() - lastGameFrameTime < GAME_FRAME_TIMEOUT_MS) {
+            try (XLock lock = xServer.lock(XServer.Lockable.WINDOW_MANAGER)) {
+                Drawable content = window.getContent();
+                if (xServer.windowManager.getWindow(window.id) == window && content != null && content.width > 1 && content.height > 1) {
+                    int rootX = window.getRootX();
+                    int rootY = window.getRootY();
+                    float screenWidth = xServer.screenInfo.width;
+                    float screenHeight = xServer.screenInfo.height;
+                    float scale = Math.min(screenWidth / content.width, screenHeight / content.height);
+                    float offsetX = (screenWidth - content.width * scale) * 0.5f;
+                    float offsetY = (screenHeight - content.height * scale) * 0.5f;
+                    XForm.set(streamXForm, offsetX - rootX * scale, offsetY - rootY * scale, scale, scale);
+                    streamScale = scale;
+                    streamOffsetX = offsetX;
+                    streamOffsetY = offsetY;
+                    streamRootX = rootX;
+                    streamRootY = rootY;
+                    active = true;
+                }
+            }
+        }
+        streamActive = active;
+        return active ? window : null;
     }
 
     private void renderCursor() {

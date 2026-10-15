@@ -671,10 +671,14 @@ object GameRunner {
         _stage.value = LaunchStage.Working(title, "Starting $title…")
         val argv = GameLauncher.splitArgs(args)
         if (argv.isNotEmpty() && !SteamWindows.isSteam(exe)) appendLog("Launch options from Steam: $args")
+        // Steam's desktop is the whole screen; a game's is the chosen game resolution (direct view scales it up).
+        val desktop = if (SteamWindows.isSteam(exe)) BuiltInDisplay.SCREEN else BuiltInDisplay.gameDesktop(ctx)
+        val sizeArgs = if (builtIn && !SteamWindows.isSteam(exe)) unitySizeArgs(exe, argv, desktop) else emptyList()
+        if (builtIn && !SteamWindows.isSteam(exe)) appendLog(pictureNote(ctx, desktop, sizeArgs))
         val result = withContext(Dispatchers.IO) {
             l.launchExe(
-                exe, if (builtIn) BuiltInDisplay.DISPLAY else disp, env, argv,
-                desktop = if (builtIn) BuiltInDisplay.SCREEN else null,
+                exe, if (builtIn) BuiltInDisplay.DISPLAY else disp, env, argv + sizeArgs,
+                desktop = if (builtIn) desktop else null,
                 onExit = { code -> if (gen == launchGen) onGameExit(ctx, title, code) }, onLine = ::appendLog,
             )
         }
@@ -816,9 +820,12 @@ object GameRunner {
         _stage.value = LaunchStage.Working(title, "Starting $title…")
         val argv = GameLauncher.splitArgs(args)
         if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
+        val desktop = BuiltInDisplay.gameDesktop(ctx)
+        val sizeArgs = unitySizeArgs(exe, argv, desktop)
+        appendLog(pictureNote(ctx, desktop, sizeArgs))
         // Its own game desktop on the same display (Steam's desktop belongs to Steam's explorer).
         val result = withContext(Dispatchers.IO) {
-            l.launchExe(exe, BuiltInDisplay.DISPLAY, env, argv, desktop = BuiltInDisplay.SCREEN, track = false, desktopName = nextDesktop("game"), onLine = ::appendLog)
+            l.launchExe(exe, BuiltInDisplay.DISPLAY, env, argv + sizeArgs, desktop = desktop, track = false, desktopName = nextDesktop("game"), onLine = ::appendLog)
         }
         if (!result.ok) { appendLog(result.message); _stage.value = LaunchStage.Failed(title, result.message); return }
         val name = exe.name
@@ -1134,6 +1141,24 @@ object GameRunner {
             BuiltInDisplay.stop()
         }
     }
+
+    /**
+     * A Unity game draws at the size it saved last time, which can be bigger than its desktop (Wine
+     * then grows the desktop, and the chosen game resolution is lost). Unity's own options set the
+     * size for this start, unless the launch options already do.
+     */
+    private fun unitySizeArgs(exe: File, argv: List<String>, desktop: String): List<String> {
+        if (argv.any { it.equals("-screen-width", ignoreCase = true) || it.equals("-screen-height", ignoreCase = true) }) return emptyList()
+        if (!File(exe.parentFile ?: return emptyList(), "UnityPlayer.dll").isFile) return emptyList()
+        val size = desktop.split('x').mapNotNull { it.toIntOrNull() }
+        if (size.size != 2) return emptyList()
+        return listOf("-screen-width", size[0].toString(), "-screen-height", size[1].toString())
+    }
+
+    /** The log line saying how the game's picture is shown. */
+    private fun pictureNote(ctx: Context, desktop: String, sizeArgs: List<String>): String =
+        (if (BuiltInDisplay.directView(ctx)) "Game picture: direct view (only the game's own frames, scaled to the screen like a game stream), game draws at $desktop"
+        else "Game picture: whole Windows desktop, $desktop") + (if (sizeArgs.isNotEmpty()) " (Unity: ${sizeArgs.joinToString(" ")})." else ".")
 
     /** The game's install folder: <games>/<appId>/..., or the exe's folder for loose imports. */
     private fun gameRoot(l: GameLauncher, exe: File): File {

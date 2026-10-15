@@ -91,17 +91,23 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.14.2
+      - name: Publish release v0.14.3
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.14.2
+          tag_name: v0.14.3
           target_commitish: ${{ github.sha }}
-          name: "v0.14.2: much less memory for Steam next to a game"
+          name: "v0.14.3: direct game view, like a game stream"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.14.3:**
+            - **Direct game view, like a game stream** (Runtime settings → Game display → Game picture, on by default). Cloud gaming shows a video of the game's frames; the app now does the same with the frames the game sends to the headset's GPU: the screen shows exactly those frames, scaled to fill it. Steam's windows and Wine's desktop can no longer cover them or keep them hidden (for example when Wine draws a game into a window it keeps off screen). When the game isn't sending frames (loading, a Windows dialog, Steam's own window), the whole Windows desktop shows as before.
+            - **Stats at the top of the game screen**, like a stream's: the size of the game's picture and the frames per second it sends (for example 1280×720 · 30 fps), or how long it has sent nothing. Tap it to switch between the game's frames and the whole Windows desktop.
+            - **Game resolution** (with the direct view): 1280×720, or 960×540, which is faster for the headset; the picture is scaled up to the screen like a stream's quality setting. Unity games (like R.E.P.O.) are told the size directly, since they otherwise reuse the size they saved last time.
+            - Your pointer lands on the right spot of the game in the direct view, also when the picture is scaled.
 
             **v0.14.2:**
             - **Steam's browser pauses when memory runs low during a game.** A game only needs Steam itself, not the browser that draws Steam's windows, which is the biggest part of Steam. When the headset gets low on memory while a game runs next to Steam, that browser is paused: it uses no CPU, and Android can compress its memory for the game. Steam stays signed in and keeps running for the game, and its windows come back when the game ends or you tap **Show Steam**. Box64's developers close it in the same situation for Steam on Linux. (Light Steam, on by default.)
