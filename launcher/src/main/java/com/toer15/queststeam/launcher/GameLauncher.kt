@@ -110,6 +110,9 @@ class GameLauncher(private val ctx: Context) {
             return out
         }
 
+        /** Steam for Windows' own programs (steam.exe, steamwebhelper.exe, steamservice.exe…). */
+        fun isSteamProgram(name: String) = name.lowercase().let { it.startsWith("steam") || it.startsWith("gameoverlayui") }
+
         /** [name] (from [processName]) is the Windows program [exeName], or Wine's loader for it. */
         fun isProcessOf(name: String, exeName: String) =
             name.equals(exeName, ignoreCase = true) || name.startsWith("$exeName(", ignoreCase = true)
@@ -159,7 +162,7 @@ class GameLauncher(private val ctx: Context) {
             name + (if (list.size > 1) " ×${list.size}" else "") + " ${secs}s"
         }.sorted()
 
-    data class Proc(val pid: Int, val name: String, val cpuSeconds: Long)
+    data class Proc(val pid: Int, val name: String, val cpuSeconds: Long, val rssKb: Long = 0)
 
     /** This app's Wine/Box64 processes (not the app itself), named as in [processName]. */
     fun running(): List<Proc> {
@@ -176,7 +179,8 @@ class GameLauncher(private val ctx: Context) {
             val stat = runCatching { File(d, "stat").readText() }.getOrDefault("")
             val fields = stat.substringAfterLast(')').trim().split(' ')
             val ticks = (fields.getOrNull(11)?.toLongOrNull() ?: 0) + (fields.getOrNull(12)?.toLongOrNull() ?: 0)
-            out += Proc(pid, processName(cmd), ticks / 100)
+            val rss = Regex("(?m)^VmRSS:\\s+(\\d+)").find(status)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+            out += Proc(pid, processName(cmd), ticks / 100, rss)
         }
         return out
     }
@@ -190,13 +194,16 @@ class GameLauncher(private val ctx: Context) {
     fun kill(exeName: String): Int = processesOf(exeName).onEach { android.os.Process.killProcess(it.pid) }.size
 
     /**
-     * Lowest (or normal again) CPU priority for every Wine/Box64 thread: Steam idling in the
-     * background then doesn't slow the app down. Returns the number of threads changed.
+     * CPU priority of every Wine/Box64 thread: the lowest for Steam's programs when [steamLow], and
+     * for everything else when [othersLow]; normal otherwise. The lowest also puts threads on the
+     * small CPU cores, so Steam idling next to a game (or behind the app) leaves the big ones free.
+     * Returns the number of threads changed.
      */
-    fun setBackground(background: Boolean): Int {
-        val prio = if (background) android.os.Process.THREAD_PRIORITY_LOWEST else android.os.Process.THREAD_PRIORITY_DEFAULT
+    fun setPriorities(steamLow: Boolean, othersLow: Boolean): Int {
         var n = 0
         for (p in running()) {
+            val low = if (isSteamProgram(p.name)) steamLow else othersLow
+            val prio = if (low) android.os.Process.THREAD_PRIORITY_LOWEST else android.os.Process.THREAD_PRIORITY_DEFAULT
             File("/proc/${p.pid}/task").list()?.forEach { tid ->
                 val t = tid.toIntOrNull() ?: return@forEach
                 if (runCatching { android.os.Process.setThreadPriority(t, prio) }.isSuccess) n++

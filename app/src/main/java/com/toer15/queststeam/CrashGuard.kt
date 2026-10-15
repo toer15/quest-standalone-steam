@@ -18,6 +18,8 @@ class QssApp : Application() {
         // guard reads last-crash.txt, which belongs to the old version).
         com.toer15.queststeam.update.AppCleanup.runIfUpdated(this)
         CrashGuard.install(this)
+        // The log is also kept in a file; after an unexpected close it comes back with the reason.
+        com.toer15.queststeam.play.GameRunner.initLog(this)
         com.toer15.queststeam.gamepad.Controllers.start(this)
     }
 }

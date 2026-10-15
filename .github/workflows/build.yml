@@ -91,17 +91,24 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.14.0
+      - name: Publish release v0.14.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.14.0
+          tag_name: v0.14.1
           target_commitish: ${{ github.sha }}
-          name: "v0.14.0: games start next to Steam, fast Friends tab"
+          name: "v0.14.1: lighter Steam, the log survives the app closing"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.14.1:**
+            - **The log survives the app being closed.** When Android closes the app while a game starts (for example because the headset ran out of memory), the next start shows that run's log again, starting with Android's own reason ("ran out of memory", "crashed in native code"…), the app's memory use at that moment, and errors the app caught in the background. Copy it or share it as usual.
+            - **Light Steam (on by default):** Steam's built-in browser runs as one process instead of five or six. Under the Windows translation each of those processes costs hundreds of MB, and next to a game that likely ran the headset out of memory (the headset stuttering, then the app closing). If Steam's window misbehaves, switch to **Full Steam** in Runtime settings → Steam for Windows.
+            - **Steam gets the lowest CPU priority while a game starts or runs** (and the small CPU cores), so the game gets the rest. In v0.14.0 Steam ran at full speed next to the game.
+            - Steam's browser is no longer restarted as "not responding" when it answers slowly.
+            - While a game loads, the log shows free memory and how much Steam and the game use, every 15 seconds.
 
             **v0.14.0:**
             - **Games start next to a running Steam again.** In v0.13.9, R.E.P.O. stayed on loading: the log showed "no driver could be loaded / The explorer process failed to start", meaning the game couldn't open its window. Games now get their own game screen (a Wine desktop) next to Steam's, exactly as when no Steam runs.

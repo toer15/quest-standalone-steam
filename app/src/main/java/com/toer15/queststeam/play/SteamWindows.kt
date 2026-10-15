@@ -22,7 +22,23 @@ object SteamWindows {
         "-noshaders", "-nooverlay", "-nocrashmonitor", "-no-shared-textures",
         "-cef-disable-gpu", "-cef-disable-gpu-compositing", "-cef-disable-d3d11",
         "-cef-disable-sandbox", "-no-cef-sandbox", "-cef-disable-seccomp-sandbox",
+        // No "not responding" restarts of Steam's browser when the Windows translation makes it answer late.
+        "-cef-disable-hang-timeouts",
     )
+
+    /**
+     * Light Steam: Steam's built-in browser (its windows) in one process, with its GPU process inside,
+     * instead of five or six processes. Under Box64 every process keeps its own translated copy of
+     * the browser code, hundreds of MB each; with a game next to it the headset ran out of memory.
+     */
+    private val LIGHT_ARGS = listOf("-cef-single-process", "-cef-in-process-gpu")
+
+    private const val PREF_LIGHT = "steam_light"
+    fun light(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean(PREF_LIGHT, true)
+    fun setLight(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean(PREF_LIGHT, on).apply()
+
+    /** Steam's command line options, with [light] mode if it's on. */
+    fun args(ctx: Context): List<String> = STEAM_ARGS + if (light(ctx)) LIGHT_ARGS else emptyList()
 
     /** Steam's in-game overlay and launchers stay off (too heavy under Box64). */
     /**

@@ -55,6 +55,15 @@ class PreExecTest {
         assertEquals("REPO.exe", GameLauncher.processName("C:\\games\\3241660\\REPO.exe"))
     }
 
+    @Test fun steamsOwnProgramsAreToldApartFromTheGame() {
+        for (n in listOf("steam.exe", "Steam.exe", "steamwebhelper.exe", "steamservice.exe", "steamerrorreporter64.exe(loading)", "GameOverlayUI.exe")) {
+            assertTrue(n, GameLauncher.isSteamProgram(n))
+        }
+        for (n in listOf("REPO.exe", "explorer.exe", "wineserver", "services.exe", "UnityCrashHandler64.exe")) {
+            assertFalse(n, GameLauncher.isSteamProgram(n))
+        }
+    }
+
     @Test fun aGameIsFoundByItsExeName() {
         assertTrue(GameLauncher.isProcessOf("REPO.exe", "repo.exe"))
         assertTrue(GameLauncher.isProcessOf("REPO.exe(loading)", "REPO.exe"))

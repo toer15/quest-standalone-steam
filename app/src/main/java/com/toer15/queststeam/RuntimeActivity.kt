@@ -616,6 +616,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     val steamInstalled = remember(stage) { SteamWindows.isInstalled(vm.launcher) }
     val signedIn = remember(stage) { SteamWindows.isSignedIn(vm.launcher) }
     var withGames by remember { mutableStateOf(SteamWindows.startWithGames(ctx)) }
+    var light by remember { mutableStateOf(SteamWindows.light(ctx)) }
     Text(
         "Online games (like R.E.P.O.) need Steam running, as on a PC. This installs Valve's Steam for Windows inside the runtime; it starts in the background before your games.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
@@ -638,6 +639,15 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                 val running = remember(stage) { GameRunner.steamRunning() }
                 PrimaryButton(if (running) "Show Steam" else if (signedIn) "Open Steam" else "Open Steam and sign in") { GameRunner.openSteam(ctx) }
                 if (running) SecondaryButton("Close Steam") { vm.stop() }
+                for ((value, label) in listOf(true to "Light Steam (less memory)", false to "Full Steam")) {
+                    val sel = light == value
+                    Text(
+                        (if (sel) "✓ " else "") + label,
+                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                            .focusRing().clickable { light = value; SteamWindows.setLight(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
                 for ((value, label) in listOf(true to "Start with games", false to "Don't start with games")) {
                     val sel = withGames == value
                     Text(
