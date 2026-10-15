@@ -368,6 +368,7 @@ object GameRunner {
             _stage.value = LaunchStage.Working(title, "Starting the game display…")
             // The game's own windows have its exe name as their class; Steam's UI is drawn by other processes.
             BuiltInDisplay.expectedWindowClass = if (SteamWindows.isSteam(exe)) null else exe.name.lowercase()
+            BuiltInDisplay.expectedUiWindowClass = if (SteamWindows.isSteam(exe)) SteamWindows.UI_WINDOW_CLASS else null
             if (SteamWindows.isSteam(exe)) env.putAll(SteamWindows.translationCacheEnv(l))
             // No Steam overlay in games (too heavy under Box64).
             env["WINEDLLOVERRIDES"] = (l.environment(null)["WINEDLLOVERRIDES"] ?: "") + ";" + SteamWindows.DLL_OVERRIDES
@@ -500,6 +501,8 @@ object GameRunner {
                     }
                 }
                 if (steamItself) {
+                    BuiltInDisplay.checkUiWindow(::appendLog)
+                    if (BuiltInDisplay.gameWindow.value) break
                     // Steam's first start downloads the real Steam (a few hundred MB) before any window.
                     val boot = withContext(Dispatchers.IO) { SteamWindows.bootstrapTail(l) }
                     val last = boot.lastOrNull().orEmpty()
@@ -515,8 +518,8 @@ object GameRunner {
                         title, "${status.phase}…$pct  (${secs / 60}:${"%02d".format(secs % 60)})",
                         progress = status.fraction,
                         detail = (listOf(
-                            "Steam's first start downloads and installs Steam itself (a few hundred MB): 10–20 minutes on the headset. " +
-                                "When it's done, Steam's window opens here by itself — nothing to press.",
+                            "Steam's first start updates Steam itself (a few hundred MB), then opens its sign-in window here by itself: " +
+                                "a few minutes on the headset, nothing to press.",
                             "Running: " + steamProcs.joinToString(", ").ifEmpty { "…" },
                             "Steam says:",
                         ) + boot.ifEmpty { listOf("(nothing yet)") }).joinToString("\n"),

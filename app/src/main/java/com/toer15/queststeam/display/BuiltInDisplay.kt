@@ -54,6 +54,38 @@ object BuiltInDisplay {
     /** The game exe's window class ("repo.exe"); null = any application window counts. */
     @Volatile var expectedWindowClass: String? = null
 
+    /**
+     * A program whose window is drawn without the GPU (Steam's sign-in window comes from
+     * steamwebhelper.exe, drawn in software): its first visible window of a real size counts as
+     * "on screen". Needed because windows inside Wine's desktop have no title or window-manager
+     * hints, so [Window.isApplicationWindow] never matches them, and there's no GPU frame to wait for.
+     */
+    @Volatile var expectedUiWindowClass: String? = null
+
+    private fun isUiWindow(w: Window, cls: String) =
+        w.className.contains(cls, ignoreCase = true) && w.width >= 300 && w.height >= 200 &&
+            w.content != null && w.mapState == Window.MapState.VIEWABLE
+
+    /** Looks for the [expectedUiWindowClass] window on the display (in case its drawing was missed). */
+    fun checkUiWindow(log: (String) -> Unit) {
+        val cls = expectedUiWindowClass ?: return
+        val xs = server ?: return
+        if (_gameWindow.value) return
+        var found: Window? = null
+        fun walk(w: Window, depth: Int) {
+            for (c in w.children) {
+                if (found != null) return
+                if (isUiWindow(c, cls)) { found = c; return }
+                if (depth < 4) walk(c, depth + 1)
+            }
+        }
+        runCatching { xs.lock(com.winlator.xserver.XServer.Lockable.WINDOW_MANAGER).use { walk(xs.windowManager.rootWindow, 0) } }
+        found?.let { w ->
+            _gameWindow.value = true
+            log("Window is open (${w.className}, ${w.width}x${w.height}).")
+        }
+    }
+
     private val _gameWindow = MutableStateFlow(false)
     /** True once the game has drawn into an application window (Winlator's own "game started" signal). */
     val gameWindow: StateFlow<Boolean> = _gameWindow
@@ -88,6 +120,11 @@ object BuiltInDisplay {
                     (expected == null || window.className.contains(expected, ignoreCase = true))) {
                     _gameWindow.value = true
                     log("Game window is open (${window.className.ifBlank { "window" }}, ${window.width}x${window.height}).")
+                }
+                val ui = expectedUiWindowClass
+                if (!_gameWindow.value && ui != null && isUiWindow(window, ui)) {
+                    _gameWindow.value = true
+                    log("Window is open (${window.className}, ${window.width}x${window.height}).")
                 }
             }
         })

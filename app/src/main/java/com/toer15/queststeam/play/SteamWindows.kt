@@ -24,6 +24,9 @@ object SteamWindows {
     )
 
     /** Steam's in-game overlay and launchers stay off (too heavy under Box64). */
+    /** Steam's windows (sign-in, library) are drawn by its built-in browser, steamwebhelper.exe. */
+    const val UI_WINDOW_CLASS = "steamwebhelper.exe"
+
     const val DLL_OVERRIDES = "gameoverlayrenderer,gameoverlayrenderer64,gameoverlayui.exe,gameoverlayui64.exe,x86launcher.exe,x64launcher.exe=d"
 
     /**
@@ -123,15 +126,21 @@ object SteamWindows {
         return BootStatus(phase, if (last.contains("download", true)) fraction else null)
     }
 
+    private val connectionEvent = Regex("ConnectionCompleted|Disconnect|Timeout|timed out|fail|error|Logged ?On|LogOn|Logon|refused|reset|closed|Retry|Encrypt", RegexOption.IGNORE_CASE)
+
     /** The last lines of every Steam log written since [since] (Steam's own view of what went wrong). */
     fun logTails(l: GameLauncher, since: Long, lines: Int = 8): List<String> = runCatching {
         val logs = child(dir(l), "logs").listFiles().orEmpty().filter { it.isFile && it.lastModified() >= since - 5_000 }
         logs.sortedBy { it.name }.flatMap { f ->
             val text = RandomAccessFile(f, "r").use { raf ->
-                val from = (raf.length() - 6_000).coerceAtLeast(0); raf.seek(from)
+                val from = (raf.length() - (if (f.name.equals("connection_log.txt", true)) 60_000 else 6_000)).coerceAtLeast(0); raf.seek(from)
                 ByteArray((raf.length() - from).toInt()).also { raf.readFully(it) }.let { String(it) }
             }
-            listOf("  ${f.name}:") + text.lines().filter { it.isNotBlank() }.takeLast(lines).map { "    " + it.take(250) }
+            val all = text.lines().filter { it.isNotBlank() }
+            // The connection log is mostly server pings; its connects, drops and sign-in results matter.
+            val picked = if (f.name.equals("connection_log.txt", true)) all.filter { connectionEvent.containsMatchIn(it) }.takeLast(20).ifEmpty { all.takeLast(lines) }
+            else all.takeLast(lines)
+            listOf("  ${f.name}:") + picked.map { "    " + it.take(250) }
         }
     }.getOrDefault(emptyList())
 

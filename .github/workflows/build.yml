@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.7
+      - name: Publish release v0.13.8
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.7
+          tag_name: v0.13.8
           target_commitish: ${{ github.sha }}
-          name: "v0.13.7: Steam no longer hangs at start"
+          name: "v0.13.8: Steam sign-in window shows, keyboard in games"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.8:**
+            - **Steam's sign-in window now opens on screen.** Steam was running and showing "Sign in to Steam", but the app kept the loading screen up because it waited for a GPU frame, and Steam's window is drawn without the GPU. The app now switches as soon as Steam's sign-in window appears.
+            - **⌨ Keyboard** button on the game screen (top right): select a field in Steam or a game, type with the Quest's keyboard and the letters go straight into it (Tab, Enter and ⌫ buttons too). The box hides what you type, for passwords. You can also sign in with the QR code in the Steam phone app.
+            - The log shows Steam's connection attempts (connects, drops, sign-in results), to find out why a sign-in fails.
 
             **v0.13.7:**
             - **Fixes Steam never opening** (Steam.exe stuck at 0 seconds of processor time, no window, no Steam logs). The Winlator settings file the app uses tells Wine to run a helper before steam.exe; that helper waits for an answer from the Winlator app itself, which isn't there, so Steam waited forever. The app now removes that hook (the log says "Runtime fix: removed WINPREEXEC…" once).
