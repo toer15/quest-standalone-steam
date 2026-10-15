@@ -1,6 +1,8 @@
 package com.toer15.queststeam.ui
 
 import android.content.Context
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -24,6 +27,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.toer15.queststeam.DemoShots
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -62,16 +66,27 @@ object SteamImages {
 @Composable
 fun GameArt(appId: Int, name: String, modifier: Modifier = Modifier, contentScale: ContentScale = ContentScale.Crop, showNameIfMissing: Boolean = false) {
     val ctx = LocalContext.current
+    // Debug demo copies headers into the cache before the first frame. Decode that file here so
+    // the cover is on screen without waiting for Coil or the Steam CDN.
+    val bundled = remember(appId) {
+        DemoShots.artFile(appId)?.let { file ->
+            BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+        }
+    }
     val urls = remember(appId) { SteamImages.candidates(appId) }
     var index by remember(appId) { mutableIntStateOf(0) }
     var storeUrl by remember(appId) { mutableStateOf<String?>(null) }
     var storeTried by remember(appId) { mutableStateOf(false) }
     var failed by remember(appId) { mutableStateOf(false) }
     val exhausted = index >= urls.size
-    LaunchedEffect(appId, exhausted) {
-        if (exhausted && !storeTried) { storeUrl = SteamImages.fromStore(ctx, appId); storeTried = true; if (storeUrl == null) failed = true }
+    LaunchedEffect(appId, exhausted, bundled) {
+        if (bundled == null && exhausted && !storeTried) { storeUrl = SteamImages.fromStore(ctx, appId); storeTried = true; if (storeUrl == null) failed = true }
     }
     Box(modifier.background(Brush.linearGradient(listOf(Color(0xFF1A2836), Color(0xFF2A4256), Color(0xFF1A2836))))) {
+        if (bundled != null) {
+            Image(bundled, contentDescription = name, contentScale = contentScale, modifier = Modifier.fillMaxSize())
+            return@Box
+        }
         val model = if (!exhausted) urls[index] else storeUrl
         if (model != null && !failed) AsyncImage(
             model = model,

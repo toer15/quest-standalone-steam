@@ -1,5 +1,6 @@
 package com.toer15.queststeam.ui
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -68,9 +69,18 @@ private val CardShape = RoundedCornerShape(22.dp)
 
 /** Card that flips in 3D on tap: front = art, back = actions. */
 @Composable
-fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: Modifier = Modifier) {
-    var flipped by rememberSaveable(game.appId) { mutableStateOf(false) }
-    val rotation by animateFloatAsState(if (flipped) 180f else 0f, tween(480), label = "flip")
+fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: Modifier = Modifier, startFlipped: Boolean = false) {
+    // A restored grid would otherwise put a deep-linked card back on its front. The demo path
+    // keeps its own state so the back (Download / Play / Uninstall) is showing on the first frame.
+    val savedFlip = rememberSaveable(game.appId) { mutableStateOf(false) }
+    val demoFlip = remember(game.appId) { mutableStateOf(startFlipped) }
+    var flipped by if (startFlipped) demoFlip else savedFlip
+    val rotationAnim = remember(game.appId, startFlipped) { Animatable(if (startFlipped) 180f else 0f) }
+    LaunchedEffect(flipped) {
+        val target = if (flipped) 180f else 0f
+        if (kotlin.math.abs(rotationAnim.value - target) > 0.5f) rotationAnim.animateTo(target, tween(480))
+    }
+    val rotation = rotationAnim.value
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val hovered by interaction.collectIsHoveredAsState()
@@ -83,7 +93,8 @@ fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: 
     val cardFocus = remember { FocusRequester() }
     DisposableEffect(flipped) {
         val unflip: () -> Unit = { flipped = false; if (padFlip) refocusCard = true }
-        if (flipped) PadNav.pushBack(unflip)
+        // A deep-linked card stays on its back; a stray Back must not turn it over before a capture.
+        if (flipped && !startFlipped) PadNav.pushBack(unflip)
         onDispose { PadNav.removeBack(unflip) }
     }
     LaunchedEffect(refocusCard) {

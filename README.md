@@ -13,13 +13,27 @@ Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-s
 
 ## Screenshots
 
-Emulator captures of the v0.13.8 Quest build at the panel size the VR view uses (1920×1200, 192 dpi). The library is the real UI fed by a debug-only sample list so Steam's CDN art can load without an account. Release builds ignore that mode.
+Emulator captures of the v0.13.8 Quest build at the panel size the VR view uses (1920×1200, 192 dpi). A debug-only sample library feeds the real UI. That demo copies bundled Steam headers into the app cache and the art loader draws those files, so the covers are on screen even when the emulator cannot reach the Steam CDN. Release builds never arm the demo and do not ship the images.
 
-![Home, with the hero and the installed and downloading shelves](docs/screenshots/home.png)
+![Home, with real cover art on the hero and the shelves](docs/screenshots/home.png)
 
-![Home filters: VR, installed, played, sort, and genres](docs/screenshots/home-filters.png)
+![Games grid with cover art](docs/screenshots/games-grid.png)
 
-![Games grid, category pills, and a download in progress](docs/screenshots/games-grid.png)
+![Flipped card: Download and Import from folder](docs/screenshots/card-download.png)
+
+![Flipped card: Play Game and Uninstall](docs/screenshots/card-play.png)
+
+![Browse: search and A–Z](docs/screenshots/browse.png)
+
+![Home filters, with the library still visible behind the panel](docs/screenshots/home-filters.png)
+
+![Store, with cover art and prices](docs/screenshots/store.png)
+
+![Runtime and settings](docs/screenshots/runtime.png)
+
+![Sign in to Steam](docs/screenshots/login.png)
+
+![Game screen chrome, with Leave game and Keyboard](docs/screenshots/game-keyboard.png)
 
 ## v0.12.0: the Quest's own GPU driver (Vortek)
 

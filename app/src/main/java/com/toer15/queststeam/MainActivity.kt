@@ -171,7 +171,14 @@ internal fun LauncherApp(
     val ui = LocalDeviceUi.current
     val updateState by updates.ui.collectAsState()
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    var tab by rememberSaveable { mutableStateOf(Tab.Home) }
+    val demoScreen = remember { DemoShots.screen }
+    fun tabFor(screen: String) = when (screen) {
+        "games", "browse", "card" -> Tab.Games
+        "store" -> Tab.Store
+        else -> Tab.Home
+    }
+    var tab by rememberSaveable { mutableStateOf(tabFor(demoScreen)) }
+    // A restored task can bring back the previous tab. The demo deep link wins.
     val games by vm.games.collectAsState()
     val states by vm.downloads.states.collectAsState()
     val profile by vm.profile.collectAsState()
@@ -182,13 +189,19 @@ internal fun LauncherApp(
     var showKey by remember { mutableStateOf(false) }
     var lastCrash by remember { mutableStateOf(CrashGuard.lastCrash()) }
     var homeFilters by remember { mutableStateOf(HomeFilters()) }
-    var filtersOpen by remember { mutableStateOf(false) }
+    var filtersOpen by remember { mutableStateOf(demoScreen == "filters") }
     var playFor by remember { mutableStateOf<OwnedGame?>(null) }
     var storeItem by remember { mutableStateOf<StoreItem?>(null) }
     // Back from Steam's checkout: sync so a game just bought shows up in the library.
     val storeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.sync() }
     val homeTabFocus = remember { FocusRequester() }
 
+    LaunchedEffect(demoScreen) {
+        if (demoScreen.isNotEmpty()) {
+            tab = tabFor(demoScreen)
+            if (demoScreen == "filters") filtersOpen = true
+        }
+    }
     // Controller buttons (LB/RB tabs, B back, Y filters, X sync, Start updates).
     LaunchedEffect(Unit) {
         PadNav.actions.collect { a ->
@@ -288,7 +301,11 @@ internal fun LauncherApp(
                         onCheckUpdates = updates::check, filters = homeFilters, onOpenFilters = { filtersOpen = true },
                     )
                     Tab.Store -> StoreScreen(owned = remember(games) { games.mapTo(HashSet()) { it.appId } }, onOpenGame = { storeItem = it })
-                    Tab.Games -> GamesScreen(games, ::stateOf, ::actionsFor)
+                    Tab.Games -> GamesScreen(
+                        games, ::stateOf, ::actionsFor,
+                        startBrowse = demoScreen == "browse",
+                        flipId = if (demoScreen == "card") DemoShots.flipAppId else 0,
+                    )
                 }
             }
         }
@@ -581,12 +598,18 @@ private fun Shelf(title: String, list: List<OwnedGame>, stateOf: (OwnedGame) -> 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GamesScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameState, actionsFor: (OwnedGame) -> CardActions) {
+private fun GamesScreen(
+    games: List<OwnedGame>,
+    stateOf: (OwnedGame) -> GameState,
+    actionsFor: (OwnedGame) -> CardActions,
+    startBrowse: Boolean = false,
+    flipId: Int = 0,
+) {
     val ui = LocalDeviceUi.current
     var category by rememberSaveable { mutableStateOf(Categories.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
     var letters by rememberSaveable { mutableStateOf("") } // "" = all, "A" or "A-F"
-    var popup by remember { mutableStateOf(false) }
+    var popup by remember { mutableStateOf(startBrowse) }
     // Only the installed set matters for filtering, not every download-progress tick.
     val installed = games.filter { stateOf(it) is GameState.Installed }.mapTo(HashSet()) { it.appId }
     val genres = remember(games) { games.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
@@ -627,7 +650,9 @@ private fun GamesScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameStat
             horizontalArrangement = Arrangement.spacedBy(ui.cardGap),
             verticalArrangement = Arrangement.spacedBy(ui.cardGap),
         ) {
-            items(shown, key = { it.appId }) { g -> GameCard(g, stateOf(g), actionsFor(g), Modifier.padding(2.dp)) }
+            items(shown, key = { it.appId }) { g ->
+                GameCard(g, stateOf(g), actionsFor(g), Modifier.padding(2.dp), startFlipped = flipId != 0 && g.appId == flipId)
+            }
         }
     }
     if (popup) CategoryPopup(

@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.toer15.queststeam.DemoShots
 import com.toer15.queststeam.ui.GameArt
 import com.toer15.queststeam.ui.LocalDeviceUi
 import com.toer15.queststeam.ui.SteamColors
@@ -92,7 +93,13 @@ class StoreViewModel(app: Application) : AndroidViewModel(app) {
     private var searchJob: Job? = null
     private var endReached = false
 
-    init { reload() }
+    init {
+        if (DemoShots.armed) {
+            _items.value = DemoShots.storeItems()
+            _prices.value = DemoShots.storePrices()
+            endReached = true
+        } else reload()
+    }
 
     fun select(s: StoreApi.Section) { _section.value = s; _term.value = ""; reload() }
 
@@ -104,6 +111,7 @@ class StoreViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reload() {
+        if (DemoShots.armed) return
         job?.cancel()
         endReached = false
         _items.value = emptyList()
@@ -111,6 +119,7 @@ class StoreViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadMore() {
+        if (DemoShots.armed) return
         if (_loading.value && job?.isActive == true) return
         if (endReached) return
         val start = _items.value.size
