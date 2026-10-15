@@ -87,12 +87,14 @@ object GameRunner {
 
     /** The app's crash sections ([crash], [game log], [DXVK log]) plus Wine/DXVK errors, newest last. */
     fun crashSummary(all: List<String>): List<String> {
-        val out = mutableListOf<String>()
-        all.filter { Regex("Unhandled|page fault|^err:|^\\w{4}:err:(?!winediag:getaddrinfo|wineboot|nsi)|exited with code|Couldn't|Failed to").containsMatchIn(it) }
-            .takeLast(12).forEach { out += it }
-        val section = Regex("^\\[(crash|game log|DXVK log)")
-        val start = all.indexOfFirst { section.containsMatchIn(it) }
-        if (start >= 0) out += all.subList(start, all.size).filter { !it.startsWith("[android log]") && !it.startsWith("  D/vulkan") }.take(80)
+        // Only the last game start: the log can hold several runs.
+        val runStart = all.indexOfLast { it.startsWith("$ ") }.coerceAtLeast(0)
+        val run = all.subList(runStart, all.size)
+        val section = Regex("^\\[(crash|game log|DXVK log|windows)")
+        val firstSection = run.indexOfFirst { section.containsMatchIn(it) }.let { if (it < 0) run.size else it }
+        val key = Regex("Unhandled|page fault|^err:|^\\w{4}:err:(?!winediag:getaddrinfo|wineboot|nsi)|exited with code|Couldn't|Failed to|^Vortek:|^Sound:|^GPU:|^Headset Vulkan|game is drawing|Game window is open|\\[waiting|^  +0x")
+        val out = run.subList(0, firstSection).filter { key.containsMatchIn(it) }.takeLast(30).toMutableList()
+        if (firstSection < run.size) out += run.subList(firstSection, run.size).filter { !it.startsWith("[android log]") && !it.startsWith("  D/vulkan") }.take(110)
         return out
     }
 
@@ -284,6 +286,9 @@ object GameRunner {
                         lastNote = secs
                         val n = BuiltInDisplay.server?.windowManager?.rootWindow?.children?.size ?: 0
                         appendLog("[waiting ${secs}s] the game hasn't drawn its window yet ($n windows on the display)")
+                        if (secs in 45..59) BuiltInDisplay.describeWindows().takeIf { it.isNotEmpty() }?.let { w ->
+                            appendLog("[waiting] windows on the game screen:"); w.forEach(::appendLog)
+                        }
                         withContext(Dispatchers.IO) { appendNativeLog() }
                     }
                 } else {
@@ -323,6 +328,7 @@ object GameRunner {
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         appendNativeLog()
+        appendWindows()
         appendUnityLog()
         launcher?.killLeftovers()
         scope.launch {
@@ -389,9 +395,15 @@ object GameRunner {
         val raw = runCatching { log.readLines() }.getOrDefault(emptyList())
         val all = raw.filter { it.isNotBlank() && !noise.containsMatchIn(it) }
         val lines = all.filter { keep.containsMatchIn(it) }.let { if (it.size > 40) it.take(25) + it.takeLast(15) else it }
-        if (lines.isNotEmpty()) {
+        // The end of the log says what the game did last (e.g. waiting for Steam).
+        val tail = all.takeLast(12).filter { it !in lines }
+        if (lines.isNotEmpty() || tail.isNotEmpty()) {
             appendLog("[game log: ${log.parentFile?.name}/Player.log]")
             lines.forEach { appendLog("  " + it.take(300)) }
+            if (tail.isNotEmpty()) {
+                appendLog("  … last lines:")
+                tail.forEach { appendLog("  " + it.take(300)) }
+            }
         }
         locateCrash(raw)
         appendDxvkLogs()
@@ -440,8 +452,16 @@ object GameRunner {
         }
     }
 
+    private fun appendWindows() {
+        val w = BuiltInDisplay.describeWindows()
+        if (w.isEmpty()) return
+        appendLog("[windows]")
+        w.forEach(::appendLog)
+    }
+
     fun stop(ctx: Context) {
         appendNativeLog()
+        appendWindows()
         appendUnityLog()
         job?.cancel()
         launcher?.stop()

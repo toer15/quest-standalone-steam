@@ -165,6 +165,31 @@ object BuiltInDisplay {
         _gameWindow.value = false
     }
 
+    /**
+     * The windows on the game screen, for the log: id, class, title, size, shown or not, and whether
+     * the GPU driver draws into it. Tells "the game draws nowhere" from "we don't show what it draws".
+     */
+    fun describeWindows(): List<String> {
+        val xs = server ?: return emptyList()
+        val out = mutableListOf<String>()
+        fun walk(w: Window, depth: Int) {
+            for (c in w.children) {
+                if (out.size >= 40) return
+                val tex = c.content?.texture
+                val kind = when {
+                    c.content == null -> "input-only"
+                    tex is com.winlator.renderer.GPUImage -> "GPU image"
+                    else -> "pixels"
+                }
+                out += "  ".repeat(depth + 1) + "0x${Integer.toHexString(c.id)} '${c.className}' '${c.name.take(40)}' " +
+                    "${c.width}x${c.height}+${c.x}+${c.y} ${c.mapState} ($kind)"
+                if (depth < 4) walk(c, depth + 1)
+            }
+        }
+        runCatching { xs.lock(com.winlator.xserver.XServer.Lockable.WINDOW_MANAGER).use { walk(xs.windowManager.rootWindow, 0) } }
+        return out
+    }
+
     /** View coordinates -> game screen coordinates (the picture is letterboxed to keep its aspect ratio). */
     fun toScreen(x: Float, y: Float): Pair<Int, Int>? {
         val xs = server ?: return null

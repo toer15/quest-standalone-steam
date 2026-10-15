@@ -91,17 +91,20 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.12.8
+      - name: Publish release v0.12.9
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.12.8
+          tag_name: v0.12.9
           target_commitish: ${{ github.sha }}
-          name: "v0.12.8: Winlator's game desktop, clicks reach the game, frame log"
+          name: "v0.12.9: log shows the game screen's windows and frames"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.12.9:**
+            - Copy log / Share log: the summary covers only the last game start and includes the GPU driver's frame lines, a list of the windows on the game screen (shown or hidden, drawn by the GPU or not) and the last lines of the game's own log.
 
             **v0.12.8:**
             - Games start on Winlator's game desktop ("nogui": no taskbar or start menu), like Winlator does, instead of Wine's desktop with a shell.
