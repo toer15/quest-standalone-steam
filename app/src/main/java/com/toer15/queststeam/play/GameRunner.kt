@@ -195,6 +195,7 @@ object GameRunner {
                 } else {
                     val why = if (code == null) "the installer didn't finish in 15 minutes" else "the installer ended (code $code) without steam.exe"
                     appendLog("Steam install failed: $why.")
+                    appendLog("Steam folder: ${SteamWindows.describeDir(l)}")
                     _stage.value = LaunchStage.Failed(title, "Steam couldn't be installed: $why.")
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

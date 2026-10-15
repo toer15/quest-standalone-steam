@@ -91,17 +91,20 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.13.0
+      - name: Publish release v0.13.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.0
+          tag_name: v0.13.1
           target_commitish: ${{ github.sha }}
-          name: "v0.13.0: Steam for Windows inside the runtime, for online games"
+          name: "v0.13.1: Steam for Windows install fix"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.13.1:**
+            - Fixes "Steam install failed: the installer ended (code 0) without steam.exe": Steam was installed, but Valve names it Steam.exe and the check looked for steam.exe (Android's storage is case-sensitive). Press **Install Steam for Windows** again; it finishes right away and **Open Steam and sign in** appears.
 
             **v0.13.0:**
             - **Steam for Windows** (Runtime settings → Steam for Windows): online games like R.E.P.O. need the Steam client running, as on a PC ("Steamworks failed to initialize … Could not determine Steam client install directory"). **Install Steam for Windows** downloads Valve's official installer and installs Steam inside the runtime; **Open Steam and sign in** shows Steam in the game screen (the first start updates Steam, which takes several minutes; then sign in once, e.g. with the QR code in the Steam phone app).

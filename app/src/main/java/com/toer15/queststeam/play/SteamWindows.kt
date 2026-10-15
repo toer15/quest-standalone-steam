@@ -26,20 +26,31 @@ object SteamWindows {
     /** Steam's in-game overlay and launchers stay off (too heavy under Box64). */
     const val DLL_OVERRIDES = "gameoverlayrenderer,gameoverlayrenderer64,gameoverlayui.exe,gameoverlayui64.exe,x86launcher.exe,x64launcher.exe=d"
 
-    fun dir(l: GameLauncher) = File(l.prefix, "drive_c/Program Files (x86)/Steam")
-    fun exe(l: GameLauncher) = File(dir(l), "steam.exe")
+    /** [name] in [parent], ignoring case (Android's file system is case-sensitive, Windows isn't). */
+    private fun child(parent: File, name: String): File =
+        parent.listFiles()?.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: File(parent, name)
+
+    fun dir(l: GameLauncher) = child(child(File(l.prefix, "drive_c"), "Program Files (x86)"), "Steam")
+    /** Valve's installer writes "Steam.exe". */
+    fun exe(l: GameLauncher) = child(dir(l), "steam.exe")
+
+    /** What's in the Steam folder, for the log when steam.exe can't be found. */
+    fun describeDir(l: GameLauncher): String {
+        val d = dir(l)
+        return if (!d.isDirectory) "${d.path} doesn't exist" else d.path + ": " + (d.list()?.sorted()?.take(40)?.joinToString(", ") ?: "")
+    }
     fun isInstalled(l: GameLauncher) = exe(l).isFile
     fun isSteam(exe: File) = exe.name.equals("steam.exe", ignoreCase = true)
 
     /** Someone has signed into this Steam (Steam remembers accounts in config/loginusers.vdf). */
     fun isSignedIn(l: GameLauncher) = runCatching {
-        File(dir(l), "config/loginusers.vdf").takeIf { it.isFile }?.readText()?.contains("AccountName") == true
+        child(child(dir(l), "config"), "loginusers.vdf").takeIf { it.isFile }?.readText()?.contains("AccountName") == true
     }.getOrDefault(false)
 
     fun startWithGames(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean(PREF, true)
     fun setStartWithGames(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean(PREF, on).apply()
 
-    fun connectionLog(l: GameLauncher) = File(dir(l), "logs/connection_log.txt")
+    fun connectionLog(l: GameLauncher) = child(child(dir(l), "logs"), "connection_log.txt")
 
     private val loggedOn = Regex("logged ?on|logon.*\\bOK\\b|\\[U:1:\\d+\\].*connected", RegexOption.IGNORE_CASE)
     private val notLoggedOn = Regex("not logged ?on|logged ?off|logon fail", RegexOption.IGNORE_CASE)
