@@ -178,12 +178,15 @@ object SteamWindows {
         child(child(dir(l), "config"), "loginusers.vdf").takeIf { it.isFile }?.readText()?.contains("AccountName") == true
     }.getOrDefault(false)
 
-    fun startWithGames(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean(PREF, true)
+    fun startWithGames(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean(PREF, false)
     fun setStartWithGames(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean(PREF, on).apply()
 
-    /** "Get Steam ready when the app opens" (see GameRunner.warmUpSteam): on by default. */
-    fun warmUp(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean("steam_warm_up", true)
-    fun setWarmUp(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean("steam_warm_up", on).apply()
+    /**
+     * "Get Steam ready when the app opens" (see GameRunner.warmUpSteam). Off unless the player turns it on.
+     * New key so an older install that saved "on" does not keep starting Steam by itself.
+     */
+    fun warmUp(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean("steam_warm_up_v2", false)
+    fun setWarmUp(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean("steam_warm_up_v2", on).apply()
 
     fun connectionLog(l: GameLauncher) = child(child(dir(l), "logs"), "connection_log.txt")
 
@@ -264,7 +267,7 @@ object SteamWindows {
     /** Tells Steamworks which game this is when it isn't started from Steam's own library. */
     fun writeAppId(exeDir: File, appId: Int) {
         if (appId <= 0) return
-        runCatching { File(exeDir, "steam_appid.txt").takeIf { !it.exists() }?.writeText("$appId\n") }
+        runCatching { File(exeDir, "steam_appid.txt").writeText("$appId\n") }
     }
 
     /** Downloads Valve's SteamSetup.exe (about 2 MB). */

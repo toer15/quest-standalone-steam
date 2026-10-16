@@ -1,7 +1,7 @@
 name: Build APKs
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main, 'claude/**', 'cursor/**']
   workflow_dispatch:
 permissions:
   contents: write
@@ -91,22 +91,64 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.18.0
+      - name: Publish release v0.19.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.18.0
+          tag_name: v0.19.0
           target_commitish: ${{ github.sha }}
-          name: "v0.18.0: the game you quit gets ready again"
+          name: "v0.19.0: Play keeps Steam running for your next game"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
 
-            **v0.18.0:** the game you play stays ready for the next time.
-            - **A game you quit gets ready again.** In v0.16.0 your last game got ready only once, when the app opened. Now, when a game closes by itself after you played it for at least two minutes (for example you quit it from its own menu), the app loads it again in the background about 8 seconds later (muted, out of sight, with Steam signed in and enough memory free) and keeps it paused at its menu, so the next **Play** on it is instant too. **Close game** and **Leave** end a game on purpose, and a game that closes soon after it started is crashing, not played: neither comes back by itself. Switch it off with Runtime settings → Steam for Windows → **Only Steam**.
-            - **The start-time line shows where the time went.** "⏱ R.E.P.O. is on screen 124s after Play" now adds how much was before the game even started (Steam's sign-in) and how much the game itself took, so a slow start can be told apart. The line that says a game is ready also lists the memory use then.
-            - Two fixed waits on the loading screen are shorter: the game shows 0.25 s after it draws instead of 0.9 s, and the loading screen looks for it five times a second instead of twice.
+            **v0.19.0:** Play keeps Steam running instead of starting it again for every game.
+            - **A Steam that's running is kept.** v0.18.6 closed a running Steam when you pressed Play and started a new one for the game, so every Play waited for Steam to start and sign in again (93 seconds in your v0.16.0 log). Now the game starts next to the Steam that's already running: right away once Steam is signed in, and if it's still signing in, the game starts the moment it is. Steam's window stays off.
+            - **The Steam that Play starts stays.** When no Steam is running, Play still starts the game with Steam's own `steam.exe -silent -applaunch <appid>` (v0.18.6). That Steam now keeps running when you quit the game, so your next game, or the same one again, starts without a Steam start.
+            - **If Steam doesn't start the game** within 45 seconds of signing in (a Steam dialog nobody sees, or an update Steam wants first), the app starts it next to Steam itself, the way it starts every later game.
+            - **The game screen says what it's waiting for.** It still comes up as soon as you press Play (v0.18.6). Until the game draws, the bar at the top says what's happening, for example "Launching R.E.P.O.… 34s · Steam is signing in (93s last time)", then "· Steam is starting it", then the fps counter takes over. A game that closes before it shows anything now says so and shows the log, instead of dropping you back in the library without a word.
+            - While Steam signs in for a game, Steam gets full speed. In v0.18.6 it got the lowest priority as soon as the game screen was up, which slowed its sign-in.
+            - **From v0.18.0 "the game you quit gets ready again", which v0.18.0 "Play starts the chosen game" replaced on GitHub:** a game you quit from its own menu after playing at least two minutes gets ready again in the background (muted, paused at its menu), so the next **Play** on it is instant. The start-time line in the log also says how much of the wait was Steam and how much the game itself ("⏱ R.E.P.O. is on screen 95s after Play (60s before the game started, the game itself 35s…)").
+            - For a fast first Play too, turn on Runtime settings → Steam for Windows → **Start with games** and **Get Steam ready when the app opens** (both off since v0.18.1): Steam then signs in while you're still in the library, and **Get my last game ready too** has your last game waiting at its menu.
+
+            **v0.18.6:** Play starts the game the way Steam does.
+            - The command is Steam's own `steam.exe -silent -applaunch <appid>`, then that game's launch options.
+            - The screen says **Launching &lt;game&gt;**. Steam's window stays off.
+            - The game is registered in Steam's library first, so applaunch can find it.
+            - **Open Steam** still opens Steam's window when you ask for it.
+
+            **v0.18.5:** Pressing Play on a library game starts only that game's .exe.
+            - The game's own Steam app id is written for that process (`SteamAppId`, `SteamGameId`, `steam_appid.txt`).
+            - steam.exe is not started. The screen does not say Starting Steam.
+            - **Open Steam** still opens Steam when you ask for it.
+
+            **v0.18.4:** The game stays on its display. R.E.P.O. was drawing one frame and then quitting because Steamworks could not open a pipe to the Steam client.
+            - Play still shows only the game. The screen does not say Starting Steam.
+            - steam.exe starts in the background with no window, and the game starts after that client is connected.
+            - **Open Steam** still opens Steam's window when you ask for it.
+
+            **v0.18.3:** Play still starts only the game you picked, and that game's display is shown again.
+            - The game display is created when you press Play, on the game screen, so the picture has a surface.
+            - Pressing Play starts that game's .exe through Box64/Wine. steam.exe is not launched.
+            - **Open Steam** still opens Steam when you ask for it.
+
+            **v0.18.2:** Play opens the game you picked in a few seconds. It does not start the Steam app.
+            - When the app opens, it prepares the game display only. steam.exe is not launched.
+            - Pressing Play starts that game's .exe through Box64/Wine and puts the game display on screen right away.
+            - The next Play reuses the display, so it does not rebuild it.
+            - **Open Steam** still opens Steam when you ask for it.
+
+            **v0.18.1:** Play starts only the game. It does not start Steam, and the screen does not say Starting Steam.
+            - Pressing Play runs that game's .exe through Box64/Wine. steam.exe is not launched.
+            - The loading screen says **Launching &lt;game&gt;**, then the game fills the display.
+            - Steam no longer starts by itself when the app opens. **Open Steam** still opens Steam when you ask for it.
+
+            **v0.18.0:** Play opens the game you picked. It no longer sits on Starting Steam.
+            - Pressing Play starts that game's .exe through Box64/Wine immediately (`SteamAppId` / `steam_appid.txt`, Steam's own launch options). Steam, when the game needs it, starts silent in the background (`-silent`, no Steam window on the game screen) and Play does not wait for it to sign in.
+            - The loading screen says **Preparing runtime**, then **Launching &lt;game&gt;**, then the game fills the display (**Running**). A missing .exe says so instead of opening Steam.
+            - A Steam that was already getting ready when you press Play is kept. The game starts as soon as the display is up.
+            - Steam's own windows are not drawn while a game is on screen. **Show Steam** still opens them.
 
             **v0.17.1:** fixes Play soon after opening the app waiting longer than before.
             - In v0.17.0, pressing Play while Steam was still being tested without its browser dropped Steam and started it from scratch, so the head start was lost and Play could wait longer than in v0.16.0. Now a Steam that is already connecting without its browser is kept and waited for like any Steam; only one that hasn't tried to connect yet is dropped. If the test then fails while Play waits, Steam restarts with its browser and Play keeps waiting through the restart (it used to wait up to four minutes with no way back).

@@ -231,15 +231,15 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     val gameRunning get() = GameRunner.isPlaying
 
     /** Starts a game (see GameRunner): the loading screen follows [stage]. */
-    fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR, title: String = exe.nameWithoutExtension) =
-        GameRunner.play(ctx, exe, args, mode, title)
+    fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR, title: String = exe.nameWithoutExtension, appId: Int = 0) =
+        GameRunner.play(ctx, exe, args, mode, title, appId)
 
     /** Play from a game card: once per screen (rotating the panel doesn't start it again). */
-    fun playOnce(ctx: Context, exePath: String, args: String, mode: String, title: String?) {
+    fun playOnce(ctx: Context, exePath: String, args: String, mode: String, title: String?, appId: Int) {
         if (startedPlay) return
         startedPlay = true
         val exe = File(exePath)
-        launchGame(ctx, exe, args, mode, title ?: exe.nameWithoutExtension)
+        launchGame(ctx, exe, args, mode, title ?: exe.nameWithoutExtension, appId)
     }
 
     fun importGame(ctx: Context, uri: Uri, isTree: Boolean) {
@@ -291,7 +291,11 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
         if (playStage is LaunchStage.Running || playStage is LaunchStage.Opening) wasPlaying = true
         else if (playStage == LaunchStage.Idle && wasPlaying && exePath != null) onClose()
     }
-    val inGame = gameView != null && (playStage as? LaunchStage.Running)?.vr == false
+    val inGame = gameView != null && when (val s = playStage) {
+        is LaunchStage.Running -> !s.vr
+        is LaunchStage.Opening -> true
+        else -> false
+    }
     androidx.activity.compose.BackHandler(enabled = inGame) { askLeave = true }
     if (inGame) {
         GameSurface(gameView!!, onLeave = { askLeave = true })
@@ -329,8 +333,8 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
     }
 
     LaunchedEffect(exePath) {
-        if (exePath != null) vm.playOnce(ctx, exePath, args, mode, title)
-        else if (title != null) vm.appendLog("No .exe found for this game.")
+        if (exePath != null) vm.playOnce(ctx, exePath, args, mode, title, appId)
+        else if (title != null) GameRunner.missingGame(title)
     }
 
     Box(Modifier.fillMaxSize().steamBackdrop(), contentAlignment = Alignment.TopCenter) {
@@ -516,7 +520,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
     val stage by vm.stage.collectAsState()
     // Opened from a game's Play button: cancelling, closing an error, stopping the game or the game
     // ending goes straight back to the library, not to this settings screen.
-    val fromCard = exePath != null
+    val fromCard = exePath != null || title != null
     LaunchOverlay(
         stage = stage, appId = appId, log = log,
         onShowGame = { GameRunner.showGameNow(ctx) },
@@ -629,7 +633,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
     var core by remember { mutableStateOf(SteamWindows.coreAllowed(ctx)) }
     Text(
-        "Online games (like R.E.P.O.) need Steam running, as on a PC. This installs Valve's Steam for Windows inside the runtime; it starts in the background before your games.",
+        "Play uses Steam's own applaunch for the game you pick, and that Steam keeps running for your next game (it doesn't start again). Steam's window stays off unless you press Open Steam.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
     )
     Spacer(Modifier.height(10.dp))
@@ -668,7 +672,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                             .focusRing().clickable { withGames = value; SteamWindows.setStartWithGames(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
                     )
                 }
-                for ((value, label) in listOf(true to "Get Steam ready when the app opens", false to "Only when I play")) {
+                for ((value, label) in listOf(true to "Get Steam ready when the app opens", false to "Don't start Steam on open")) {
                     val sel = warm == value
                     Text(
                         (if (sel) "✓ " else "") + label,

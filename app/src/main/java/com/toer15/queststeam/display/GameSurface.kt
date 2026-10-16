@@ -3,6 +3,7 @@ package com.toer15.queststeam.display
 import android.annotation.SuppressLint
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -57,15 +59,26 @@ import kotlinx.coroutines.delay
 @Composable
 fun GameSurface(view: XServerView, onLeave: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { _ ->
-                (view.parent as? ViewGroup)?.removeView(view)
-                attachInput(view)
-                view.onResume()
-                view
-            },
-        )
+        // A new display (the one just started for this game) must be attached again.
+        // Reusing the previous view leaves that game's picture off screen.
+        key(view) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { _ ->
+                    (view.parent as? ViewGroup)?.removeView(view)
+                    attachInput(view)
+                    view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                        override fun onViewAttachedToWindow(v: View) {
+                            val game = v as XServerView
+                            game.onResume()
+                            game.requestRender()
+                        }
+                        override fun onViewDetachedFromWindow(v: View) = Unit
+                    })
+                    view
+                },
+            )
+        }
         Text(
             "✕  Leave game", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
             modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(50))

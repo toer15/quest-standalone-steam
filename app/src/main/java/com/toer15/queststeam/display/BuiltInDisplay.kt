@@ -80,11 +80,12 @@ object BuiltInDisplay {
 
     /**
      * "1280×720 · 30 fps" while the game sends frames (like a game stream's stats), how long since the
-     * last one when it stopped, null before its first frame.
+     * last one when it stopped; before its first frame, [waitingText].
      */
     fun frameStatsText(): String? {
         val last = VortekRendererComponent.lastFrameTime
-        if (last == 0L || server == null) return null
+        if (server == null) return null
+        if (last == 0L) return waitingText
         val size = "${VortekRendererComponent.frameWidth}×${VortekRendererComponent.frameHeight}"
         val now = android.os.SystemClock.uptimeMillis()
         val age = now - last
@@ -92,6 +93,12 @@ object BuiltInDisplay {
         val start = startTime?.takeIf { now - startTimeAt < 20_000 }?.let { " · $it" } ?: ""
         return (if (age > 2000) "$size · no new frame for ${age / 1000}s$shown" else "$size · ${VortekRendererComponent.fps} fps$shown") + start
     }
+
+    /**
+     * The game screen is up before the game draws (see GameRunner.watchOnScreen): what it waits for, in the
+     * stats' place ("Launching R.E.P.O.… 12s · Steam is signing in"); null when there's nothing to say.
+     */
+    @Volatile var waitingText: String? = null
 
     @Volatile private var startTime: String? = null
     @Volatile private var startTimeAt = 0L
@@ -160,6 +167,9 @@ object BuiltInDisplay {
 
     val isRunning get() = server != null
 
+    @Volatile private var startedVortek: Boolean? = null
+    private var startedEnv: Map<String, String>? = null
+
     /** X clients connected to the display right now (Wine processes and their GUI threads). */
     fun clientCount(): Int = server?.resourceIDs?.inUse() ?: 0
 
@@ -173,6 +183,17 @@ object BuiltInDisplay {
      */
     @Synchronized
     fun start(ctx: Context, rootfs: File, useVortek: Boolean, log: (String) -> Unit): Map<String, String> {
+        val ready = startedEnv
+        // Only keep a display that is already on screen. One created in the background has no
+        // surface, and reusing it leaves the game with nothing to draw into.
+        val onScreen = view?.isAttachedToWindow == true
+        if (server != null && ready != null && startedVortek == useVortek && onScreen) {
+            _gameWindow.value = false
+            VortekRendererComponent.lastFrameTime = 0L
+            VortekRendererComponent.fps = 0
+            log("Game display already on screen. Starting the game.")
+            return ready
+        }
         stop()
         _gameWindow.value = false
         val xs = XServer(ScreenInfo(SCREEN))
@@ -260,6 +281,8 @@ object BuiltInDisplay {
                 log("GPU: Vortek couldn't start (${t.javaClass.simpleName}: ${t.message}); using Turnip.")
             }
         } else log("GPU: Turnip.")
+        startedVortek = useVortek
+        startedEnv = env
         return env
     }
 
@@ -275,6 +298,8 @@ object BuiltInDisplay {
         view?.let { v -> (v.parent as? ViewGroup)?.removeView(v) }
         xConnector = null; shmConnector = null; shm = null
         server = null; view = null
+        startedVortek = null
+        startedEnv = null
         _viewState.value = null
         _gameWindow.value = false
     }
