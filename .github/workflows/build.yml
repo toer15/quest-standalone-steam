@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.18.0
+      - name: Publish release v0.18.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.18.0
+          tag_name: v0.18.1
           target_commitish: ${{ github.sha }}
-          name: "v0.18.0: Play opens the game, not Starting Steam"
+          name: "v0.18.1: Play starts only the game, not Steam"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.18.1:** Play starts only the game. It does not start Steam, and the screen does not say Starting Steam.
+            - Pressing Play runs that game's .exe through Box64/Wine. steam.exe is not launched.
+            - The loading screen says **Launching &lt;game&gt;**, then the game fills the display.
+            - Steam no longer starts by itself when the app opens. **Open Steam** still opens Steam when you ask for it.
 
             **v0.18.0:** Play opens the game you picked. It no longer sits on Starting Steam.
             - Pressing Play starts that game's .exe through Box64/Wine immediately (`SteamAppId` / `steam_appid.txt`, Steam's own launch options). Steam, when the game needs it, starts silent in the background (`-silent`, no Steam window on the game screen) and Play does not wait for it to sign in.

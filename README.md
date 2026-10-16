@@ -7,9 +7,9 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.18.0/quest-steam-quest3.apk)
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.18.1/quest-steam-quest3.apk)
 
-**v0.18.0:** Play starts the game you picked. The loading screen says Preparing runtime, then Launching that game, then the game fills the display. Steam stays silent in the background when a game needs it; Play does not wait on a Starting Steam screen. Release: https://github.com/toer15/quest-standalone-steam/releases/tag/v0.18.0
+**v0.18.1:** Play starts only the game. It does not start Steam, and it does not say Starting Steam. The screen says Launching that game, then the game fills the display. Open Steam still opens Steam when you ask for it. Release: https://github.com/toer15/quest-standalone-steam/releases/tag/v0.18.1
 
 Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
 

@@ -633,7 +633,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
     var core by remember { mutableStateOf(SteamWindows.coreAllowed(ctx)) }
     Text(
-        "Online games (like R.E.P.O.) need Steam running, as on a PC. This installs Valve's Steam for Windows inside the runtime; it starts in the background before your games.",
+        "Play starts only the game. Steam for Windows is separate: Open Steam when you want Steam's own window.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
     )
     Spacer(Modifier.height(10.dp))
@@ -672,7 +672,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                             .focusRing().clickable { withGames = value; SteamWindows.setStartWithGames(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
                     )
                 }
-                for ((value, label) in listOf(true to "Get Steam ready when the app opens", false to "Only when I play")) {
+                for ((value, label) in listOf(true to "Get Steam ready when the app opens", false to "Don't start Steam on open")) {
                     val sel = warm == value
                     Text(
                         (if (sel) "✓ " else "") + label,

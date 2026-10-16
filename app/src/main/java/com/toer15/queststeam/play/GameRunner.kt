@@ -717,6 +717,20 @@ object GameRunner {
         }
     }
 
+    /** Ends a Steam client the app started on its own, so Play can start the game by itself. */
+    private suspend fun dropSteamSession(l: GameLauncher) {
+        ++launchGen
+        coreTrial = false
+        steamRestarting = false
+        steamEnv = null
+        sessionGame = null
+        steamSignedIn = false
+        steamCoreOnly = false
+        warmJob?.cancel()
+        withContext(Dispatchers.IO) { l.stop() }
+        BuiltInDisplay.stop()
+    }
+
     /** No .exe on the headset: say so, instead of opening Steam or an empty runtime screen. */
     fun missingGame(title: String, exe: File? = null) {
         val where = exe?.path?.let { " ($it)" }.orEmpty()
@@ -736,11 +750,13 @@ object GameRunner {
             return
         }
         playPressedAt = System.currentTimeMillis()
-        // A Steam that's already getting ready is kept. Cancelling it throws away the head start.
-        if (openingSteam && !steamRunning()) warmJob?.cancel()
+        if (!openingSteam) warmJob?.cancel()
+        else if (!steamRunning()) warmJob?.cancel()
         val app = ctx.applicationContext
-        // Preparing until the game process is actually started. Launching <game> replaces this in start().
-        _stage.value = LaunchStage.Working(title, if (openingSteam) "Starting Steam…" else DirectLaunch.PREPARING)
+        _stage.value = LaunchStage.Working(
+            title,
+            if (openingSteam) "Starting Steam…" else DirectLaunch.launching(title),
+        )
         job = scope.launch {
             try {
                 val installer = RuntimeInstaller(app)
@@ -751,28 +767,10 @@ object GameRunner {
                         installer.install(::appendLog) { p -> _stage.value = LaunchStage.Working(title, "Preparing runtime… ${p.stage}", p.fraction) }
                     }
                     appendLog("Runtime downloaded and installed.")
+                    if (!openingSteam) _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
                 }
                 val l = launcher ?: GameLauncher(app).also { launcher = it }
-                if (!openingSteam) {
-                    // Use a Steam that's already coming up. The game starts as soon as the display exists;
-                    // Steam keeps connecting in the background and its window stays off this screen.
-                    val warming = warmJob
-                    if (warming?.isActive == true && !steamRunning()) {
-                        appendLog("The runtime is already starting. $title opens as soon as it can, without Steam's window.")
-                        val t0 = System.currentTimeMillis()
-                        while (warming.isActive && !steamRunning() && System.currentTimeMillis() - t0 < 45_000) {
-                            _stage.value = LaunchStage.Working(title, DirectLaunch.PREPARING)
-                            delay(250)
-                        }
-                    }
-                }
-                if (coreTrial && !steamRunning()) {
-                    // The test never brought a display up. Drop it and start fresh.
-                    val connecting = withContext(Dispatchers.IO) { SteamWindows.connectionLog(l).let { it.isFile && it.length() > steamLogOffset } }
-                    if (!connecting) abandonCoreTrial(l)
-                } else if (coreTrial && steamRunning() && !openingSteam) {
-                    appendLog("Play keeps the Steam that's already connecting and starts $title now.")
-                }
+                if (!openingSteam && coreTrial && !steamRunning()) abandonCoreTrial(l)
                 // A game getting ready in the background stops waiting: it's shown if it's this one, else closed.
                 readyJob?.cancelAndJoin()
                 val vrGame = mode == RuntimeActivity.MODE_VR && VrBridge.isVrGame(gameRoot(l, exe))
@@ -786,10 +784,15 @@ object GameRunner {
                     if (alive && !vrGame && r.exe.equals(exe.name, ignoreCase = true)) { showReadying(app, l, r); return@launch }
                     closeReadying()
                 }
-                if (!openingSteam && !vrGame && steamRunning()) {
-                    // Steam is already running: the game starts inside its session right away.
+                if (!openingSteam) {
+                    // Play is the game executable only. A Steam that the app started on its own is closed first.
+                    if (steamRunning() || coreTrial) {
+                        appendLog("Closing Steam. Play starts only $title.")
+                        dropSteamSession(l)
+                    }
+                    appendLog("Only $title starts. Steam is not started.")
                     _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
-                    startInSteam(app, exe, args, title)
+                    start(ctx, exe, args, mode, title)
                     return@launch
                 }
                 if (openingSteam && steamRunning()) {
@@ -802,11 +805,8 @@ object GameRunner {
                     }
                     appendLog("Steam's window needs Steam's browser: restarting Steam with it (a game waiting in the background closes).")
                 }
-                if (!openingSteam && SteamWindows.isInstalled(l) && !SteamWindows.isSignedIn(l)) {
-                    appendLog("Steam isn't signed in yet. $title starts now. Online features need a one-time sign-in: Runtime settings → Open Steam.")
-                }
                 start(ctx, exe, args, mode, title)
-                if (openingSteam || _stage.value.let { it is LaunchStage.Running && it.title.startsWith("Steam") }) watchSteamSignIn(l)
+                if (openingSteam) watchSteamSignIn(l)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -838,7 +838,7 @@ object GameRunner {
         env.putAll(GameSpeed.env(ctx, l))
         appendLog("Game speed: ${GameSpeed.describe(ctx)}.")
         val wantVr = mode == RuntimeActivity.MODE_VR
-        if (!SteamWindows.isSteam(exe)) _stage.value = LaunchStage.Working(title, DirectLaunch.PREPARING)
+        if (!SteamWindows.isSteam(exe)) _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
         else _stage.value = LaunchStage.Working(title, "Preparing ${if (wantVr) "VR" else "flat screen"} mode…")
         withContext(Dispatchers.IO) {
             runCatching { env["QSS_PAD_SHM"] = GamepadBridge.prepare(ctx, l.rootfs, ::appendLog).path }
@@ -872,7 +872,7 @@ object GameRunner {
         val termux = !builtIn && disp != null && (disp.startsWith("127.0.0.1") || disp.startsWith("localhost"))
         var baseline = 0
         if (builtIn) {
-            if (!SteamWindows.isSteam(exe)) _stage.value = LaunchStage.Working(title, DirectLaunch.PREPARING)
+            if (!SteamWindows.isSteam(exe)) _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
             else _stage.value = LaunchStage.Working(title, "Starting the game display…")
             // The game's own windows have its exe name as their class; Steam's UI is drawn by other processes.
             BuiltInDisplay.expectedWindowClass = if (SteamWindows.isSteam(exe)) null else exe.name.lowercase()
@@ -894,7 +894,7 @@ object GameRunner {
                 _stage.value = LaunchStage.Idle
                 return
             }
-            _stage.value = LaunchStage.Working(title, if (SteamWindows.isSteam(exe)) "Starting the game display…" else DirectLaunch.PREPARING)
+            _stage.value = LaunchStage.Working(title, if (SteamWindows.isSteam(exe)) "Starting the game display…" else DirectLaunch.launching(title))
             val problem = withContext(Dispatchers.IO) { GameDisplay.ensureRunning(ctx, l.rootfs, ::appendLog) }
             if (problem != null) { appendLog(problem); _stage.value = LaunchStage.Failed(title, problem); return }
             setWineAudio(l, false) // no sound server with Termux:X11: no audio device instead of a broken one
@@ -907,52 +907,18 @@ object GameRunner {
             baseline = withContext(Dispatchers.IO) { XProbe.visibleWindows()?.size ?: 0 }
         }
 
-        // Steam for Windows beside the game, silent, for games that need the Steam client (Steamworks).
-        // The game process starts immediately. Play does not sit on Steam's sign-in screen.
-        val beside = DirectLaunch.plan(
-            title, openingSteam = SteamWindows.isSteam(exe), runtimeInstalled = true, gameFileExists = exe.isFile,
-            steamInstalled = SteamWindows.isInstalled(l), startSteamWithGames = SteamWindows.startWithGames(ctx),
-            steamAlreadyRunning = false,
-        )
-        if (builtIn && beside.steam == DirectLaunch.SteamRole.SILENT_BESIDE_GAME) {
+        if (!SteamWindows.isSteam(exe)) {
             val appId = gameDir.name.toIntOrNull() ?: 0
-            _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
-            if (!inVr) {
-                // Flat games: Steam gets the display and keeps running after the game (see steamEnv).
-                // No browser window, so the screen stays the game's. The game starts in that session now.
-                val core = SteamWindows.coreAllowed(ctx) && SteamWindows.coreWorks(ctx) != false
-                if (!core) appendLog("Steam starts with its browser (it needs that to sign in here). Its window stays hidden while $title is on screen.")
-                if (launchSteamSession(ctx, l, env, gen, core = core)) {
-                    startInSteam(ctx, exe, args, title)
-                    return
-                }
-            } else {
-                var steamLines = 0
-                val onSteamLine: (String) -> Unit = { line ->
-                    val keep = (line.contains("err:") || line.startsWith("wine:") || line.contains("Box64", ignoreCase = true)) && !line.contains("fixme")
-                    if (steamLines < 60 && keep) { steamLines++; appendLog("[steam] $line") }
-                }
-                val steamExe = SteamWindows.exe(l)
-                val core = SteamWindows.coreAllowed(ctx) && SteamWindows.coreWorks(ctx) != false
-                val steam = withContext(Dispatchers.IO) {
-                    l.runWine(
-                        listOf(steamExe.path, "-silent") + (if (core) SteamWindows.coreArgs() else SteamWindows.args(ctx)),
-                        BuiltInDisplay.DISPLAY,
-                        SteamWindows.dir(l), env + SteamWindows.steamOnlyEnv(ctx, l), onExit = { appendLog("[Steam closed ($it)]") }, onLine = onSteamLine,
-                    )
-                }
-                if (!steam.ok) appendLog("Steam didn't start: ${steam.message}")
-                else appendLog("Steam is starting in the background (no window). Launching $title now.")
-                if (appId > 0) {
-                    withContext(Dispatchers.IO) { SteamWindows.writeAppId(exe.parentFile ?: gameDir, appId) }
-                    env["SteamAppId"] = appId.toString()
-                    env["SteamGameId"] = appId.toString()
-                }
-                gameFillsDisplay(true)
+            if (appId > 0) {
+                withContext(Dispatchers.IO) { SteamWindows.writeAppId(exe.parentFile ?: gameDir, appId) }
+                env["SteamAppId"] = appId.toString()
+                env["SteamGameId"] = appId.toString()
             }
+            appendLog("Direct launch: $title${if (appId > 0) " (app $appId)" else ""}. Only this game starts; Steam is not started.")
+            _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
+        } else {
+            _stage.value = LaunchStage.Working(title, "Starting Steam…")
         }
-
-        _stage.value = LaunchStage.Working(title, if (SteamWindows.isSteam(exe)) "Starting Steam…" else DirectLaunch.launching(title))
         val argv = GameLauncher.splitArgs(args)
         if (argv.isNotEmpty() && !SteamWindows.isSteam(exe)) appendLog("Launch options from Steam: $args")
         // Steam's desktop is the whole screen; a game's is the chosen game resolution (direct view scales it up).

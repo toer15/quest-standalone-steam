@@ -3,27 +3,23 @@ package com.toer15.queststeam.play
 /**
  * What one Play tap does.
  *
- * The chosen game is the program that fills the display. Steam, when a game needs the client
- * (Steamworks), starts silent beside it — `-silent`, and without its window on this screen — and
- * Play does not wait for Steam to sign in before the game process starts.
+ * A library game starts as itself: its Windows .exe under Box64/Wine. Play does not start
+ * steam.exe, and the loading screen never says "Starting Steam" for a game. Opening Steam
+ * (the separate Open Steam button) is the only path that starts the Steam client.
  */
 object DirectLaunch {
     enum class SteamRole {
-        /** No Steam client for this tap (not installed, turned off, or already running in the background). */
+        /** This tap starts the game executable only. */
         NONE,
-        /** Start Steam with no window, then the game immediately. */
-        SILENT_BESIDE_GAME,
         /** The user asked to open Steam itself. */
         SHOW_STEAM,
     }
 
     data class Plan(
         val steam: SteamRole,
-        /** Loading-screen line: [PREPARING], [launching], or Steam's own screen when opening Steam. */
+        /** Loading-screen line: [PREPARING], [launching], or Steam only when opening Steam itself. */
         val step: String,
-        /**
-         * Always false for a game. The game executable starts at once; Steam may still be connecting.
-         */
+        /** Games never block on the Steam client. */
         val waitForSteamSignIn: Boolean,
     )
 
@@ -38,19 +34,10 @@ object DirectLaunch {
         openingSteam: Boolean,
         runtimeInstalled: Boolean,
         gameFileExists: Boolean,
-        steamInstalled: Boolean,
-        startSteamWithGames: Boolean,
-        steamAlreadyRunning: Boolean,
     ): Plan {
         if (openingSteam) return Plan(SteamRole.SHOW_STEAM, "Starting Steam…", waitForSteamSignIn = false)
         if (!runtimeInstalled) return Plan(SteamRole.NONE, PREPARING, waitForSteamSignIn = false)
         if (!gameFileExists) return Plan(SteamRole.NONE, launching(title), waitForSteamSignIn = false)
-        val steam = when {
-            // Already up: launch the game into that session. Don't bring Steam's window forward.
-            steamAlreadyRunning -> SteamRole.NONE
-            steamInstalled && startSteamWithGames -> SteamRole.SILENT_BESIDE_GAME
-            else -> SteamRole.NONE
-        }
-        return Plan(steam, launching(title), waitForSteamSignIn = false)
+        return Plan(SteamRole.NONE, launching(title), waitForSteamSignIn = false)
     }
 }
