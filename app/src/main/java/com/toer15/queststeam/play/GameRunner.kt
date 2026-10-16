@@ -349,6 +349,9 @@ object GameRunner {
     @Volatile private var steamCoreOnly = false
     @Volatile private var coreTrial = false
 
+    /** Steam is being restarted with its browser (after the test failed): a Play waiting for Steam keeps waiting through the restart. */
+    @Volatile private var steamRestarting = false
+
     /** True once Steam's session has signed in (it says so in its connection log); logs it the first time. */
     private fun checkSteamSignIn(l: GameLauncher): Boolean {
         if (steamSignedIn) return true
@@ -357,8 +360,10 @@ object GameRunner {
             if (!steamSignedIn) {
                 steamSignedIn = true
                 val used = runCatching { l.processes().filter { it.startsWith("steam") }.joinToString(", ") }.getOrDefault("")
+                val took = (System.currentTimeMillis() - steamStartedAt) / 1000
+                appCtx?.let { SteamWindows.setLastSignInS(it, steamCoreOnly, took) }
                 appendLog(
-                    "Steam is signed in (${(System.currentTimeMillis() - steamStartedAt) / 1000}s after it started${if (steamCoreOnly) ", without its browser" else ""})." +
+                    "Steam is signed in (${took}s after it started${if (steamCoreOnly) ", without its browser" else ""})." +
                         if (used.isNotEmpty()) " Processor time so far: $used." else ""
                 )
             }
@@ -406,14 +411,27 @@ object GameRunner {
      */
     private suspend fun awaitSteamSignIn(l: GameLauncher, title: String?): Boolean {
         val t0 = System.currentTimeMillis()
+        var programs = ""
+        var tick = 0
         while (!steamSignedIn) {
             if (withContext(Dispatchers.IO) { checkSteamSignIn(l) }) break
-            if (!steamRunning()) { appendLog("Steam closed while starting."); return false }
+            // (A restart of Steam with its browser, after the test failed, is not Steam closing.)
+            if (!steamRunning() && !steamRestarting) { appendLog("Steam closed while starting."); return false }
             if (System.currentTimeMillis() - t0 >= 240_000) { appendLog("Steam didn't sign in within 4 minutes."); return false }
-            if (title != null) _stage.value = LaunchStage.Working(
-                title, "Starting Steam… ${(System.currentTimeMillis() - steamStartedAt) / 1000}s",
-                detail = "Steam signs in before the game starts, like on a PC. Turn on \"Get Steam ready when the app opens\" (Runtime settings → Steam for Windows) and it's ready before you press Play.",
-            )
+            if (title != null) {
+                if (tick++ % 5 == 0) programs = withContext(Dispatchers.IO) {
+                    runCatching { l.processes().filter { it.startsWith("steam") }.joinToString(", ") }.getOrDefault("")
+                }
+                val usual = appCtx?.let { SteamWindows.lastSignInS(it, steamCoreOnly) }
+                _stage.value = LaunchStage.Working(
+                    title, "Starting Steam… ${(System.currentTimeMillis() - steamStartedAt) / 1000}s",
+                    detail = "The game itself starts from this app. Its Steam features need the Steam client signed in first, like on a PC, so this is Steam's wait, not the game's." +
+                        (if (steamCoreOnly) " Steam runs without its browser (the faster start)." else "") +
+                        (usual?.let { " Last time it took ${it}s." } ?: "") +
+                        " The app starts Steam when it opens: after a minute or two in the library this wait is gone." +
+                        (if (programs.isNotEmpty()) "\nSteam's programs: $programs" else ""),
+                )
+            }
             delay(1000)
         }
         withContext(Dispatchers.IO) { applySteamUiPolicy() }
@@ -423,8 +441,7 @@ object GameRunner {
     /**
      * Waits for Steam, started without its browser, to sign in: true once it has. False when Steam hasn't even
      * tried to connect after [silentS] seconds (its connection log stays silent: nothing tells it to sign in
-     * without the browser), or hasn't signed in after [limitS] seconds, or closes. Once Play is pressed
-     * somebody waits for this Steam, so it's not judged early (the usual 4 minutes).
+     * without the browser), or hasn't signed in after [limitS] seconds, or closes.
      */
     private suspend fun awaitCoreSignIn(l: GameLauncher, gen: Int, silentS: Int, limitS: Int): Boolean {
         val t0 = System.currentTimeMillis()
@@ -432,10 +449,9 @@ object GameRunner {
             if (withContext(Dispatchers.IO) { checkSteamSignIn(l) }) return true
             if (!steamRunning()) { appendLog("Steam closed while starting without its browser."); return false }
             val secs = (System.currentTimeMillis() - t0) / 1000
-            val playWaiting = job?.isActive == true
             val tried = withContext(Dispatchers.IO) { SteamWindows.connectionLog(l).let { it.isFile && it.length() > steamLogOffset } }
-            if (!playWaiting && secs >= silentS && !tried) { appendLog("Steam hasn't tried to connect after ${secs}s without its browser."); return false }
-            if (secs >= (if (playWaiting) 240 else limitS)) { appendLog("Steam hasn't signed in after ${secs}s without its browser."); return false }
+            if (secs >= silentS && !tried) { appendLog("Steam hasn't tried to connect after ${secs}s without its browser."); return false }
+            if (secs >= limitS) { appendLog("Steam hasn't signed in after ${secs}s without its browser."); return false }
             delay(1000)
         }
         return false
@@ -496,7 +512,9 @@ object GameRunner {
         env.putAll(BuiltInDisplay.start(ctx, l.rootfs, useVortek, ::appendLog))
         setWineAudio(l, env.containsKey("ANDROID_ALSA_SERVER"))
         appendLog("Game speed: ${GameSpeed.describe(ctx)}.")
-        if (!launchSteamSession(ctx, l, env, gen, core)) { BuiltInDisplay.stop(); return }
+        val launched = launchSteamSession(ctx, l, env, gen, core)
+        steamRestarting = false // the restart (if this is one) has started, or failed to
+        if (!launched) { BuiltInDisplay.stop(); return }
         PlayingService.start(ctx, "Steam")
         if (core) {
             // Untested: the one-time test. Tested before: the same wait, with a way back if it doesn't sign in this time.
@@ -522,6 +540,7 @@ object GameRunner {
                 SteamWindows.setCoreWorks(ctx, false)
                 appendLog("Steam doesn't sign in without its browser on this headset: starting it with its browser as before (remembered; Runtime settings → Steam for Windows tests again).")
             }
+            steamRestarting = true // a Play waiting for Steam keeps waiting through the restart
             startSteamInBackground(ctx, l, core = false)
             return
         }
@@ -529,11 +548,12 @@ object GameRunner {
     }
 
     /**
-     * Play pressed while Steam is still being tested without its browser: nobody waits for a test. It's
-     * dropped (it stays untested for the next start) and Play starts Steam as it always did.
+     * Play pressed while Steam is being tested without its browser and hasn't even tried to connect: not worth
+     * waiting for. The test is dropped (it stays untested for the next start) and Play starts Steam as it always did.
      */
     private suspend fun abandonCoreTrial(l: GameLauncher) {
         coreTrial = false
+        steamRestarting = false
         warmJob?.cancelAndJoin()
         ++launchGen
         steamEnv = null
@@ -709,7 +729,13 @@ object GameRunner {
                     appendLog("Runtime downloaded and installed.")
                 }
                 val l = launcher ?: GameLauncher(app).also { launcher = it }
-                if (coreTrial) abandonCoreTrial(l)
+                if (coreTrial) {
+                    // Play during the test. A Steam that is already connecting without its browser is on its way: it is kept (its
+                    // head start counts) and waited for like any Steam. One that hasn't tried to connect isn't: the test is dropped.
+                    val connecting = withContext(Dispatchers.IO) { SteamWindows.connectionLog(l).let { it.isFile && it.length() > steamLogOffset } }
+                    if (connecting) appendLog("Play was pressed while Steam is starting without its browser; it is connecting, so the app waits for it.")
+                    else abandonCoreTrial(l)
+                }
                 // A game getting ready in the background stops waiting: it's shown if it's this one, else closed.
                 readyJob?.cancelAndJoin()
                 val vrGame = mode == RuntimeActivity.MODE_VR && VrBridge.isVrGame(gameRoot(l, exe))
@@ -761,6 +787,7 @@ object GameRunner {
         sessionGame = null
         steamSignedIn = false
         steamCoreOnly = false
+        steamRestarting = false
         gameStartedAt = System.currentTimeMillis()
         markBackgroundErrors()
         trimAppMemory(ctx)
@@ -1472,6 +1499,7 @@ object GameRunner {
         steamSignedIn = false
         steamCoreOnly = false
         coreTrial = false
+        steamRestarting = false
         paused = null
         readyJob?.cancel()
         readying = null
@@ -1671,6 +1699,7 @@ object GameRunner {
         steamSignedIn = false
         steamCoreOnly = false
         coreTrial = false
+        steamRestarting = false
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         _stage.value = LaunchStage.Idle

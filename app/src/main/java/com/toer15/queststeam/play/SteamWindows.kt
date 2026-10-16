@@ -75,6 +75,13 @@ object SteamWindows {
     /** Untested again (the next start tests it). */
     fun forgetCore(ctx: Context) = ctx.getSharedPreferences("runtime", 0).edit().remove(PREF_CORE_WORKS).apply()
 
+    /** How many seconds Steam took to sign in the last time, per kind of start (without / with its browser); null = never measured. */
+    fun lastSignInS(ctx: Context, core: Boolean): Long? =
+        ctx.getSharedPreferences("runtime", 0).getLong(if (core) "steam_sign_in_core_s" else "steam_sign_in_s", -1L).takeIf { it >= 0 }
+
+    fun setLastSignInS(ctx: Context, core: Boolean, secs: Long) =
+        ctx.getSharedPreferences("runtime", 0).edit().putLong(if (core) "steam_sign_in_core_s" else "steam_sign_in_s", secs).apply()
+
     /**
      * Steam's own settings that cost the most without a GPU (its windows are drawn by its built-in
      * browser, in software here): smooth scrolling, and GPU / video acceleration in its web views.

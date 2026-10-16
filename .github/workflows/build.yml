@@ -91,17 +91,21 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.17.0
+      - name: Publish release v0.17.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.17.0
+          tag_name: v0.17.1
           target_commitish: ${{ github.sha }}
-          name: "v0.17.0: Steam without its browser (test), steadier fps counter"
+          name: "v0.17.1: Play during the Steam test keeps Steam's head start"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.17.1:** fixes Play soon after opening the app waiting longer than before.
+            - In v0.17.0, pressing Play while Steam was still being tested without its browser dropped Steam and started it from scratch, so the head start was lost and Play could wait longer than in v0.16.0. Now a Steam that is already connecting without its browser is kept and waited for like any Steam; only one that hasn't tried to connect yet is dropped. If the test then fails while Play waits, Steam restarts with its browser and Play keeps waiting through the restart (it used to wait up to four minutes with no way back).
+            - The **Starting Steam…** screen says what it is waiting for: Steam's sign-in (the game itself starts from the app, but its Steam features need the Steam client signed in first, as on a PC), whether Steam runs without its browser, how long Steam took last time, and which Steam programs are running.
 
             **v0.17.0:** only the part of Steam a game needs, and a steadier fps counter.
             - **Steam without its browser (a test, then automatic).** Your v0.16.0 log: Steam took 93 seconds to sign in; of the 78 seconds of processor time, 62 went to Steam's browser (`steamwebhelper.exe`, up to 3 GB of memory), which only draws Steam's windows, and 16 to `steam.exe` itself. A game needs Steam's core, not its windows. The first time Steam gets ready after this update, the app starts it with Steam's `-no-browser` option and waits to see if it signs in. If it does, that is remembered and Steam starts that way from now on: faster to sign in, and the memory stays free for the game. If it doesn't (whether this Steam signs in without its browser is not known until tried), the app starts Steam with its browser again, as before, and remembers that. Press Play during the test and the test stops at once; Steam starts as before and the test runs again next time. Runtime settings → Steam for Windows → **Steam without its browser** / **Steam with its browser** switches it (and tests again).
