@@ -633,7 +633,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
     var core by remember { mutableStateOf(SteamWindows.coreAllowed(ctx)) }
     Text(
-        "Play starts only the game you pick, on a display that is already open. Steam for Windows stays off unless you press Open Steam.",
+        "Play starts only the game you pick and shows that game's display. Steam stays off unless you press Open Steam.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
     )
     Spacer(Modifier.height(10.dp))

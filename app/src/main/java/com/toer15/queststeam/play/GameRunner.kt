@@ -492,31 +492,31 @@ object GameRunner {
     }
 
     /**
-     * Gets the game display ready when the app opens, so Play only has to start the chosen game.
-     * Does not start Wine or steam.exe. A later Play reuses this display.
+     * Prepares the runtime when the app opens so Play only has to start the chosen game.
+     * Does not start the game display here: that view has to be created while the game screen
+     * is open, or the game has nothing to draw into. Does not start Wine or steam.exe.
      */
     fun warmDisplay(ctx: Context) {
         val app = ctx.applicationContext
-        if (BuiltInDisplay.isRunning || displayJob?.isActive == true) return
+        if (displayJob?.isActive == true) return
         if (job?.isActive == true || _stage.value !is LaunchStage.Idle) return
         if (!BuiltInDisplay.isBuiltIn(display(app)) || !RuntimeInstaller(app).isInstalled) return
         val l = launcher ?: GameLauncher(app).also { launcher = it }
         displayJob = scope.launch {
             try {
                 prepareRuntime(app, l, gamesOnly = true)
-                if (job?.isActive == true || _stage.value !is LaunchStage.Idle || BuiltInDisplay.isRunning) return@launch
-                val useVortek = Vortek.selected(app) == Vortek.VORTEK && withContext(Dispatchers.IO) {
-                    runCatching { Vortek.prepare(app, l.rootfs, ::appendLog) }
-                        .onFailure { appendLog("Vortek GPU driver setup failed: ${it.message}") }
-                        .getOrDefault(false)
+                if (job?.isActive == true || _stage.value !is LaunchStage.Idle) return@launch
+                if (Vortek.selected(app) == Vortek.VORTEK) {
+                    withContext(Dispatchers.IO) {
+                        runCatching { Vortek.prepare(app, l.rootfs, ::appendLog) }
+                            .onFailure { appendLog("Vortek GPU driver setup failed: ${it.message}") }
+                    }
                 }
-                if (job?.isActive == true || _stage.value !is LaunchStage.Idle || BuiltInDisplay.isRunning) return@launch
-                BuiltInDisplay.start(app, l.rootfs, useVortek, ::appendLog)
-                appendLog("Game display is ready. Play starts only the game you choose.")
+                appendLog("Ready to open a game. Play starts only the game you choose, on its own display.")
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                appendLog("Couldn't get the game display ready: $e")
+                appendLog("Couldn't get ready to open a game: $e")
             }
         }
     }
@@ -825,14 +825,8 @@ object GameRunner {
                         appendLog("Closing Steam. Play starts only $title.")
                         dropSteamSession(l)
                     }
-                    if (DirectLaunch.showImmediately(false) && mode != RuntimeActivity.MODE_VR && BuiltInDisplay.isRunning) {
-                        BuiltInDisplay.expectedWindowClass = exe.name.lowercase()
-                        _stage.value = LaunchStage.Opening(title)
-                    }
                     appendLog("Only $title starts. Steam is not started.")
-                    if (_stage.value !is LaunchStage.Opening) {
-                        _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
-                    }
+                    _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
                     start(ctx, exe, args, mode, title)
                     return@launch
                 }
@@ -929,7 +923,9 @@ object GameRunner {
             env.putAll(BuiltInDisplay.start(ctx, l.rootfs, useVortek, ::appendLog))
             if (!SteamWindows.isSteam(exe)) gameFillsDisplay(true)
             setWineAudio(l, env.containsKey("ANDROID_ALSA_SERVER"))
-            if (!SteamWindows.isSteam(exe) && !inVr && DirectLaunch.showImmediately(false)) {
+            // The view exists now, on this screen. Show it before the game draws so this game's
+            // picture has a surface. A display created earlier, off this screen, was replaced above.
+            if (!SteamWindows.isSteam(exe) && !inVr && BuiltInDisplay.view != null && DirectLaunch.showImmediately(false)) {
                 _stage.value = LaunchStage.Opening(title)
             }
         } else if (termux) {

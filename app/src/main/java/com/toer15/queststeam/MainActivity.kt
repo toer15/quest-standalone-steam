@@ -143,7 +143,7 @@ class MainActivity : ComponentActivity() {
         }
         val toLogin = { startActivity(Intent(this, LoginActivity::class.java)); finish() }
         setContent { SteamTheme { LauncherApp(onSignedOut = toLogin, onSteamSignIn = toLogin) } }
-        // The game display comes up in the background. Play then starts only the game you pick.
+        // Get the runtime ready. Play then opens the display for the game you pick.
         window.decorView.postDelayed({
             if (SteamWindows.warmUp(this) && SteamWindows.startWithGames(this)) {
                 GameRunner.warmUpSteam(this)

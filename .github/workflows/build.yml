@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.18.2
+      - name: Publish release v0.18.3
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.18.2
+          tag_name: v0.18.3
           target_commitish: ${{ github.sha }}
-          name: "v0.18.2: Play opens the chosen game in a few seconds"
+          name: "v0.18.3: Show the display of the game you open"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.18.3:** Play still starts only the game you picked, and that game's display is shown again.
+            - The game display is created when you press Play, on the game screen, so the picture has a surface.
+            - Pressing Play starts that game's .exe through Box64/Wine. steam.exe is not launched.
+            - **Open Steam** still opens Steam when you ask for it.
 
             **v0.18.2:** Play opens the game you picked in a few seconds. It does not start the Steam app.
             - When the app opens, it prepares the game display only. steam.exe is not launched.

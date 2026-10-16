@@ -177,11 +177,14 @@ object BuiltInDisplay {
     @Synchronized
     fun start(ctx: Context, rootfs: File, useVortek: Boolean, log: (String) -> Unit): Map<String, String> {
         val ready = startedEnv
-        if (server != null && ready != null && startedVortek == useVortek) {
+        // Only keep a display that is already on screen. One created in the background has no
+        // surface, and reusing it leaves the game with nothing to draw into.
+        val onScreen = view?.isAttachedToWindow == true
+        if (server != null && ready != null && startedVortek == useVortek && onScreen) {
             _gameWindow.value = false
             VortekRendererComponent.lastFrameTime = 0L
             VortekRendererComponent.fps = 0
-            log("Game display already up. Starting the game.")
+            log("Game display already on screen. Starting the game.")
             return ready
         }
         stop()
