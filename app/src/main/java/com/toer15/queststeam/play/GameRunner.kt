@@ -234,6 +234,12 @@ object GameRunner {
 
     /** How often memory pressure closed Steam's browser in this session, and when last. */
     @Volatile private var browserClosed = 0
+
+    /**
+     * Memory pressure closed Steam's browser and Steam hasn't started it again: Steam's window (drawn by the browser) would stay
+     * empty, so opening it restarts Steam, as with a Steam that was started without its browser.
+     */
+    @Volatile private var browserMissing = false
     private var browserClosedAt = 0L
     private var lastRelief = 0L
     private var guardJob: Job? = null
@@ -260,6 +266,7 @@ object GameRunner {
             var noted = MemoryGuard.Level.OK
             var notedAt = 0L
             var criticalSince = 0L
+            var trimmedFor = MemoryGuard.Level.OK
             var trimmedAt = 0L
             while (isRunning) {
                 val snap = withContext(Dispatchers.IO) { memorySnapshot() } ?: break
@@ -279,7 +286,10 @@ object GameRunner {
                     noted = level
                     notedAt = now
                 }
-                if (level != MemoryGuard.Level.OK && now - trimmedAt >= 10_000) {
+                // The pictures go once when it gets tight and once more when it gets critical (then again every 30 seconds): they load back from the disk cache.
+                if (level == MemoryGuard.Level.OK) trimmedFor = MemoryGuard.Level.OK
+                else if (level > trimmedFor || (level == MemoryGuard.Level.CRITICAL && now - trimmedAt >= 30_000)) {
+                    trimmedFor = level
                     trimmedAt = now
                     appCtx?.let { trimAppMemory(it, collect = false) }
                 }
@@ -320,8 +330,10 @@ object GameRunner {
                 scope.launch {
                     delay(12_000)
                     val back = withContext(Dispatchers.IO) { l.processesOf(SteamWindows.WEB_HELPER) }
-                    if (isRunning) appendLog(
-                        if (back.isEmpty()) "Steam's browser stayed closed."
+                    if (!isRunning) return@launch
+                    browserMissing = back.isEmpty()
+                    appendLog(
+                        if (back.isEmpty()) "Steam's browser stayed closed (Steam's window restarts Steam when you open it)."
                         else "Steam started its browser again (${back.size} process(es), ${back.sumOf { it.rssKb } / 1024} MB); it waits paused.",
                     )
                 }
@@ -422,9 +434,14 @@ object GameRunner {
     private fun watchPriority() {
         if (priorityJob?.isActive == true) return
         priorityJob = scope.launch {
+            var policyAt = 0L
             while (isRunning) {
                 applyPriorities()
-                withContext(Dispatchers.IO) { applySteamUiPolicy() }
+                // (Steam's browser is paused or resumed every 4 seconds, as before; the priorities are looked at more often.)
+                if (System.currentTimeMillis() - policyAt >= 3_500) {
+                    policyAt = System.currentTimeMillis()
+                    withContext(Dispatchers.IO) { applySteamUiPolicy() }
+                }
                 delay(if (System.currentTimeMillis() - maxOf(steamStartedAt, gameStartedAt) < 40_000) 1000 else 4000)
             }
             lastNice = null
@@ -468,6 +485,7 @@ object GameRunner {
         val l = launcher ?: return
         if (!steamRunning()) return
         if (!steamSignedIn) checkSteamSignIn(l)
+        if (browserMissing && l.isRunning(SteamWindows.WEB_HELPER)) browserMissing = false
         // Steam is starting a game itself (see watchApplaunch): its windows stay off the game screen, and its
         // browser keeps running until the game is up (Steam may need it to start the game).
         if (applaunchGame != null && sessionGame == null) { gameFillsDisplay(true); return }
@@ -598,6 +616,7 @@ object GameRunner {
         steamStartedAt = System.currentTimeMillis()
         minFreeMb = Long.MAX_VALUE
         browserClosed = 0
+        browserMissing = false
         var steamLines = 0
         val onSteamLine: (String) -> Unit = { line ->
             val keep = (line.contains("err:") || line.startsWith("wine:") || line.contains("Box64", ignoreCase = true)) && !line.contains("fixme")
@@ -927,7 +946,7 @@ object GameRunner {
     fun openSteam(ctx: Context) {
         val l = launcher ?: GameLauncher(ctx.applicationContext).also { launcher = it }
         if (!SteamWindows.isInstalled(l)) { installSteam(ctx); return }
-        if (steamRunning() && sessionGame == null && !steamCoreOnly) { showSteam(ctx); return }
+        if (steamRunning() && sessionGame == null && !steamCoreOnly && !browserMissing) { showSteam(ctx); return }
         if (job?.isActive == true) return
         val app = ctx.applicationContext
         if (SteamClientDownload.isBootstrapped(SteamWindows.dir(l))) {
@@ -1045,8 +1064,8 @@ object GameRunner {
                     return@launch
                 }
                 if (openingSteam && steamRunning()) {
-                    if (!steamCoreOnly) { showSteam(app); return@launch }
-                    // Steam's window is drawn by its browser, which this Steam doesn't run: Steam restarts with it.
+                    if (!steamCoreOnly && !browserMissing) { showSteam(app); return@launch }
+                    // Steam's window is drawn by its browser, which this Steam doesn't run (started without it, or closed for memory): Steam restarts with it.
                     if (sessionGame != null) {
                         appendLog("Steam's window needs Steam's browser: close the game first, then open Steam.")
                         _stage.value = LaunchStage.Idle
@@ -1080,6 +1099,7 @@ object GameRunner {
         gameShownAt = 0L
         minFreeMb = Long.MAX_VALUE
         browserClosed = 0
+        browserMissing = false
         markBackgroundErrors()
         val steamExe = SteamWindows.isSteam(requested)
         trimAppMemory(ctx, collect = steamExe)
@@ -1910,6 +1930,7 @@ object GameRunner {
         steamCoreOnly = false
         coreTrial = false
         steamRestarting = false
+        browserMissing = false
         applaunchGame = null
         paused = null
         readyJob?.cancel()
@@ -2125,6 +2146,7 @@ object GameRunner {
         steamCoreOnly = false
         coreTrial = false
         steamRestarting = false
+        browserMissing = false
         ControllerRelay.stop(ctx)
         PlayingService.stop(ctx)
         _stage.value = LaunchStage.Idle
