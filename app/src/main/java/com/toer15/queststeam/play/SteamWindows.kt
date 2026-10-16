@@ -46,11 +46,11 @@ object SteamWindows {
     fun args(ctx: Context): List<String> = STEAM_ARGS + if (light(ctx)) LIGHT_ARGS else emptyList()
 
     /**
-     * Steam's core without its browser ("-no-browser": none of the steamwebhelper.exe processes). The
-     * browser only draws Steam's windows, yet it is most of Steam's start time (about 60 of the 78 seconds
-     * of processor time in a start) and memory (up to 3 GB); a game needs Steam's core (steam.exe:
-     * sign-in, Steamworks). It's not known whether the current Steam signs in without the browser, so the
-     * first start tests it and goes back to the browser if Steam doesn't sign in (see GameRunner).
+     * Steam's core without its browser ("-no-browser": none of the steamwebhelper.exe processes), an experiment
+     * from v0.17.0 that is off now. The v0.19.2 log showed the current Steam ignores the option (its
+     * steamwebhelper.exe processes started anyway) and, without the browser options of [STEAM_ARGS], took longer
+     * than 70 seconds to sign in, which a first Play then waited for before Steam started again the usual way.
+     * It only runs when the preference is "on"; the app has no setting for it any more.
      */
     private val CORE_ARGS = listOf("-no-browser", "-noshaders", "-nooverlay", "-nocrashmonitor", "-no-shared-textures", "-nofriendsui", "-nochatui")
     fun coreArgs(): List<String> = CORE_ARGS
@@ -58,12 +58,12 @@ object SteamWindows {
     private const val PREF_CORE = "steam_core"
     private const val PREF_CORE_WORKS = "steam_core_works"
 
-    /** "Steam without its browser" may be used (Runtime settings → Steam for Windows; on by default). */
-    fun coreAllowed(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getString(PREF_CORE, "auto") != "off"
+    /** "Steam without its browser" may be tried: off unless the preference was set to "on" by hand. */
+    fun coreAllowed(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getString(PREF_CORE, "off") == "on"
 
-    /** Turning it back on tests it again. */
+    /** Turning it on tests it again. */
     fun setCoreAllowed(ctx: Context, on: Boolean) =
-        ctx.getSharedPreferences("runtime", 0).edit().putString(PREF_CORE, if (on) "auto" else "off").remove(PREF_CORE_WORKS).apply()
+        ctx.getSharedPreferences("runtime", 0).edit().putString(PREF_CORE, if (on) "on" else "off").remove(PREF_CORE_WORKS).apply()
 
     /** null = not tested yet, true = Steam signed in without its browser on this headset, false = it didn't. */
     fun coreWorks(ctx: Context): Boolean? =

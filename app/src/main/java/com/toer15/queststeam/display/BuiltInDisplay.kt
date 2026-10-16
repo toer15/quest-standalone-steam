@@ -13,6 +13,7 @@ import com.winlator.winhandler.WinHandler
 import com.winlator.xconnector.UnixSocketConfig
 import com.winlator.xconnector.XConnectorEpoll
 import com.winlator.xenvironment.components.VortekRendererComponent
+import com.winlator.xserver.Atom
 import com.winlator.xserver.SHMSegmentManager
 import com.winlator.xserver.ScreenInfo
 import com.winlator.xserver.Window
@@ -20,6 +21,7 @@ import com.winlator.xserver.WindowManager
 import com.winlator.xserver.XClientConnectionHandler
 import com.winlator.xserver.XClientRequestHandler
 import com.winlator.xserver.XServer
+import com.winlator.xserver.events.RawEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
@@ -161,6 +163,33 @@ object BuiltInDisplay {
             _gameWindow.value = true
             log("Window is open (${w.className}, ${w.width}x${w.height}).")
         }
+    }
+
+    /**
+     * Asks the windows of the program with window class [windowClass] ("repo.exe") to close, the way a window
+     * manager's close button does (a WM_DELETE_WINDOW message): Windows gets WM_CLOSE, the game quits and saves
+     * its settings, and the process ends cleanly, which is when Box64 saves what it translated for the next
+     * start (a killed process saves nothing). Returns how many windows were asked; 0 = none found.
+     */
+    fun requestClose(windowClass: String): Int {
+        val xs = server ?: return 0
+        val protocols = Atom.getId("WM_PROTOCOLS")
+        val delete = Atom.getId("WM_DELETE_WINDOW")
+        if (protocols <= 0 || delete <= 0) return 0 // no Wine program has asked for them yet
+        val targets = mutableListOf<Window>()
+        fun walk(w: Window, depth: Int) {
+            for (c in w.children) {
+                if (c.originClient != null && c.isApplicationWindow && c.className.contains(windowClass, ignoreCase = true)) targets += c
+                if (depth < 3) walk(c, depth + 1)
+            }
+        }
+        runCatching { xs.lock(XServer.Lockable.WINDOW_MANAGER).use { walk(xs.windowManager.rootWindow, 0) } }
+        var asked = 0
+        for (w in targets) {
+            val client = w.originClient ?: continue
+            runCatching { client.sendEvent(RawEvent(XCloseRequest.message(client.sequenceNumber, w.id, protocols, delete))) }.onSuccess { asked++ }
+        }
+        return asked
     }
 
     private val _gameWindow = MutableStateFlow(false)

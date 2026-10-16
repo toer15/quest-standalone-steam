@@ -7,7 +7,9 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.19.2/quest-steam-quest3.apk)
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.19.3/quest-steam-quest3.apk)
+
+**v0.19.3:** the headset keeps answering while a game loads, and a game you close saves what it learned: the Windows programs run at a polite CPU priority (the headset's own threads and the app's display go first), the app watches the headset's memory and gives some back before Android has to close the app, **Close game** quits the game the way its window's ✕ does so Box64 can save its translation cache for the next start, and the "Steam without its browser" test that cost a first Play about 75 seconds is gone. Release: https://github.com/toer15/quest-standalone-steam/releases/tag/v0.19.3
 
 **v0.19.2:** fixes the black screen and the crash in the v0.19.0 / v0.19.1 logs: with no Steam running, Steam starts first in the background and the app starts the game next to it the moment it has signed in (the way that worked before v0.18.6), the game screen shows what it is waiting for instead of staying black, and a game that crashes at start is reported within seconds. Release: https://github.com/toer15/quest-standalone-steam/releases/tag/v0.19.2
 

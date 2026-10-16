@@ -79,6 +79,7 @@ object GameRunner {
      */
     fun initLog(ctx: Context) {
         appCtx = ctx.applicationContext
+        watchThermal(ctx.applicationContext)
         LogFile.start(ctx)?.let { previous ->
             _log.value = previous
             LogFile.append(previous.trimEnd())
@@ -172,23 +173,170 @@ object GameRunner {
         if (collect) System.gc()
     }
 
-    /** Memory the system could give out right now, in MB. */
-    private fun freeMemoryMb(): Long {
-        val am = appCtx?.getSystemService(android.app.ActivityManager::class.java) ?: return Long.MAX_VALUE
-        return android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.availMem / 1_048_576
+    /** What Android says about memory (MB): [availMb] it could give out now, [thresholdMb] below which it calls memory low, [low] it does. */
+    private data class MemorySnapshot(val availMb: Long, val totalMb: Long, val thresholdMb: Long, val low: Boolean)
+
+    private fun memorySnapshot(): MemorySnapshot? {
+        val am = appCtx?.getSystemService(android.app.ActivityManager::class.java) ?: return null
+        val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        return MemorySnapshot(mi.availMem / 1_048_576, mi.totalMem / 1_048_576, mi.threshold / 1_048_576, mi.lowMemory)
     }
 
-    /** Free memory, and what the Windows programs use (largest first), for the log. */
+    /** Memory the system could give out right now, in MB. */
+    private fun freeMemoryMb(): Long = memorySnapshot()?.availMb ?: Long.MAX_VALUE
+
+    /**
+     * Free memory (and where Android calls it low), what the app itself and the Windows programs use (largest first), and the
+     * headset's temperature when it isn't normal, for the log.
+     */
     private fun memoryNote(): String {
-        val ctx = appCtx ?: return ""
-        val am = ctx.getSystemService(android.app.ActivityManager::class.java) ?: return ""
-        val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        val snap = memorySnapshot() ?: return ""
         val procs = launcher?.running().orEmpty()
         val top = procs.groupBy { it.name }.map { (n, l) -> Triple(n, l.size, l.sumOf { it.rssKb } / 1024) }
             .sortedByDescending { it.third }.take(4)
-        return "memory: ${mi.availMem / 1_048_576} MB free of ${mi.totalMem / 1_048_576} MB" + (if (mi.lowMemory) " (LOW)" else "") +
-            "; Windows programs use ${procs.sumOf { it.rssKb } / 1024} MB (" +
-            top.joinToString { (n, c, mb) -> "$n${if (c > 1) " ×$c" else ""} $mb MB" } + ")"
+        return "memory: ${snap.availMb} MB free of ${snap.totalMb} MB" + (if (snap.low) " (LOW)" else "") +
+            " (Android calls it low below ${snap.thresholdMb} MB" + (if (minFreeMb != Long.MAX_VALUE) ", the lowest since this start was $minFreeMb MB" else "") + ")" +
+            "; the app itself ${android.os.Debug.getPss() / 1024} MB; Windows programs use ${procs.sumOf { it.rssKb } / 1024} MB (" +
+            top.joinToString { (n, c, mb) -> "$n${if (c > 1) " ×$c" else ""} $mb MB" } + ")" +
+            (if (thermalStatus > 0) "; headset temperature: ${thermalName(thermalStatus)}" else "")
+    }
+
+    /** The headset's temperature (PowerManager's thermal status: 0 normal … 3 severe … 6 shutdown), written to the log when it changes. */
+    @Volatile private var thermalStatus = 0
+    private var thermalWatched = false
+
+    private fun thermalName(status: Int) = when (status) {
+        0 -> "normal"; 1 -> "light"; 2 -> "moderate"; 3 -> "severe"; 4 -> "critical"; 5 -> "emergency"; else -> "shutdown"
+    }
+
+    private fun watchThermal(ctx: Context) {
+        if (thermalWatched) return
+        val pm = ctx.getSystemService(android.os.PowerManager::class.java) ?: return
+        thermalWatched = true
+        runCatching {
+            thermalStatus = pm.currentThermalStatus
+            pm.addThermalStatusListener { status ->
+                val was = thermalStatus
+                thermalStatus = status
+                if (isRunning && status != was) {
+                    appendLog("Headset temperature: ${thermalName(status)}" + if (status >= 3) " (the headset slows itself down to cool off; a break helps)." else ".")
+                }
+            }
+        }.onFailure { thermalWatched = false }
+    }
+
+    /** The system's last request that the running app give memory back (a ComponentCallbacks2 trim level), and when it came. */
+    @Volatile private var trimLevel = 0
+    @Volatile private var trimAt = 0L
+
+    /** The lowest free memory (MB) since Steam or a game started; Long.MAX_VALUE = not measured yet. */
+    @Volatile private var minFreeMb = Long.MAX_VALUE
+
+    /** How often memory pressure closed Steam's browser in this session, and when last. */
+    @Volatile private var browserClosed = 0
+    private var browserClosedAt = 0L
+    private var lastRelief = 0L
+    private var guardJob: Job? = null
+
+    /** The system asks the app to give memory back (called by the Application): the pictures the app keeps go first. */
+    fun onTrimMemory(ctx: Context, level: Int) {
+        if (level >= MemoryGuard.TRIM_RUNNING_LOW) trimAppMemory(ctx.applicationContext, collect = false)
+        if (level == MemoryGuard.TRIM_RUNNING_LOW || level == MemoryGuard.TRIM_RUNNING_CRITICAL) {
+            trimLevel = level
+            trimAt = System.currentTimeMillis()
+            if (isRunning) appendLog("Android asks the app to give memory back (level $level, ${freeMemoryMb()} MB free).")
+        }
+    }
+
+    /**
+     * Watches the headset's memory while Windows programs run (see [MemoryGuard]). Steam's browser alone takes 2 to 4 GB while Steam
+     * signs in, and the game comes on top; when Android runs out of memory it ends the app, with Steam and the game, and the picture
+     * stops and flickers. Low: the pictures the app keeps are dropped. Critical: what isn't needed right now is closed before Android
+     * has to close everything (see [relieveMemory]).
+     */
+    private fun watchMemoryPressure() {
+        if (guardJob?.isActive == true) return
+        guardJob = scope.launch {
+            var noted = MemoryGuard.Level.OK
+            var notedAt = 0L
+            var criticalSince = 0L
+            var trimmedAt = 0L
+            while (isRunning) {
+                val snap = withContext(Dispatchers.IO) { memorySnapshot() } ?: break
+                val now = System.currentTimeMillis()
+                minFreeMb = minOf(minFreeMb, snap.availMb)
+                val trim = if (now - trimAt < MEMORY_TRIM_S * 1000L) trimLevel else 0
+                val level = MemoryGuard.level(snap.availMb, snap.thresholdMb, snap.low, trim)
+                // Said when it changes (a level that flips back and forth is said every 15 seconds at most; critical always).
+                if (level != noted && (level == MemoryGuard.Level.CRITICAL || now - notedAt >= 15_000)) {
+                    appendLog(
+                        when (level) {
+                            MemoryGuard.Level.OK -> "Memory is fine again: ${snap.availMb} MB free."
+                            MemoryGuard.Level.LOW -> "Memory is getting low: ${snap.availMb} MB free (Android calls it low below ${snap.thresholdMb} MB). The app gives back what it can."
+                            MemoryGuard.Level.CRITICAL -> "Memory is almost out: ${snap.availMb} MB free (Android calls it low below ${snap.thresholdMb} MB)."
+                        },
+                    )
+                    noted = level
+                    notedAt = now
+                }
+                if (level != MemoryGuard.Level.OK && now - trimmedAt >= 10_000) {
+                    trimmedAt = now
+                    appCtx?.let { trimAppMemory(it, collect = false) }
+                }
+                if (level == MemoryGuard.Level.CRITICAL) {
+                    if (criticalSince == 0L) criticalSince = now
+                    if (now - criticalSince >= 2_000) relieveMemory(snap)
+                } else criticalSince = 0L
+                delay(MemoryGuard.nextCheckMs(level, snap.availMb, snap.thresholdMb))
+            }
+        }
+    }
+
+    /**
+     * Memory is almost out: closes what isn't needed right now, one step each [RELIEF_EVERY_S] seconds.
+     * 1. Steam's browser, once Steam has signed in and while Steam's window isn't on screen: it only draws Steam's windows (games don't
+     *    need it), it is most of Steam's memory, and Steam starts it again when its window opens.
+     * 2. A game waiting in the background (getting ready, or left with Quick Resume) while nothing is on screen: Play starts it as usual.
+     */
+    private suspend fun relieveMemory(snap: MemorySnapshot) {
+        val ctx = appCtx ?: return
+        val l = launcher ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastRelief < RELIEF_EVERY_S * 1000L) return
+        if (steamSignedIn && !steamOnScreen() && (sessionGame != null || SteamWindows.light(ctx)) &&
+            browserClosed < BROWSER_CLOSES_MAX && now - browserClosedAt >= BROWSER_CLOSE_GAP_S * 1000L
+        ) {
+            val browser = withContext(Dispatchers.IO) { l.processesOf(SteamWindows.WEB_HELPER) }
+            if (browser.isNotEmpty()) {
+                withContext(Dispatchers.IO) { l.kill(SteamWindows.WEB_HELPER) }
+                browserClosed++
+                browserClosedAt = now
+                lastRelief = now
+                appendLog(
+                    "Memory is almost out (${snap.availMb} MB free): closed Steam's browser (${browser.sumOf { it.rssKb } / 1024} MB) so Android doesn't have to close the app. " +
+                        "Steam and the game keep running; Steam's window brings the browser back.",
+                )
+                // Does Steam start its browser again by itself? (The log says, so it's known whether closing it is worth it.)
+                scope.launch {
+                    delay(12_000)
+                    val back = withContext(Dispatchers.IO) { l.processesOf(SteamWindows.WEB_HELPER) }
+                    if (isRunning) appendLog(
+                        if (back.isEmpty()) "Steam's browser stayed closed."
+                        else "Steam started its browser again (${back.size} process(es), ${back.sumOf { it.rssKb } / 1024} MB); it waits paused.",
+                    )
+                }
+                return
+            }
+        }
+        if (_stage.value is LaunchStage.Idle) {
+            val waiting = paused?.title ?: readying?.title
+            if (waiting != null) {
+                lastRelief = now
+                appendLog("Memory is almost out (${snap.availMb} MB free): closing $waiting, which waited in the background. Play starts it as usual.")
+                closeReadying()
+                closePaused(ctx)
+            }
+        }
     }
 
     /** Background-thread errors the app caught since the game started (e.g. in the game display's renderer). */
@@ -239,48 +387,49 @@ object GameRunner {
     private fun nextDesktop(prefix: String) = prefix + (++desktops)
 
     /**
-     * CPU priorities while Steam's session runs: with a game starting or on screen, Steam's programs
-     * get the lowest priority (and the small CPU cores) so the game gets the rest; with you in the
-     * app, everything Wine runs does, so the app stays smooth; with Steam's own window on screen,
-     * all normal. Re-applied every few seconds: Steam starts new helper processes now and then.
+     * CPU priorities of the Windows programs (see [ProcessPriority]). Wine and Box64 start dozens of threads that use
+     * every core for minutes while Steam signs in and a game loads; at the normal priority they take the processor from
+     * the headset's own threads and this app's display, and the picture froze and the headset reset. They run at a
+     * polite priority: every free core at full speed, but anything else that wants the processor goes first. With a game
+     * up, Steam's programs get the lowest priority (and the small cores); with you in the app and Steam signed in,
+     * everything Wine runs does, so the app stays smooth. Re-applied: Steam and Wine start new processes now and then
+     * (every second for the first 40 seconds of a start, when most of them start, then every 4 seconds).
      */
     private var priorityJob: Job? = null
-    @Volatile private var lowPriority = false
+    private var lastNice: ProcessPriority.Nice? = null
+    private var lastNiceThreads = 0
 
-    private enum class Priority { Normal, SteamLow, AllLow }
+    private fun priorityNow(gameComing: Boolean = false): ProcessPriority.Nice {
+        // A game's screen is up before the game runs (see DirectLaunch): until it does (Steam still signing in, or starting the game itself) it is "busy".
+        val busy = _stage.value.let { it is LaunchStage.Running || it is LaunchStage.Working || it is LaunchStage.Opening }
+        return ProcessPriority.pick(gameUp = gameComing || sessionGame != null || gameExe != null, busy = busy, steamSignedIn = steamSignedIn)
+    }
 
-    private fun priorityNow(): Priority = when (_stage.value) {
-        // A game's screen is up before the game runs (see DirectLaunch): until it does (Steam still signing in, or
-        // starting the game itself), Steam gets full speed, as the game waits for it.
-        is LaunchStage.Running, is LaunchStage.Working, is LaunchStage.Opening -> if (sessionGame != null) Priority.SteamLow else Priority.Normal
-        // In the app: a game getting ready in the background (see getLastGameReady) or waiting paused
-        // keeps its priority, Steam's the lowest; a Steam that's still signing in gets full speed (it's
-        // ready sooner; its browser waits paused afterwards); otherwise everything the lowest priority.
-        else -> if (sessionGame != null) Priority.SteamLow else if (!steamSignedIn) Priority.Normal else Priority.AllLow
+    /**
+     * Applies the priorities for what's going on now; says so in the log when they change (also when the first programs
+     * show up after none did, and with 0 threads when Android doesn't let the app change them).
+     */
+    private suspend fun applyPriorities(gameComing: Boolean = false) {
+        val nice = priorityNow(gameComing)
+        val threads = withContext(Dispatchers.IO) { launcher?.setPriorities(nice.steam, nice.others) } ?: return
+        if (nice != lastNice || (threads > 0 && lastNiceThreads == 0)) {
+            appendLog("CPU priority: Steam's programs ${nice.steam}, the other Windows programs ${nice.others} ($threads threads; 0 = normal, higher = gives way to the headset first).")
+        }
+        lastNice = nice
+        lastNiceThreads = threads
     }
 
     private fun watchPriority() {
         if (priorityJob?.isActive == true) return
         priorityJob = scope.launch {
-            var last = Priority.Normal
-            while (steamRunning()) {
-                val now = priorityNow()
-                if (now != Priority.Normal || last != Priority.Normal) {
-                    withContext(Dispatchers.IO) { launcher?.setPriorities(steamLow = now != Priority.Normal, othersLow = now == Priority.AllLow) }
-                }
-                last = now
-                lowPriority = now != Priority.Normal
+            while (isRunning) {
+                applyPriorities()
                 withContext(Dispatchers.IO) { applySteamUiPolicy() }
-                delay(4000)
+                delay(if (System.currentTimeMillis() - maxOf(steamStartedAt, gameStartedAt) < 40_000) 1000 else 4000)
             }
-            lowPriority = false
+            lastNice = null
+            lastNiceThreads = 0
         }
-    }
-
-    /** Before a game or Steam's window comes on screen: their priorities now, not in a few seconds. */
-    private suspend fun foreground(steamLow: Boolean) {
-        if (!lowPriority && !steamLow) return
-        withContext(Dispatchers.IO) { launcher?.setPriorities(steamLow = steamLow, othersLow = false) }
     }
 
     /** Steam's session is up: Steam's desktop process (the session's main process) is alive. */
@@ -397,6 +546,14 @@ object GameRunner {
                     "Steam is signed in (${took}s after it started${if (steamCoreOnly) ", without its browser" else ""})." +
                         if (used.isNotEmpty()) " Processor time so far: $used." else ""
                 )
+                // What Steam's browser really runs with (Steam passes on only some of its options): the log showed 5 to 7 of its
+                // processes with 2 to 4 GB although the single-process option is given.
+                runCatching {
+                    val browser = l.processesOf(SteamWindows.WEB_HELPER)
+                    if (browser.isNotEmpty()) {
+                        appendLog("Steam's browser: ${browser.size} process(es), ${browser.sumOf { it.rssKb } / 1024} MB; command line: " + browser.map { it.cmd }.maxByOrNull { it.length }.orEmpty().take(500))
+                    }
+                }
                 SteamWindows.connectionLines(l, steamLogOffset).takeIf { it.isNotEmpty() }?.let { lines ->
                     appendLog("[steam connection log]")
                     lines.forEach { appendLog("  $it") }
@@ -439,6 +596,8 @@ object GameRunner {
         steamSignedIn = false
         steamConnectNoted = false
         steamStartedAt = System.currentTimeMillis()
+        minFreeMb = Long.MAX_VALUE
+        browserClosed = 0
         var steamLines = 0
         val onSteamLine: (String) -> Unit = { line ->
             val keep = (line.contains("err:") || line.startsWith("wine:") || line.contains("Box64", ignoreCase = true)) && !line.contains("fixme")
@@ -456,6 +615,7 @@ object GameRunner {
         steamCoreOnly = core
         steamEnv = env.toMap()
         watchPriority()
+        watchMemoryPressure()
         appendLog("Steam for Windows is starting in the background${if (core) " without its browser" else ""}…")
         return true
     }
@@ -626,13 +786,18 @@ object GameRunner {
         if (awaitSteamSignIn(l)) getLastGameReady(ctx, l)
     }
 
-    /** How big the caches that make later starts faster are, for the log (they should grow, then stay). */
+    /**
+     * How big the caches that make later starts faster are, for the log (they should grow, then stay). Box64 writes its
+     * translations only when a Windows program ends cleanly, so when the newest file was written says whether that happens.
+     */
     private fun cacheNote(ctx: Context, l: GameLauncher): String {
         fun size(dir: File) = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-        val box = size(File(l.rootfs, "home/xuser/.cache/box64")) / 1_048_576
+        val boxFiles = File(l.rootfs, "home/xuser/.cache/box64").walkTopDown().filter { it.isFile }.toList()
+        val box = boxFiles.sumOf { it.length() } / 1_048_576
+        val newest = boxFiles.maxOfOrNull { it.lastModified() }?.let { "${(System.currentTimeMillis() - it) / 60_000} min ago" } ?: "none yet"
         val vortek = size(File(ctx.cacheDir, "vortek")) / 1_048_576
         val dxvk = size(File(l.rootfs, "home/xuser/.cache/dxvk")) / 1024
-        return "Caches for faster starts: Box64 translations $box MB, Vortek textures $vortek MB, DXVK pipelines $dxvk KB."
+        return "Caches for faster starts: Box64 translations $box MB in ${boxFiles.size} files (newest written $newest), Vortek textures $vortek MB, DXVK pipelines $dxvk KB."
     }
 
     /** The start-time goal: logs (and shows on the game screen) how long Play took to put [title] on screen. */
@@ -823,6 +988,8 @@ object GameRunner {
                 if (coreTrial) appendLog("Play was pressed while Steam is being tested without its browser: the test goes on, and $title starts when Steam has signed in.")
                 // A game getting ready in the background stops waiting: it's shown if it's this one, else closed.
                 readyJob?.cancelAndJoin()
+                // A game that is still closing after "Close game" is gone (or ended) before another one starts.
+                finishClosing()
                 val vrGame = mode == RuntimeActivity.MODE_VR && VrBridge.isVrGame(gameRoot(l, exe))
                 paused?.let { p ->
                     val alive = withContext(Dispatchers.IO) { l.isRunning(p.exe) } && (if (p.inSteam) steamRunning() else isRunning)
@@ -911,6 +1078,8 @@ object GameRunner {
         gameTitle = null
         gameStartedAt = System.currentTimeMillis()
         gameShownAt = 0L
+        minFreeMb = Long.MAX_VALUE
+        browserClosed = 0
         markBackgroundErrors()
         val steamExe = SteamWindows.isSteam(requested)
         trimAppMemory(ctx, collect = steamExe)
@@ -1075,7 +1244,6 @@ object GameRunner {
         if (builtIn && SteamWindows.isSteam(exe)) {
             steamEnv = env - SteamWindows.steamOnlyEnv(ctx, l).keys + GameSpeed.env(ctx, l)
             steamStartedAt = System.currentTimeMillis()
-            watchPriority()
         } else if (adopt) {
             // Steam's own Play command started Steam: it's this session's Steam from now on (see steamEnv), so the next
             // game starts in it without a Steam start. The game is watched once Steam has started it (watchApplaunch).
@@ -1083,15 +1251,17 @@ object GameRunner {
             steamEnv = env.toMap()
             steamStartedAt = System.currentTimeMillis()
             steamCoreOnly = false
-            watchPriority()
         } else if (builtIn && !inVr) {
             gameExe = exe.name
             gameTitle = title
             if (besideClient) {
                 sessionGame = exe.name
-                foreground(steamLow = true)
+                applyPriorities(gameComing = true)
             }
         }
+        // Whatever runs now runs politely and under a memory watch: a game on its own (without Steam's session) too.
+        watchPriority()
+        watchMemoryPressure()
         PlayingService.start(ctx, title)
 
         if (inVr) {
@@ -1293,7 +1463,7 @@ object GameRunner {
         markBackgroundErrors()
         LogFile.setRunning(true)
         appendLog(withContext(Dispatchers.IO) { memoryNote() })
-        foreground(steamLow = true)
+        applyPriorities(gameComing = true)
         BuiltInDisplay.expectWindow(exe.name.lowercase(), null)
         withContext(Dispatchers.IO) { applySteamUiPolicy() }
         val argv = GameLauncher.splitArgs(args)
@@ -1394,7 +1564,7 @@ object GameRunner {
         scope.launch {
             closeReadying()
             closePaused(ctx)
-            foreground(steamLow = false)
+            applyPriorities()
             withContext(Dispatchers.IO) {
                 resumeSteamUi()
                 l.launchExe(SteamWindows.exe(l), BuiltInDisplay.DISPLAY, env, listOf("steam://open/main"), desktop = BuiltInDisplay.SCREEN, track = false, desktopName = nextDesktop("steam")) { }
@@ -1461,7 +1631,7 @@ object GameRunner {
         paused = null
         ALSAClient.setMuted(false)
         LogFile.setRunning(true)
-        if (p.inSteam) { sessionGame = p.exe; foreground(steamLow = true) }
+        if (p.inSteam) { sessionGame = p.exe; applyPriorities(gameComing = true) }
         gameExe = p.exe
         gameTitle = p.title
         BuiltInDisplay.expectWindow(p.exe.lowercase(), null)
@@ -1619,7 +1789,7 @@ object GameRunner {
         ALSAClient.setMuted(false)
         LogFile.setRunning(true)
         appendLog("${r.title} has been getting ready in the background for ${(System.currentTimeMillis() - r.startedAt) / 1000}s: it's on screen now.")
-        foreground(steamLow = true)
+        applyPriorities(gameComing = true)
         gameFillsDisplay(true)
         PlayingService.start(ctx, r.title)
         _stage.value = LaunchStage.Running(r.title, vr = false)
@@ -1639,6 +1809,47 @@ object GameRunner {
         if (sessionGame == r.exe) sessionGame = null
         gameExe = null
         gameTitle = null
+    }
+
+    /** The game that is closing in the background after "Close game" ([closeGameInBackground]): its exe name, and the job that watches it. */
+    private var closingName: String? = null
+    private var closingJob: Job? = null
+
+    /**
+     * "Close game": the game [name] first gets the request the ✕ of its window sends, so it quits the way it does on a PC and its
+     * process ends cleanly. That matters for the next start: Box64 writes what it translated for a program to storage (its
+     * "DynaCache") only when the program ends cleanly, never when it is killed, and the next start then skips most of that work.
+     * A game with no window to ask, or still there [CLOSE_GRACE_S] seconds later, is ended as before. You're back in the app at
+     * once; a Play meanwhile waits for it at most a moment ([finishClosing]).
+     */
+    private fun closeGameInBackground(l: GameLauncher, name: String) {
+        closingName = name
+        closingJob = scope.launch {
+            val t0 = System.currentTimeMillis()
+            val asked = withContext(Dispatchers.IO) { BuiltInDisplay.requestClose(name.lowercase()) }
+            if (asked == 0) {
+                appendLog("Closed $name (${withContext(Dispatchers.IO) { l.kill(name) }} process(es); no window to ask to close). Steam keeps running in the background.")
+                return@launch
+            }
+            while (System.currentTimeMillis() - t0 < CLOSE_GRACE_S * 1000L && withContext(Dispatchers.IO) { l.isRunning(name) }) delay(250)
+            if (withContext(Dispatchers.IO) { l.isRunning(name) }) {
+                appendLog("$name didn't quit within ${CLOSE_GRACE_S}s: ended it (${withContext(Dispatchers.IO) { l.kill(name) }} process(es)). Steam keeps running in the background.")
+            } else {
+                appendLog("Closed $name in ${"%.1f".format(java.util.Locale.US, (System.currentTimeMillis() - t0) / 1000.0)}s, the way its window's ✕ does. Steam keeps running in the background.")
+                // Box64 has written its translations by now (see cacheNote): this line shows whether the cache grew.
+                appCtx?.let { app -> appendLog(withContext(Dispatchers.IO) { runCatching { cacheNote(app, l) }.getOrDefault("") }) }
+            }
+        }
+    }
+
+    /** Before another game starts: a game that is still closing gets a moment more, then is ended. */
+    private suspend fun finishClosing() {
+        val job = closingJob?.takeIf { it.isActive } ?: return
+        if (kotlinx.coroutines.withTimeoutOrNull(CLOSE_BEFORE_PLAY_MS) { job.join() } != null) return
+        job.cancel()
+        val name = closingName ?: return
+        launcher?.let { l -> withContext(Dispatchers.IO) { l.kill(name) } }
+        appendLog("$name was still closing: ended it so the next game can start.")
     }
 
     /**
@@ -1666,12 +1877,14 @@ object GameRunner {
         BuiltInDisplay.waitingText = null
         when {
             game != null && steamRunning() -> {
+                // A game that has been on screen is asked to quit first (see closeGameInBackground); one that hasn't drawn yet is ended now.
+                val played = gameShownAt > 0L
                 sessionGame = null
                 gameExe = null
                 gameTitle = null
                 LogFile.setRunning(false)
-                val n = l?.kill(game) ?: 0
-                appendLog("Closed $game ($n process(es)). Steam keeps running in the background.")
+                if (l != null && played) closeGameInBackground(l, game)
+                else appendLog("Closed $game (${l?.kill(game) ?: 0} process(es)). Steam keeps running in the background.")
                 BuiltInDisplay.expectWindow(null, SteamWindows.UI_WINDOW_CLASS)
                 PlayingService.start(ctx, "Steam")
                 _stage.value = LaunchStage.Idle
@@ -1700,6 +1913,7 @@ object GameRunner {
         applaunchGame = null
         paused = null
         readyJob?.cancel()
+        closingJob?.cancel()
         readying = null
         ALSAClient.setMuted(false)
         gameExe = null
@@ -1888,6 +2102,7 @@ object GameRunner {
         warmJob?.cancel()
         displayJob?.cancel()
         readyJob?.cancel()
+        closingJob?.cancel()
         playGen++
         applaunchGame = null
         BuiltInDisplay.waitingText = null
@@ -2145,7 +2360,7 @@ object GameRunner {
         gameTitle = title
         appendLog(note)
         LastGame.set(ctx, exe, args, title, appId)
-        foreground(steamLow = true)
+        applyPriorities(gameComing = true)
         watchMemory(title)
         watchGameExit(ctx, l, exe.name, title)
     }
@@ -2182,6 +2397,17 @@ object GameRunner {
     private const val APPLAUNCH_GIVE_UP_S = 300L
     /** A Steam that hasn't signed in by then won't by itself (its sign-in needs its window). */
     private const val STEAM_SIGN_IN_LIMIT_S = 240
+    /** A system request to give memory back counts as memory pressure for this many seconds (see [watchMemoryPressure]). */
+    private const val MEMORY_TRIM_S = 8
+    /** Memory pressure closes one thing at most every this many seconds ([relieveMemory]). */
+    private const val RELIEF_EVERY_S = 20
+    /** Memory pressure closes Steam's browser at most this many times per Steam session, this many seconds apart. */
+    private const val BROWSER_CLOSES_MAX = 3
+    private const val BROWSER_CLOSE_GAP_S = 60
+    /** "Close game": the game may take this many seconds to quit by itself before it is ended ([closeGameInBackground]). */
+    private const val CLOSE_GRACE_S = 20
+    /** A Play while a game is still closing waits at most this long (ms) for it, then ends it ([finishClosing]). */
+    private const val CLOSE_BEFORE_PLAY_MS = 2_500L
 
     /** The latest lines from the game and the display (not our own waiting notes). */
     private fun logTail(n: Int) = _log.value.trimEnd().lines().filter { it.isNotBlank() && !it.startsWith("[waiting") }.takeLast(n).joinToString("\n")

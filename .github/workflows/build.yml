@@ -91,17 +91,26 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.19.2
+      - name: Publish release v0.19.3
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.19.2
+          tag_name: v0.19.3
           target_commitish: ${{ github.sha }}
-          name: "v0.19.2: the game starts the way that worked, and the screen says what it waits for"
+          name: "v0.19.3: the headset keeps answering while a game loads, and a closed game saves what it learned"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.19.3:** the headset keeps answering while a game loads, a game you close saves what it learned, and the Steam test that cost the first Play 75 seconds is gone.
+            - **What your v0.19.2 log showed.** Steam's browser ran as 5 to 7 processes with 2.5 to 4 GB while Steam signed in (96 seconds), the game started with 1108 MB free and reached its first frame with 655 MB free (the lowest in the log), and the 164 seconds before the game started included a 75 second test of "Steam without its browser" that could not work: current Steam ignores that option, so its browser started anyway. Windows programs used 3 to 4.6 GB of the headset's 7.7 GB; nothing in the log shows what made the app reset, so the next one prints why Android closed it at the start of the next log.
+            - **The Steam-without-its-browser test is gone** (no setting for it any more). A first Play with no Steam running is about 75 seconds shorter than in your log (about 140 instead of 214 seconds, going by its numbers). Steam itself still needs about 96 seconds to sign in on a cold start and the game about 50 more; that part did not get faster. Opening the app first (Steam gets ready in the background) and your last game getting ready still make Play start at once.
+            - **Windows programs run at a polite CPU priority.** Wine and Box64 start dozens of threads that use every core for minutes while Steam signs in and a game loads; at the normal priority they take the processor from the headset's own threads and this app's display. Now they use every free core at full speed but give way to anything else that wants it. While a game runs, Steam's programs get the lowest priority (and the small cores); with you in the app and Steam signed in, everything Wine runs does. The log says "CPU priority: …" with the number of threads it changed (0 means Android did not allow it).
+            - **The app watches the headset's memory.** When it gets tight, the pictures the app keeps are given back. When it is almost out (about 220 MB above the line where Android itself calls memory low), the app closes what is not needed right now before Android has to close everything: Steam's browser once Steam has signed in (it only draws Steam's windows; the log says whether Steam started it again), then a game waiting in the background (Play starts it as usual). It also reacts to Android's own "give memory back" warnings. The log says "Memory is getting low / almost out" with the numbers, and every memory line now has Android's own line, the lowest free memory since the start, the app's own memory and the headset's temperature when it is not normal.
+            - **Close game quits the game the way its window's ✕ does.** Box64 writes what it translated for a program (its translation cache) only when the program ends cleanly (I checked this in Box64's source); a killed game wrote nothing, so every start did all the translating again. DXVK's shader cache may gain from it too (not checked). The game now gets 20 seconds to quit (a Play on another game does not wait more than 2.5 seconds); a game that does not quit, or has no window, is ended as before. The line "Caches for faster starts: Box64 translations N MB in K files (newest written …)" shows whether it worked: the numbers should grow after the first game you close this way, and the next start of that game should load faster. This is a bet from Box64's source and not tested on a headset.
+            - **For the next log:** when Steam has signed in the log lists its browser processes with their command line, and every "memory:" line has the new numbers.
+            - **Not tested:** nothing here could be tried on a headset. Whether the polite priority and the memory watch stop the resets, and how much faster the second start of a game gets, is for your next logs to show.
 
             **v0.19.2:** fixes the black screen and the crash in the v0.19.0 / v0.19.1 logs.
             - **What the logs showed.** Steam took 80 and 86 seconds to sign in. Then Steam's own Play command (`-applaunch`, added in v0.18.6) started R.E.P.O. and it crashed at once, at the same spot in both logs (an access violation, `addr 0x2803fecac`). Nothing was drawn, so the screen stayed black, and the app kept waiting for more than a minute before it admitted the game had closed. In v0.19.1 pressing Play right after opening the app also threw away the Steam that was starting in the background and began again.

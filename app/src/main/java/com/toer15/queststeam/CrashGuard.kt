@@ -30,6 +30,12 @@ class QssApp : Application(), coil.ImageLoaderFactory {
         com.toer15.queststeam.play.GameRunner.initLog(this)
         com.toer15.queststeam.gamepad.Controllers.start(this)
     }
+
+    /** The system runs short of memory: the app gives back what it can before Android closes the app (with Steam and the game). */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        com.toer15.queststeam.play.GameRunner.onTrimMemory(this, level)
+    }
 }
 
 /**
