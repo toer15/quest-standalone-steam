@@ -111,7 +111,7 @@ fun LaunchOverlay(stage: LaunchStage, appId: Int, log: String, onShowGame: () ->
                                 Text("Opening game now…", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
                             }
                             is LaunchStage.Running -> {
-                                Text(if (stage.vr) "Playing in VR" else "Playing", color = SteamColors.GreenBright, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                Text(if (stage.vr) "Playing in VR" else DirectLaunch.RUNNING, color = SteamColors.GreenBright, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                                 Text(
                                     if (stage.vr) "The game is in the headset view." else "The game is in its own window. If you closed it, tap Back to game.",
                                     color = SteamColors.Muted, fontSize = 14.sp, textAlign = TextAlign.Center,

@@ -1,7 +1,7 @@
 name: Build APKs
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main, 'claude/**', 'cursor/**']
   workflow_dispatch:
 permissions:
   contents: write
@@ -91,17 +91,23 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.17.1
+      - name: Publish release v0.18.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.17.1
+          tag_name: v0.18.0
           target_commitish: ${{ github.sha }}
-          name: "v0.17.1: Play during the Steam test keeps Steam's head start"
+          name: "v0.18.0: Play opens the game, not Starting Steam"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.18.0:** Play opens the game you picked. It no longer sits on Starting Steam.
+            - Pressing Play starts that game's .exe through Box64/Wine immediately (`SteamAppId` / `steam_appid.txt`, Steam's own launch options). Steam, when the game needs it, starts silent in the background (`-silent`, no Steam window on the game screen) and Play does not wait for it to sign in.
+            - The loading screen says **Preparing runtime**, then **Launching &lt;game&gt;**, then the game fills the display (**Running**). A missing .exe says so instead of opening Steam.
+            - A Steam that was already getting ready when you press Play is kept. The game starts as soon as the display is up.
+            - Steam's own windows are not drawn while a game is on screen. **Show Steam** still opens them.
 
             **v0.17.1:** fixes Play soon after opening the app waiting longer than before.
             - In v0.17.0, pressing Play while Steam was still being tested without its browser dropped Steam and started it from scratch, so the head start was lost and Play could wait longer than in v0.16.0. Now a Steam that is already connecting without its browser is kept and waited for like any Steam; only one that hasn't tried to connect yet is dropped. If the test then fails while Play waits, Steam restarts with its browser and Play keeps waiting through the restart (it used to wait up to four minutes with no way back).

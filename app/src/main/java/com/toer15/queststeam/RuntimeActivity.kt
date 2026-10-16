@@ -291,7 +291,11 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
         if (playStage is LaunchStage.Running || playStage is LaunchStage.Opening) wasPlaying = true
         else if (playStage == LaunchStage.Idle && wasPlaying && exePath != null) onClose()
     }
-    val inGame = gameView != null && (playStage as? LaunchStage.Running)?.vr == false
+    val inGame = gameView != null && when (val s = playStage) {
+        is LaunchStage.Running -> !s.vr
+        is LaunchStage.Opening -> true
+        else -> false
+    }
     androidx.activity.compose.BackHandler(enabled = inGame) { askLeave = true }
     if (inGame) {
         GameSurface(gameView!!, onLeave = { askLeave = true })
@@ -330,7 +334,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
 
     LaunchedEffect(exePath) {
         if (exePath != null) vm.playOnce(ctx, exePath, args, mode, title)
-        else if (title != null) vm.appendLog("No .exe found for this game.")
+        else if (title != null) GameRunner.missingGame(title)
     }
 
     Box(Modifier.fillMaxSize().steamBackdrop(), contentAlignment = Alignment.TopCenter) {
@@ -516,7 +520,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
     val stage by vm.stage.collectAsState()
     // Opened from a game's Play button: cancelling, closing an error, stopping the game or the game
     // ending goes straight back to the library, not to this settings screen.
-    val fromCard = exePath != null
+    val fromCard = exePath != null || title != null
     LaunchOverlay(
         stage = stage, appId = appId, log = log,
         onShowGame = { GameRunner.showGameNow(ctx) },
