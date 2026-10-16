@@ -91,17 +91,23 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.18.5
+      - name: Publish release v0.18.6
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.18.5
+          tag_name: v0.18.6
           target_commitish: ${{ github.sha }}
-          name: "v0.18.5: Play opens only the game you picked"
+          name: "v0.18.6: Play uses Steam's own applaunch"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.18.6:** Play starts the game the way Steam does.
+            - The command is Steam's own `steam.exe -silent -applaunch <appid>`, then that game's launch options.
+            - The screen says **Launching &lt;game&gt;**. Steam's window stays off.
+            - The game is registered in Steam's library first, so applaunch can find it.
+            - **Open Steam** still opens Steam's window when you ask for it.
 
             **v0.18.5:** Pressing Play on a library game starts only that game's .exe.
             - The game's own Steam app id is written for that process (`SteamAppId`, `SteamGameId`, `steam_appid.txt`).

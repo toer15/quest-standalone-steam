@@ -46,4 +46,21 @@ class DirectLaunchTest {
         assertEquals(DirectLaunch.SteamRole.NONE, game.steam)
         assertFalse(game.step.contains("Steam"))
     }
+
+    @Test fun playUsesSteamsOwnApplaunchForThatGame() {
+        val game = DirectLaunch.plan(
+            "R.E.P.O.", openingSteam = false, runtimeInstalled = true, gameFileExists = true,
+            appId = 3241660, steamInstalled = true,
+        )
+        assertEquals(DirectLaunch.SteamRole.APPLAUNCH, game.steam)
+        assertEquals("Launching R.E.P.O.…", game.step)
+        assertFalse(game.step.contains("Starting Steam"))
+        assertFalse(game.waitForSteamSignIn)
+        assertEquals(
+            listOf("-silent", "-applaunch", "3241660", "-screen-width", "960", "-screen-height", "540"),
+            DirectLaunch.applaunchArgs(3241660, listOf("-screen-width", "960", "-screen-height", "540")),
+        )
+        assertFalse(DirectLaunch.usesApplaunch(openingSteam = true, appId = 3241660, steamInstalled = true))
+        assertFalse(DirectLaunch.usesApplaunch(openingSteam = false, appId = 0, steamInstalled = true))
+    }
 }

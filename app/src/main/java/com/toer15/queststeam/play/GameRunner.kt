@@ -824,8 +824,15 @@ object GameRunner {
                         appendLog("Closing Steam. Only $title opens.")
                         dropSteamSession(l)
                     }
-                    val plan = DirectLaunch.plan(title, openingSteam = false, runtimeInstalled = true, gameFileExists = true)
-                    appendLog("Play: only $title${if (appId > 0) " (app $appId)" else ""}. ${exe.name} starts. steam.exe does not.")
+                    val plan = DirectLaunch.plan(
+                        title, openingSteam = false, runtimeInstalled = true, gameFileExists = true,
+                        appId = appId, steamInstalled = SteamWindows.isInstalled(l),
+                    )
+                    appendLog(
+                        if (plan.steam == DirectLaunch.SteamRole.APPLAUNCH)
+                            "Play: Steam applaunch $appId ($title). Steam starts this game. Steam's window stays off."
+                        else "Play: only $title${if (appId > 0) " (app $appId)" else ""}. ${exe.name} starts.",
+                    )
                     _stage.value = LaunchStage.Working(title, plan.step)
                     start(ctx, exe, args, mode, title, appId)
                     return@launch
@@ -948,23 +955,39 @@ object GameRunner {
             baseline = withContext(Dispatchers.IO) { XProbe.visibleWindows()?.size ?: 0 }
         }
 
+        val id = if (!SteamWindows.isSteam(exe)) (if (appId > 0) appId else gameDir.name.toIntOrNull() ?: 0) else 0
+        val applaunch = DirectLaunch.usesApplaunch(SteamWindows.isSteam(exe), id, SteamWindows.isInstalled(l))
         if (!SteamWindows.isSteam(exe)) {
-            val id = if (appId > 0) appId else gameDir.name.toIntOrNull() ?: 0
-            if (id > 0 && DirectLaunch.startsOnlyTheGame(false)) {
-                withContext(Dispatchers.IO) { SteamWindows.writeAppId(exe.parentFile ?: gameDir, id) }
+            if (id > 0) {
+                withContext(Dispatchers.IO) {
+                    SteamWindows.writeAppId(exe.parentFile ?: gameDir, id)
+                    if (applaunch) {
+                        runCatching {
+                            SteamWindows.keepOffGpu(l)
+                            SteamWindows.applyFastSettings(l)
+                            val added = SteamLibrary.register(SteamWindows.dir(l), l.gamesDir) { gameId ->
+                                if (gameId == id) title else null
+                            }
+                            if (added.contains(id)) appendLog("Steam's library: $title (app $id) is installed, so Play can start it.")
+                        }.onFailure { appendLog("Couldn't add $title to Steam's library: ${it.message}") }
+                    }
+                }
                 env["SteamAppId"] = id.toString()
                 env["SteamGameId"] = id.toString()
             }
-            appendLog("Direct launch: $title${if (id > 0) " (app $id)" else ""}. Only ${exe.name} starts; steam.exe is not started.")
+            appendLog(
+                if (applaunch) "Steam applaunch: $title (app $id). The command is steam.exe -silent -applaunch $id."
+                else "Direct launch: $title${if (id > 0) " (app $id)" else ""}. Only ${exe.name} starts.",
+            )
             keepShownGame(title, DirectLaunch.launching(title))
         } else {
             _stage.value = LaunchStage.Working(title, "Starting Steam…")
         }
-        val argv = GameLauncher.splitArgs(args)
-        if (argv.isNotEmpty() && !SteamWindows.isSteam(exe)) appendLog("Launch options from Steam: $args")
+        val gameArgv = GameLauncher.splitArgs(args)
+        if (gameArgv.isNotEmpty() && !SteamWindows.isSteam(exe)) appendLog("Launch options from Steam: $args")
         // Steam's desktop is the whole screen; a game's is the chosen game resolution (direct view scales it up).
         val desktop = if (SteamWindows.isSteam(exe)) BuiltInDisplay.SCREEN else BuiltInDisplay.gameDesktop(ctx)
-        val sizeArgs = if (builtIn && !SteamWindows.isSteam(exe)) unitySizeArgs(exe, argv, desktop) else emptyList()
+        val sizeArgs = if (builtIn && !SteamWindows.isSteam(exe)) unitySizeArgs(exe, gameArgv, desktop) else emptyList()
         if (builtIn && !SteamWindows.isSteam(exe)) {
             appendLog(pictureNote(ctx, desktop, sizeArgs))
         }
@@ -973,12 +996,26 @@ object GameRunner {
             steamSignedIn = false
         }
         val besideClient = steamEnv != null && !SteamWindows.isSteam(exe)
+        val launchFile = if (applaunch) SteamWindows.exe(l) else exe
+        val launchArgv = if (applaunch) {
+            DirectLaunch.applaunchArgs(id, gameArgv + sizeArgs, SteamWindows.args(ctx))
+        } else gameArgv + sizeArgs
+        if (applaunch) appendLog("Steam's Play command: " + launchArgv.joinToString(" "))
         val result = withContext(Dispatchers.IO) {
             l.launchExe(
-                exe, if (builtIn) BuiltInDisplay.DISPLAY else disp, env, argv + sizeArgs,
+                launchFile, if (builtIn) BuiltInDisplay.DISPLAY else disp, env, launchArgv,
                 desktop = if (builtIn) desktop else null,
                 desktopName = if (besideClient) nextDesktop("game") else GameLauncher.DESKTOP,
-                onExit = { code -> if (gen == launchGen) onGameExit(ctx, title, code) }, onLine = ::appendLog,
+                onExit = exit@{ code ->
+                    if (gen != launchGen) return@exit
+                    if (!applaunch) {
+                        onGameExit(ctx, title, code)
+                    } else scope.launch {
+                        val gameUp = withContext(Dispatchers.IO) { l.isRunning(exe.name) }
+                        if (gameUp) appendLog("Steam's launch process ended ($code). $title is still running.")
+                        else onGameExit(ctx, title, code)
+                    }
+                }, onLine = ::appendLog,
             )
         }
         appendLog(result.message)
