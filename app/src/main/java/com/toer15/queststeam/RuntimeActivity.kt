@@ -231,15 +231,15 @@ class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
     val gameRunning get() = GameRunner.isPlaying
 
     /** Starts a game (see GameRunner): the loading screen follows [stage]. */
-    fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR, title: String = exe.nameWithoutExtension) =
-        GameRunner.play(ctx, exe, args, mode, title)
+    fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR, title: String = exe.nameWithoutExtension, appId: Int = 0) =
+        GameRunner.play(ctx, exe, args, mode, title, appId)
 
     /** Play from a game card: once per screen (rotating the panel doesn't start it again). */
-    fun playOnce(ctx: Context, exePath: String, args: String, mode: String, title: String?) {
+    fun playOnce(ctx: Context, exePath: String, args: String, mode: String, title: String?, appId: Int) {
         if (startedPlay) return
         startedPlay = true
         val exe = File(exePath)
-        launchGame(ctx, exe, args, mode, title ?: exe.nameWithoutExtension)
+        launchGame(ctx, exe, args, mode, title ?: exe.nameWithoutExtension, appId)
     }
 
     fun importGame(ctx: Context, uri: Uri, isTree: Boolean) {
@@ -333,7 +333,7 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
     }
 
     LaunchedEffect(exePath) {
-        if (exePath != null) vm.playOnce(ctx, exePath, args, mode, title)
+        if (exePath != null) vm.playOnce(ctx, exePath, args, mode, title, appId)
         else if (title != null) GameRunner.missingGame(title)
     }
 
@@ -633,7 +633,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
     var core by remember { mutableStateOf(SteamWindows.coreAllowed(ctx)) }
     Text(
-        "Play starts only the game you pick and shows that game's display. Steam stays off unless you press Open Steam.",
+        "Play starts only the game you pick. steam.exe stays off unless you press Open Steam.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
     )
     Spacer(Modifier.height(10.dp))

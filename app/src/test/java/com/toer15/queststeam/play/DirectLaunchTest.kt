@@ -39,11 +39,11 @@ class DirectLaunchTest {
         assertFalse(DirectLaunch.showImmediately(openingSteam = true))
     }
 
-    @Test fun theSteamClientRunsBesideTheGameWithNoSteamWindow() {
-        assertTrue(DirectLaunch.clientBesideGame(openingSteam = false, steamInstalled = true))
-        assertFalse(DirectLaunch.clientBesideGame(openingSteam = false, steamInstalled = false))
-        assertFalse(DirectLaunch.clientBesideGame(openingSteam = true, steamInstalled = true))
-        assertEquals("Launching R.E.P.O.…", DirectLaunch.launching("R.E.P.O."))
-        assertFalse(DirectLaunch.launching("R.E.P.O.").contains("Starting Steam"))
+    @Test fun playNeverStartsSteamExe() {
+        assertTrue(DirectLaunch.startsOnlyTheGame(openingSteam = false))
+        assertFalse(DirectLaunch.startsOnlyTheGame(openingSteam = true))
+        val game = DirectLaunch.plan("R.E.P.O.", openingSteam = false, runtimeInstalled = true, gameFileExists = true)
+        assertEquals(DirectLaunch.SteamRole.NONE, game.steam)
+        assertFalse(game.step.contains("Steam"))
     }
 }

@@ -267,7 +267,7 @@ object SteamWindows {
     /** Tells Steamworks which game this is when it isn't started from Steam's own library. */
     fun writeAppId(exeDir: File, appId: Int) {
         if (appId <= 0) return
-        runCatching { File(exeDir, "steam_appid.txt").takeIf { !it.exists() }?.writeText("$appId\n") }
+        runCatching { File(exeDir, "steam_appid.txt").writeText("$appId\n") }
     }
 
     /** Downloads Valve's SteamSetup.exe (about 2 MB). */

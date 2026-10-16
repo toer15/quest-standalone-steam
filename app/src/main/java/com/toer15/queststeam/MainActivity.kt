@@ -250,7 +250,7 @@ internal fun LauncherApp(
         val exe = vm.downloads.mainExe(g.appId, vr)
         if (inVr && vr && exe != null) {
             // Already in the headset view: start the game here; the panel shows the loading screen.
-            GameRunner.play(ctx, exe, vm.downloads.launchArgs(g.appId, true), RuntimeActivity.MODE_VR, g.name)
+            GameRunner.play(ctx, exe, vm.downloads.launchArgs(g.appId, true), RuntimeActivity.MODE_VR, g.name, g.appId)
             return
         }
         ctx.startActivity(

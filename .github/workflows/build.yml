@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.18.4
+      - name: Publish release v0.18.5
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.18.4
+          tag_name: v0.18.5
           target_commitish: ${{ github.sha }}
-          name: "v0.18.4: Keep the game up — Steam client beside it, no Steam window"
+          name: "v0.18.5: Play opens only the game you picked"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.18.5:** Pressing Play on a library game starts only that game's .exe.
+            - The game's own Steam app id is written for that process (`SteamAppId`, `SteamGameId`, `steam_appid.txt`).
+            - steam.exe is not started. The screen does not say Starting Steam.
+            - **Open Steam** still opens Steam when you ask for it.
 
             **v0.18.4:** The game stays on its display. R.E.P.O. was drawing one frame and then quitting because Steamworks could not open a pipe to the Steam client.
             - Play still shows only the game. The screen does not say Starting Steam.
