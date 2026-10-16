@@ -405,7 +405,7 @@ object GameRunner {
      * With [core], Steam runs without its browser (see [SteamWindows.coreArgs]). Returns false if Steam
      * didn't start.
      */
-    private suspend fun launchSteamSession(ctx: Context, l: GameLauncher, env: Map<String, String>, gen: Int, core: Boolean = false): Boolean {
+    private suspend fun launchSteamSession(ctx: Context, l: GameLauncher, env: Map<String, String>, gen: Int, core: Boolean = false, besideGame: Boolean = false): Boolean {
         steamLogOffset = withContext(Dispatchers.IO) { SteamWindows.connectionLog(l).let { if (it.isFile) it.length() else 0L } }
         steamSignedIn = false
         var steamLines = 0
@@ -417,7 +417,13 @@ object GameRunner {
             l.launchExe(
                 SteamWindows.exe(l), BuiltInDisplay.DISPLAY, env + SteamWindows.steamOnlyEnv(ctx, l),
                 listOf("-silent") + (if (core) SteamWindows.coreArgs() else SteamWindows.args(ctx)),
-                desktop = BuiltInDisplay.SCREEN, onExit = { code -> if (gen == launchGen) onGameExit(ctx, "Steam", code) }, onLine = onSteamLine,
+                desktop = BuiltInDisplay.SCREEN,
+                onExit = exit@{ code ->
+                    if (gen != launchGen) return@exit
+                    if (besideGame) appendLog("Steam client process ended ($code). The game's display stays up.")
+                    else onGameExit(ctx, "Steam", code)
+                },
+                onLine = onSteamLine,
             )
         }
         if (!steam.ok) { appendLog("Steam didn't start: ${steam.message}"); return false }
@@ -427,6 +433,59 @@ object GameRunner {
         watchPriority()
         appendLog("Steam for Windows is starting in the background${if (core) " without its browser" else ""}…")
         return true
+    }
+
+    /**
+     * Waits until the silent Steam client has signed in, so the game's Steamworks can open its pipe.
+     * The screen keeps saying Launching [title]. It does not say Starting Steam, and Steam's window stays off.
+     */
+    private suspend fun awaitClientForGame(l: GameLauncher, title: String, gen: Int): Boolean {
+        val t0 = System.currentTimeMillis()
+        while (gen == launchGen) {
+            if (withContext(Dispatchers.IO) { checkSteamSignIn(l) }) return true
+            val steamAlive = isRunning || withContext(Dispatchers.IO) { l.isRunning("steam.exe") }
+            if (!steamAlive && !steamRestarting) {
+                appendLog("Steam client closed before $title could connect.")
+                return false
+            }
+            val secs = (System.currentTimeMillis() - t0) / 1000
+            if (secs >= 90) {
+                appendLog("Steam client hasn't signed in after ${secs}s. Starting $title anyway.")
+                return false
+            }
+            if (_stage.value !is LaunchStage.Opening && _stage.value !is LaunchStage.Running) {
+                _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
+            }
+            delay(500)
+        }
+        return false
+    }
+
+    /**
+     * steam.exe with no window, on the game's display, before the game exe. R.E.P.O. exits after one
+     * frame without it: Steamworks reports NoSteamClient (no IPC pipe).
+     */
+    private suspend fun ensureSteamClientForGame(ctx: Context, l: GameLauncher, env: Map<String, String>, title: String, gen: Int) {
+        if (!DirectLaunch.clientBesideGame(false, SteamWindows.isInstalled(l)) || !BuiltInDisplay.isRunning) return
+        if (steamEnv != null && isRunning) {
+            appendLog("Steam client is already running beside $title, with no Steam window.")
+            gameFillsDisplay(true)
+            return
+        }
+        appendLog("$title needs the Steam client running beside it, with no Steam window, or it closes (Steamworks: no IPC pipe).")
+        keepShownGame(title, DirectLaunch.launching(title))
+        withContext(Dispatchers.IO) {
+            runCatching {
+                SteamWindows.keepOffGpu(l)
+                SteamWindows.applyFastSettings(l)
+            }
+        }
+        val core = SteamWindows.coreAllowed(ctx) && SteamWindows.coreWorks(ctx) == true
+        if (!launchSteamSession(ctx, l, env, gen, core, besideGame = true)) return
+        gameFillsDisplay(true)
+        awaitClientForGame(l, title, gen)
+        withContext(Dispatchers.IO) { applySteamUiPolicy() }
+        gameFillsDisplay(true)
     }
 
     /**
@@ -820,12 +879,23 @@ object GameRunner {
                 if (!openingSteam) {
                     // Keep a display that is already coming up. Do not treat it as a Steam warm-up.
                     displayJob?.let { if (it.isActive) it.join() }
-                    // Play is the game executable only. A Steam that the app started on its own is closed first.
+                    val beside = DirectLaunch.clientBesideGame(false, SteamWindows.isInstalled(l))
+                    val steamOnScreen = beside && steamRunning() && BuiltInDisplay.view?.isAttachedToWindow == true && mode != RuntimeActivity.MODE_VR
+                    if (steamOnScreen) {
+                        appendLog("$title opens on its display. The Steam client is already running, with no Steam window.")
+                        _stage.value = LaunchStage.Opening(title)
+                        startInSteam(ctx, exe, args, title)
+                        return@launch
+                    }
+                    // The display isn't on screen. A leftover Steam session would be tied to the old one.
                     if (steamRunning() || coreTrial) {
-                        appendLog("Closing Steam. Play starts only $title.")
+                        appendLog("Restarting the game display for $title.")
                         dropSteamSession(l)
                     }
-                    appendLog("Only $title starts. Steam is not started.")
+                    appendLog(
+                        if (beside) "$title opens on its display. The Steam client starts beside it, with no Steam window, so the game can connect."
+                        else "Only $title starts. Steam is not installed.",
+                    )
                     _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
                     start(ctx, exe, args, mode, title)
                     return@launch
@@ -949,13 +1019,21 @@ object GameRunner {
         }
 
         if (!SteamWindows.isSteam(exe)) {
+            if (builtIn) ensureSteamClientForGame(ctx, l, env, title, gen)
             val appId = gameDir.name.toIntOrNull() ?: 0
             if (appId > 0) {
                 withContext(Dispatchers.IO) { SteamWindows.writeAppId(exe.parentFile ?: gameDir, appId) }
                 env["SteamAppId"] = appId.toString()
                 env["SteamGameId"] = appId.toString()
             }
-            appendLog("Direct launch: $title${if (appId > 0) " (app $appId)" else ""}. Only this game starts; Steam is not started.")
+            appendLog(
+                "Direct launch: $title${if (appId > 0) " (app $appId)" else ""}. " +
+                    when {
+                        steamEnv != null -> "The Steam client is running with no window."
+                        SteamWindows.isInstalled(l) -> "The Steam client did not start; the game may close."
+                        else -> "Steam is not installed."
+                    },
+            )
             keepShownGame(title, DirectLaunch.launching(title))
         } else {
             _stage.value = LaunchStage.Working(title, "Starting Steam…")
@@ -972,10 +1050,12 @@ object GameRunner {
             steamLogOffset = withContext(Dispatchers.IO) { SteamWindows.connectionLog(l).let { if (it.isFile) it.length() else 0L } }
             steamSignedIn = false
         }
+        val besideClient = steamEnv != null && !SteamWindows.isSteam(exe)
         val result = withContext(Dispatchers.IO) {
             l.launchExe(
                 exe, if (builtIn) BuiltInDisplay.DISPLAY else disp, env, argv + sizeArgs,
                 desktop = if (builtIn) desktop else null,
+                desktopName = if (besideClient) nextDesktop("game") else GameLauncher.DESKTOP,
                 onExit = { code -> if (gen == launchGen) onGameExit(ctx, title, code) }, onLine = ::appendLog,
             )
         }
@@ -989,6 +1069,10 @@ object GameRunner {
         } else if (builtIn && !inVr) {
             gameExe = exe.name
             gameTitle = title
+            if (besideClient) {
+                sessionGame = exe.name
+                foreground(steamLow = true)
+            }
         }
         PlayingService.start(ctx, title)
 
@@ -1118,12 +1202,20 @@ object GameRunner {
         else appendLog("Starting $title next to the running Steam.")
         gameFillsDisplay(true)
         withContext(Dispatchers.IO) { l.pause(SteamWindows.WEB_HELPER, true) }
-        trimAppMemory(ctx)
-        _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
+        trimAppMemory(ctx, collect = false)
+        if (BuiltInDisplay.view != null) _stage.value = LaunchStage.Opening(title)
+        else keepShownGame(title, DirectLaunch.launching(title))
         val result = launchInSession(ctx, l, base, exe, args, title)
         if (!result.ok) { _stage.value = LaunchStage.Failed(title, result.message); return }
         LastGame.set(ctx, exe, args, title, gameRoot(l, exe).name.toIntOrNull() ?: 0)
         PlayingService.start(ctx, title)
+        if (DirectLaunch.showImmediately(false)) {
+            _stage.value = LaunchStage.Running(title, vr = false)
+            appendLog("The game display is up. $title is starting in it.")
+            watchOnScreen(ctx, l, title, launchGen)
+            watchGameExit(ctx, l, exe.name, title)
+            return
+        }
         awaitOnScreen(ctx, l, exe.name, title, System.currentTimeMillis())
     }
 

@@ -38,4 +38,12 @@ class DirectLaunchTest {
         assertTrue(DirectLaunch.showImmediately(openingSteam = false))
         assertFalse(DirectLaunch.showImmediately(openingSteam = true))
     }
+
+    @Test fun theSteamClientRunsBesideTheGameWithNoSteamWindow() {
+        assertTrue(DirectLaunch.clientBesideGame(openingSteam = false, steamInstalled = true))
+        assertFalse(DirectLaunch.clientBesideGame(openingSteam = false, steamInstalled = false))
+        assertFalse(DirectLaunch.clientBesideGame(openingSteam = true, steamInstalled = true))
+        assertEquals("Launching R.E.P.O.…", DirectLaunch.launching("R.E.P.O."))
+        assertFalse(DirectLaunch.launching("R.E.P.O.").contains("Starting Steam"))
+    }
 }

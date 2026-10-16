@@ -3,9 +3,10 @@ package com.toer15.queststeam.play
 /**
  * What one Play tap does.
  *
- * A library game starts as itself: its Windows .exe under Box64/Wine. Play does not start
- * steam.exe, and the loading screen never says "Starting Steam" for a game. Opening Steam
- * (the separate Open Steam button) is the only path that starts the Steam client.
+ * A library game is what Play shows: its Windows .exe on the game display. The loading screen
+ * never says "Starting Steam" for a game. When Steam for Windows is installed, steam.exe still
+ * runs with no window, because the game's Steamworks opens a pipe to that process (R.E.P.O.
+ * exits with NoSteamClient otherwise). Opening Steam is the only path that shows Steam's window.
  */
 object DirectLaunch {
     enum class SteamRole {
@@ -34,6 +35,12 @@ object DirectLaunch {
      * Opening Steam itself keeps the Steam loading screen.
      */
     fun showImmediately(openingSteam: Boolean) = !openingSteam
+
+    /**
+     * Steam's client process has to be running for this game, with no Steam window.
+     * The loading line stays [launching], not "Starting Steam".
+     */
+    fun clientBesideGame(openingSteam: Boolean, steamInstalled: Boolean) = !openingSteam && steamInstalled
 
     fun plan(
         title: String,

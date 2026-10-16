@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.18.3
+      - name: Publish release v0.18.4
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.18.3
+          tag_name: v0.18.4
           target_commitish: ${{ github.sha }}
-          name: "v0.18.3: Show the display of the game you open"
+          name: "v0.18.4: Keep the game up — Steam client beside it, no Steam window"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.18.4:** The game stays on its display. R.E.P.O. was drawing one frame and then quitting because Steamworks could not open a pipe to the Steam client.
+            - Play still shows only the game. The screen does not say Starting Steam.
+            - steam.exe starts in the background with no window, and the game starts after that client is connected.
+            - **Open Steam** still opens Steam's window when you ask for it.
 
             **v0.18.3:** Play still starts only the game you picked, and that game's display is shown again.
             - The game display is created when you press Play, on the game screen, so the picture has a surface.
