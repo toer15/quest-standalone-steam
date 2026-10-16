@@ -627,7 +627,6 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     val stage by vm.stage.collectAsState()
     val steamInstalled = remember(stage) { SteamWindows.isInstalled(vm.launcher) }
     val signedIn = remember(stage) { SteamWindows.isSignedIn(vm.launcher) }
-    var withGames by remember { mutableStateOf(SteamWindows.startWithGames(ctx)) }
     var light by remember { mutableStateOf(SteamWindows.light(ctx)) }
     var warm by remember { mutableStateOf(SteamWindows.warmUp(ctx)) }
     var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
@@ -663,15 +662,6 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                             .focusRing().clickable { light = value; SteamWindows.setLight(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
                     )
                 }
-                for ((value, label) in listOf(true to "Start with games", false to "Don't start with games")) {
-                    val sel = withGames == value
-                    Text(
-                        (if (sel) "✓ " else "") + label,
-                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
-                            .focusRing().clickable { withGames = value; SteamWindows.setStartWithGames(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
-                    )
-                }
                 for ((value, label) in listOf(true to "Get Steam ready when the app opens", false to "Don't start Steam on open")) {
                     val sel = warm == value
                     Text(
@@ -682,7 +672,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                     )
                 }
             }
-            if (warm && withGames) {
+            if (warm) {
                 Spacer(Modifier.height(8.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     for ((value, label) in listOf(true to "Get my last game ready too", false to "Only Steam")) {

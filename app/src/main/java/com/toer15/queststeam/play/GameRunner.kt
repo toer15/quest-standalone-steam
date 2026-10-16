@@ -488,15 +488,16 @@ object GameRunner {
      * "Get Steam ready when the app opens"), so it's signed in by the time you press Play and the game
      * starts at once, instead of after a minute or two of Steam starting first. Steam's windows then
      * wait paused (see [steamUiPaused]) and everything Wine runs has the lowest priority while you're
-     * in the app.
+     * in the app. Returns false if Steam isn't started (switched off, not installed or signed in yet, or
+     * something else already runs).
      */
-    fun warmUpSteam(ctx: Context) {
+    fun warmUpSteam(ctx: Context): Boolean {
         val app = ctx.applicationContext
-        if (!SteamWindows.warmUp(app) || !SteamWindows.startWithGames(app)) return
-        if (isRunning || warmJob?.isActive == true || job?.isActive == true || _stage.value !is LaunchStage.Idle) return
-        if (!BuiltInDisplay.isBuiltIn(display(app)) || !RuntimeInstaller(app).isInstalled) return
+        if (!SteamWindows.warmUp(app)) return false
+        if (isRunning || warmJob?.isActive == true || job?.isActive == true || _stage.value !is LaunchStage.Idle) return false
+        if (!BuiltInDisplay.isBuiltIn(display(app)) || !RuntimeInstaller(app).isInstalled) return false
         val l = launcher ?: GameLauncher(app).also { launcher = it }
-        if (!SteamWindows.isInstalled(l) || !SteamWindows.isSignedIn(l)) return
+        if (!SteamWindows.isInstalled(l) || !SteamWindows.isSignedIn(l)) return false
         warmJob = scope.launch {
             try {
                 startSteamInBackground(app, l)
@@ -506,6 +507,7 @@ object GameRunner {
                 appendLog("Couldn't get Steam ready: $e")
             }
         }
+        return true
     }
 
     /**

@@ -91,17 +91,23 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.19.0
+      - name: Publish release v0.19.1
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.19.0
+          tag_name: v0.19.1
           target_commitish: ${{ github.sha }}
-          name: "v0.19.0: Play keeps Steam running for your next game"
+          name: "v0.19.1: the first Play is fast too"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.19.1:** the first Play after opening the app is fast too.
+            - **Steam gets ready in the background when you open the app again** (you never see it). By the time you've picked a game it has usually signed in, so **Play** starts the game right away instead of first waiting a minute or two for Steam. Press Play sooner and the game's screen says Steam is still signing in; the game starts the moment it is.
+            - **Your last game gets ready too** once Steam has signed in (when enough memory is free): it loads muted and out of sight and waits paused at its menu, so **Play** on it shows it in a few seconds.
+            - On for everyone now (v0.18.1 to v0.19.0 had it off). Runtime settings → Steam for Windows → **Don't start Steam on open** turns it off.
+            - The **Start with games** switch is gone: since v0.18.6 games always start with Steam, so it did nothing.
 
             **v0.19.0:** Play keeps Steam running instead of starting it again for every game.
             - **A Steam that's running is kept.** v0.18.6 closed a running Steam when you pressed Play and started a new one for the game, so every Play waited for Steam to start and sign in again (93 seconds in your v0.16.0 log). Now the game starts next to the Steam that's already running: right away once Steam is signed in, and if it's still signing in, the game starts the moment it is. Steam's window stays off.
@@ -110,7 +116,6 @@ jobs:
             - **The game screen says what it's waiting for.** It still comes up as soon as you press Play (v0.18.6). Until the game draws, the bar at the top says what's happening, for example "Launching R.E.P.O.… 34s · Steam is signing in (93s last time)", then "· Steam is starting it", then the fps counter takes over. A game that closes before it shows anything now says so and shows the log, instead of dropping you back in the library without a word.
             - While Steam signs in for a game, Steam gets full speed. In v0.18.6 it got the lowest priority as soon as the game screen was up, which slowed its sign-in.
             - **From v0.18.0 "the game you quit gets ready again", which v0.18.0 "Play starts the chosen game" replaced on GitHub:** a game you quit from its own menu after playing at least two minutes gets ready again in the background (muted, paused at its menu), so the next **Play** on it is instant. The start-time line in the log also says how much of the wait was Steam and how much the game itself ("⏱ R.E.P.O. is on screen 95s after Play (60s before the game started, the game itself 35s…)").
-            - For a fast first Play too, turn on Runtime settings → Steam for Windows → **Start with games** and **Get Steam ready when the app opens** (both off since v0.18.1): Steam then signs in while you're still in the library, and **Get my last game ready too** has your last game waiting at its menu.
 
             **v0.18.6:** Play starts the game the way Steam does.
             - The command is Steam's own `steam.exe -silent -applaunch <appid>`, then that game's launch options.

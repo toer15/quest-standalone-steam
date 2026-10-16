@@ -12,7 +12,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import com.toer15.queststeam.gamepad.PadNav
 import com.toer15.queststeam.play.GameRunner
 import com.toer15.queststeam.play.LastGame
-import com.toer15.queststeam.play.SteamWindows
 import com.toer15.queststeam.steam.FriendsScreen
 import com.toer15.queststeam.store.StoreActivity
 import com.toer15.queststeam.store.StoreApi
@@ -143,13 +142,10 @@ class MainActivity : ComponentActivity() {
         }
         val toLogin = { startActivity(Intent(this, LoginActivity::class.java)); finish() }
         setContent { SteamTheme { LauncherApp(onSignedOut = toLogin, onSteamSignIn = toLogin) } }
-        // Get the runtime ready. Play then opens the display for the game you pick.
+        // Steam gets ready in the background (never shown), so it's signed in by the time you press Play.
+        // Without it (switched off, or not signed in yet) only the runtime gets ready.
         window.decorView.postDelayed({
-            if (SteamWindows.warmUp(this) && SteamWindows.startWithGames(this)) {
-                GameRunner.warmUpSteam(this)
-            } else {
-                GameRunner.warmDisplay(this)
-            }
+            if (!GameRunner.warmUpSteam(this)) GameRunner.warmDisplay(this)
         }, 400)
     }
 

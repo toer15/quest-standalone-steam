@@ -7,9 +7,9 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.19.0/quest-steam-quest3.apk)
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.19.1/quest-steam-quest3.apk)
 
-**v0.19.0:** Play no longer closes a Steam that's already running: the game starts next to it, so Steam doesn't start again for every game. When Steam isn't running, Play starts the game with Steam's own `steam.exe -silent -applaunch <appid>` (from v0.18.6), and that Steam then stays for your next game. The game screen comes up at once and says what it's waiting for. Release: https://github.com/toer15/quest-standalone-steam/releases/tag/v0.19.0
+**v0.19.1:** the first Play is fast too: Steam gets ready in the background when you open the app (never shown), so it's signed in by the time you press Play, and your last game waits ready at its menu. Since v0.19.0 Steam also stays running between games, and the game screen comes up at once and says what it's waiting for. Release: https://github.com/toer15/quest-standalone-steam/releases/tag/v0.19.1
 
 Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
 
