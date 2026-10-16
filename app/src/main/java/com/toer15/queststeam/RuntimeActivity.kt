@@ -296,13 +296,16 @@ private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: 
         GameSurface(gameView!!, onLeave = { askLeave = true })
         val onScreen = (playStage as? LaunchStage.Running)?.title ?: title ?: "the game"
         val steamOnScreen = onScreen.startsWith("Steam")
+        val leaveCtx = LocalContext.current
         if (askLeave) LeaveGameDialog(
             if (steamOnScreen) "Steam" else onScreen,
             onStay = { askLeave = false },
-            onLeave = { askLeave = false; vm.leave(); if (exePath != null) onClose() },
+            // A game waits paused (Quick Resume): Play brings it back in seconds. Steam's own window just leaves.
+            onLeave = { askLeave = false; if (steamOnScreen) vm.leave() else GameRunner.pauseGame(leaveCtx); if (exePath != null) onClose() },
             message = if (steamOnScreen) "Steam keeps running in the background, so it opens again at once and your games start faster."
-            else if (GameRunner.steamRunning()) "The game closes; Steam keeps running in the background."
-            else "The game closes and you go back to your library.",
+            else "Leave: the game waits paused, and Play brings it back in a few seconds where you left it (Quick Resume). Close game ends it" +
+                (if (GameRunner.steamRunning()) "; Steam keeps running either way." else "."),
+            onCloseGame = if (steamOnScreen) null else ({ askLeave = false; vm.leave(); if (exePath != null) onClose() }),
         )
         return
     }
@@ -682,7 +685,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
             if (light) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Light Steam: Steam's windows run in one process on two CPU cores, and pause when memory runs low during a game (Steam itself keeps running for the game).",
+                    "Light Steam: Steam's windows run only while they're on screen; once Steam has signed in they wait paused, and Steam itself keeps running for your games.",
                     color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
                 )
             }

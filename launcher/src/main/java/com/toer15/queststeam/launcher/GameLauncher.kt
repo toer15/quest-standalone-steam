@@ -206,6 +206,17 @@ class GameLauncher(private val ctx: Context) {
         processesOf(exeName).onEach { android.os.Process.sendSignal(it.pid, if (pause) SIGSTOP else SIGCONT) }.size
 
     /**
+     * Pauses ([pause]) or resumes every Windows program and Wine's server: a game left for Quick Resume
+     * that runs on its own. The server pauses last and resumes first. Returns the number of processes.
+     */
+    fun pauseAll(pause: Boolean): Int {
+        val procs = running().filter { it.name.contains(".exe", ignoreCase = true) || it.name == "wineserver" }
+            .sortedBy { (it.name == "wineserver") == pause }
+        procs.forEach { android.os.Process.sendSignal(it.pid, if (pause) SIGSTOP else SIGCONT) }
+        return procs.size
+    }
+
+    /**
      * CPU priority of every Wine/Box64 thread: the lowest for Steam's programs when [steamLow], and
      * for everything else when [othersLow]; normal otherwise. The lowest also puts threads on the
      * small CPU cores, so Steam idling next to a game (or behind the app) leaves the big ones free.

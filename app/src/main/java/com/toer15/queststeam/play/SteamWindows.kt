@@ -110,11 +110,11 @@ object SteamWindows {
 
     /**
      * Environment only Steam's own programs get (games started next to it don't): the translation
-     * cache, and in light mode two CPUs, so Steam's browser starts fewer threads (memory and CPU
-     * the game can use instead).
+     * cache. (Light Steam used to show Steam two CPU cores; with its browser paused once it has
+     * signed in, all cores make it ready sooner.)
      */
-    fun steamOnlyEnv(ctx: Context, l: GameLauncher): Map<String, String> =
-        translationCacheEnv(l) + if (light(ctx)) mapOf("BOX64_MAXCPU" to "2") else emptyMap()
+    @Suppress("UNUSED_PARAMETER")
+    fun steamOnlyEnv(ctx: Context, l: GameLauncher): Map<String, String> = translationCacheEnv(l)
 
     /**
      * Box64 keeps the code it translated for Steam on storage (its "DynaCache"), so later Steam starts

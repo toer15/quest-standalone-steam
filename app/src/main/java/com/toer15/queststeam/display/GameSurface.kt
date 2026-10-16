@@ -162,6 +162,8 @@ private fun KeyButton(label: String, onClick: () -> Unit) {
 fun LeaveGameDialog(
     title: String, onStay: () -> Unit, onLeave: () -> Unit,
     message: String = "The game closes and you go back to your library.",
+    /** With Quick Resume: [onLeave] leaves the game paused, and this button closes it. */
+    onCloseGame: (() -> Unit)? = null,
 ) {
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
         Column(
@@ -178,9 +180,15 @@ fun LeaveGameDialog(
                         .clickable(onClick = onStay).padding(horizontal = 22.dp, vertical = 12.dp),
                 )
                 Text(
-                    "Leave game", color = SteamColors.Danger, fontWeight = FontWeight.Bold,
+                    if (onCloseGame != null) "Leave (pause)" else "Leave game",
+                    color = if (onCloseGame != null) Color.White else SteamColors.Danger, fontWeight = FontWeight.Bold,
                     modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.08f)).focusRing()
                         .clickable(onClick = onLeave).padding(horizontal = 22.dp, vertical = 12.dp),
+                )
+                if (onCloseGame != null) Text(
+                    "Close game", color = SteamColors.Danger, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.08f)).focusRing()
+                        .clickable(onClick = onCloseGame).padding(horizontal = 22.dp, vertical = 12.dp),
                 )
             }
         }

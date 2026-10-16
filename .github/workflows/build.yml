@@ -91,17 +91,22 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.14.4
+      - name: Publish release v0.15.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.14.4
+          tag_name: v0.15.0
           target_commitish: ${{ github.sha }}
-          name: "v0.14.4: faster game starts, Steam ready before you press Play"
+          name: "v0.15.0: Quick Resume, Steam ready sooner"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.15.0:**
+            - **Quick Resume, like a console.** Leaving a game (✕ Leave game → **Leave (pause)**) no longer closes it: it waits paused, using no processor time, and **Play** brings it back in a few seconds, right where you were. **Close game** ends it. Starting another game, opening Steam's window or closing Steam ends a paused game first.
+            - **Steam signs in sooner.** While Steam gets ready it now runs at full speed on all processor cores. In v0.14.4 it had the lowest priority and the small cores while you were in the app, and Light Steam showed it only two cores: that's why it took 104 seconds. Its windows still wait paused once it has signed in.
+            - Each game start logs how big the caches that make later starts faster are (Box64 translations, Vortek textures, DXVK pipelines), to check that they grow and stay.
 
             **v0.14.4:** toward the goal of Play → game on screen in 20–30 seconds.
             - **Steam gets ready when the app opens** (Runtime settings → Steam for Windows → **Get Steam ready when the app opens**, on by default). Steam starts and signs in in the background while you look around the app, so Play starts the game right away instead of first waiting a minute or two for Steam. Press Play before Steam is signed in and the game starts the moment it is.
