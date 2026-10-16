@@ -373,6 +373,10 @@ object GameRunner {
 
     /** When Play was pressed, for "on screen N s after Play" (the start-time goal); 0 once reported. */
     @Volatile private var playPressedAt = 0L
+    /** When the game's own process was started (for "before the game started" / "the game itself" in the start-time line). */
+    @Volatile private var gameLaunchedAt = 0L
+    /** When the game came on screen (first time, or Play on a game that was waiting): how long it was played, for [readyAgain]. */
+    @Volatile private var gameShownAt = 0L
     private var warmJob: Job? = null
 
     /**
@@ -579,8 +583,12 @@ object GameRunner {
         val pressed = playPressedAt
         if (pressed == 0L) return
         playPressedAt = 0L
-        val secs = (System.currentTimeMillis() - pressed) / 1000
-        appendLog("⏱ $title is on screen ${secs}s after Play (goal: 20–30 s).")
+        val now = System.currentTimeMillis()
+        val secs = (now - pressed) / 1000
+        // How much of it was waiting before the game even started (Steam's sign-in), and how much the game itself took.
+        val launched = gameLaunchedAt
+        val split = if (launched in pressed..now) " (${(launched - pressed) / 1000}s before the game started, the game itself ${(now - launched) / 1000}s)" else ""
+        appendLog("⏱ $title is on screen ${secs}s after Play$split (goal: 20–30 s).")
         BuiltInDisplay.showStartTime("on screen ${secs}s after Play")
     }
 
@@ -1116,6 +1124,7 @@ object GameRunner {
             l.launchExe(exe, BuiltInDisplay.DISPLAY, env, argv + sizeArgs, desktop = desktop, track = false, desktopName = nextDesktop("game"), onLine = ::appendLog)
         }
         if (!result.ok) { appendLog(result.message); LogFile.setRunning(false); return result }
+        gameLaunchedAt = System.currentTimeMillis()
         sessionGame = exe.name
         gameExe = exe.name
         gameTitle = title
@@ -1164,11 +1173,12 @@ object GameRunner {
             }
             if (secs >= BUILT_IN_TIMEOUT_S) { appendLog("No game window after ${secs}s; showing the game display anyway."); break }
             _stage.value = LaunchStage.Working(title, "Loading $title… ${secs}s", detail = logTail(5), canShowWindow = secs >= 60)
-            delay(500)
+            delay(200)
         }
         if (BuiltInDisplay.gameWindow.value) noteOnScreen(title)
         _stage.value = LaunchStage.Opening(title)
-        delay(900)
+        delay(250)
+        gameShownAt = System.currentTimeMillis()
         _stage.value = LaunchStage.Running(title, vr = false)
         watchGameExit(ctx, l, name, title)
     }
@@ -1195,6 +1205,25 @@ object GameRunner {
             BuiltInDisplay.expectWindow(null, SteamWindows.UI_WINDOW_CLASS)
             PlayingService.start(ctx, "Steam")
             if (_stage.value.let { it is LaunchStage.Running && it.title == title }) _stage.value = LaunchStage.Idle
+            readyAgain(ctx, l, name, title, if (gameShownAt > 0) System.currentTimeMillis() - gameShownAt else 0L)
+        }
+    }
+
+    /**
+     * A game that closed by itself (quit from its own menu) after being played for a while gets ready again in the
+     * background, so the next Play on it is instant too, not only the first one after the app opens. A game that
+     * closes soon after it started is crashing, not played, and Close game / Leave end a game on purpose: neither
+     * comes back by itself. See [getLastGameReady], which also checks that nothing else is going on.
+     */
+    private fun readyAgain(ctx: Context, l: GameLauncher, name: String, title: String, ranMs: Long) {
+        if (ranMs < READY_AGAIN_MIN_RUN_MS || !LastGame.enabled(ctx)) return
+        if (LastGame.get(ctx)?.exe?.name?.equals(name, ignoreCase = true) != true) return
+        scope.launch {
+            delay(8000) // the system settles, and a Play on another game right away wins
+            if (steamRunning() && steamSignedIn) {
+                appendLog("$title is played for now: getting it ready again in the background, so the next Play on it is instant.")
+                getLastGameReady(ctx, l)
+            }
         }
     }
 
@@ -1290,6 +1319,7 @@ object GameRunner {
             BuiltInDisplay.showStartTime("resumed in ${secs}s")
         }
         delay(300)
+        gameShownAt = System.currentTimeMillis()
         _stage.value = LaunchStage.Running(p.title, vr = false)
     }
 
@@ -1406,6 +1436,7 @@ object GameRunner {
                     LogFile.setRunning(false)
                     PlayingService.start(ctx, "$title (ready)")
                     appendLog("✓ $title is ready (${(System.currentTimeMillis() - t0) / 1000}s in the background) and waits paused at its menu: Play shows it in a few seconds.")
+                    appendLog("  " + withContext(Dispatchers.IO) { memoryNote() })
                     watchGameExit(ctx, l, name, title)
                 }
             } finally {
@@ -1813,6 +1844,8 @@ object GameRunner {
     private const val CORE_KNOWN_S = 150
     /** A game gets ready in the background only with at least this much memory free. */
     private const val READY_MIN_FREE_MB = 1000
+    /** A game that closed by itself gets ready again only if it had been running at least this long (2 minutes). */
+    private const val READY_AGAIN_MIN_RUN_MS = 120_000L
 
     /** The latest lines from the game and the display (not our own waiting notes). */
     private fun logTail(n: Int) = _log.value.trimEnd().lines().filter { it.isNotBlank() && !it.startsWith("[waiting") }.takeLast(n).joinToString("\n")
