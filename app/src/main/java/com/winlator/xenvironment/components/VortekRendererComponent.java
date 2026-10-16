@@ -4,6 +4,7 @@ import android.os.SystemClock;
 
 import androidx.annotation.Keep;
 
+import com.toer15.queststeam.launcher.FpsMeter;
 import com.winlator.renderer.GLRenderer;
 import com.winlator.renderer.GPUImage;
 import com.winlator.renderer.Texture;
@@ -38,14 +39,15 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
     public static volatile Consumer<String> logger = null;
     /** Called for every frame the game presents (the app uses the first one as "the game is on screen"). */
     public static volatile Runnable onFrame = null;
-    /** For the game screen's stats, like a game stream's: frames per second over the last second, the picture's size, and when the last frame came (uptime ms, 0 = none yet). */
+    /** For the game screen's stats, like a game stream's: frames per second over the last two seconds (a sliding window, so it stays steady), the picture's size, and when the last frame came (uptime ms, 0 = none yet). */
     public static volatile int fps = 0;
     public static volatile int frameWidth = 0;
     public static volatile int frameHeight = 0;
     public static volatile long lastFrameTime = 0;
-    private long fpsStart = 0;
-    private int fpsFrames = 0;
+    private final FpsMeter fpsMeter = new FpsMeter(2000, 1024);
+    private long fpsPublishedAt = 0;
     private long frames = 0;
+    private long framesAtLastLog = 0;
     private long lastFrameLog = 0;
     private final java.util.HashSet<Integer> loggedWindows = new java.util.HashSet<>();
 
@@ -157,22 +159,32 @@ public class VortekRendererComponent implements ConnectionHandler, RequestHandle
         if (frameCallback != null) frameCallback.run();
         long now = System.currentTimeMillis();
         if (frames == 1 || now - lastFrameLog > 15000) {
+            // The frame rate since the last line, with the slowest second and the longest wait between two frames: a drop shows when it happened.
+            String rate = "";
+            if (frames > 1 && lastFrameLog > 0) {
+                long ms = now - lastFrameLog;
+                int slowest = fpsMeter.takeSlowest();
+                long gap = fpsMeter.takeLongestGap();
+                rate = ", " + Math.round((frames - framesAtLastLog) * 1000f / ms) + " fps over the last " + Math.round(ms / 1000f) + " s"
+                    + (slowest >= 0 ? " (slowest second " + slowest + " fps, longest wait between frames " + gap + " ms)" : "");
+            }
             lastFrameLog = now;
-            log("Vortek: " + frames + " frame" + (frames == 1 ? "" : "s") + " shown (window 0x" + Integer.toHexString(windowId) + ", " + window.getMapState() + ").");
+            framesAtLastLog = frames;
+            log("Vortek: " + frames + " frame" + (frames == 1 ? "" : "s") + " shown (window 0x" + Integer.toHexString(windowId) + ", " + window.getMapState() + ")" + rate + ".");
         }
     }
 
     private void countFrame(Window window) {
         long now = SystemClock.uptimeMillis();
-        if (now - fpsStart > 3000) {
-            fpsStart = now;
-            fpsFrames = 0;
+        // The next program's frames start a new count (the app clears lastFrameTime when one starts).
+        if (lastFrameTime == 0) {
+            fpsMeter.reset();
+            fpsPublishedAt = 0;
         }
-        fpsFrames++;
-        if (now - fpsStart >= 1000) {
-            fps = Math.round(fpsFrames * 1000f / (now - fpsStart));
-            fpsStart = now;
-            fpsFrames = 0;
+        fpsMeter.frame(now);
+        if (now - fpsPublishedAt >= 250) {
+            fpsPublishedAt = now;
+            fps = fpsMeter.fps(now);
         }
         frameWidth = window.getWidth();
         frameHeight = window.getHeight();

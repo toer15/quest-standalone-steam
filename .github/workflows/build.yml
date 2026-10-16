@@ -91,17 +91,25 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.16.0
+      - name: Publish release v0.17.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.16.0
+          tag_name: v0.17.0
           target_commitish: ${{ github.sha }}
-          name: "v0.16.0: your last game ready before you press Play"
+          name: "v0.17.0: Steam without its browser (test), steadier fps counter"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.17.0:** only the part of Steam a game needs, and a steadier fps counter.
+            - **Steam without its browser (a test, then automatic).** Your v0.16.0 log: Steam took 93 seconds to sign in; of the 78 seconds of processor time, 62 went to Steam's browser (`steamwebhelper.exe`, up to 3 GB of memory), which only draws Steam's windows, and 16 to `steam.exe` itself. A game needs Steam's core, not its windows. The first time Steam gets ready after this update, the app starts it with Steam's `-no-browser` option and waits to see if it signs in. If it does, that is remembered and Steam starts that way from now on: faster to sign in, and the memory stays free for the game. If it doesn't (whether this Steam signs in without its browser is not known until tried), the app starts Steam with its browser again, as before, and remembers that. Press Play during the test and the test stops at once; Steam starts as before and the test runs again next time. Runtime settings → Steam for Windows → **Steam without its browser** / **Steam with its browser** switches it (and tests again).
+            - Steam's own window (**Show Steam**, the Friends tab's **Show its window**) is drawn by the browser: with Steam running without it, the app restarts Steam with the browser first (a game waiting in the background closes).
+            - **Steadier fps counter.** It used to count in fixed one-second blocks that the chip read on its own timer, so it jumped by a few fps even for a steady game. It now counts the last two seconds at the moment it is read, and refreshes twice a second. The app does not cap the game's frame rate (the game presents without waiting for the screen); the fps is what the Windows translation can do.
+            - **Frame rate history in the log.** Every 15 seconds the "Vortek: N frames shown" line also says the fps over those seconds, the slowest second and the longest wait between two frames, so a drop (like the menu going from 22–25 fps to 2 fps in your log) shows when it happened.
+            - The line "Steam is signed in" now also lists the processor time Steam's programs used.
+            - A game gets ready in the background only with at least 1000 MB of memory free (it waits up to 90 seconds for room, for example while Steam's browser memory is being compressed).
 
             **v0.16.0:** your last game ready before you press Play, like a console.
             - **Get my last game ready too** (Runtime settings → Steam for Windows, on by default together with **Get Steam ready when the app opens**). Once Steam has signed in in the background after you open the app, the last game you played next to Steam starts too, muted and out of sight, loads, and waits paused at its menu. **Play** then shows it in a few seconds instead of loading it for a minute or more.

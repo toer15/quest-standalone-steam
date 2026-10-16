@@ -627,6 +627,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     var light by remember { mutableStateOf(SteamWindows.light(ctx)) }
     var warm by remember { mutableStateOf(SteamWindows.warmUp(ctx)) }
     var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
+    var core by remember { mutableStateOf(SteamWindows.coreAllowed(ctx)) }
     Text(
         "Online games (like R.E.P.O.) need Steam running, as on a PC. This installs Valve's Steam for Windows inside the runtime; it starts in the background before your games.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
@@ -699,6 +700,29 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                     color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for ((value, label) in listOf(true to "Steam without its browser", false to "Steam with its browser")) {
+                    val sel = core == value
+                    Text(
+                        (if (sel) "✓ " else "") + label,
+                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                            .focusRing().clickable { core = value; SteamWindows.setCoreAllowed(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            val coreWorks = remember(stage, core) { SteamWindows.coreWorks(ctx) }
+            Text(
+                when {
+                    !core -> "Steam starts with its browser: slower to sign in, and up to 3 GB of memory next to your game."
+                    coreWorks == true -> "✓ Works on this headset: Steam starts without its browser, most of its start time and memory. Steam's own window (Show Steam) restarts Steam with the browser."
+                    coreWorks == false -> "Steam didn't sign in without its browser on this headset, so it starts with it. Switch to \"with its browser\" and back to test again."
+                    else -> "Not tested yet: the next time Steam gets ready it tries starting without its browser once, and goes back by itself (and remembers) if it doesn't sign in."
+                },
+                color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+            )
             if (light) {
                 Spacer(Modifier.height(6.dp))
                 Text(

@@ -94,7 +94,7 @@ private fun FrameStats(modifier: Modifier) {
     LaunchedEffect(Unit) {
         while (true) {
             text = BuiltInDisplay.frameStatsText()
-            delay(1000)
+            delay(500)
         }
     }
     val shown = text ?: return

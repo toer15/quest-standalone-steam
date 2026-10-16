@@ -47,6 +47,35 @@ object SteamWindows {
     fun args(ctx: Context): List<String> = STEAM_ARGS + if (light(ctx)) LIGHT_ARGS else emptyList()
 
     /**
+     * Steam's core without its browser ("-no-browser": none of the steamwebhelper.exe processes). The
+     * browser only draws Steam's windows, yet it is most of Steam's start time (about 60 of the 78 seconds
+     * of processor time in a start) and memory (up to 3 GB); a game needs Steam's core (steam.exe:
+     * sign-in, Steamworks). It's not known whether the current Steam signs in without the browser, so the
+     * first start tests it and goes back to the browser if Steam doesn't sign in (see GameRunner).
+     */
+    private val CORE_ARGS = listOf("-no-browser", "-noshaders", "-nooverlay", "-nocrashmonitor", "-no-shared-textures", "-nofriendsui", "-nochatui")
+    fun coreArgs(): List<String> = CORE_ARGS
+
+    private const val PREF_CORE = "steam_core"
+    private const val PREF_CORE_WORKS = "steam_core_works"
+
+    /** "Steam without its browser" may be used (Runtime settings → Steam for Windows; on by default). */
+    fun coreAllowed(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getString(PREF_CORE, "auto") != "off"
+
+    /** Turning it back on tests it again. */
+    fun setCoreAllowed(ctx: Context, on: Boolean) =
+        ctx.getSharedPreferences("runtime", 0).edit().putString(PREF_CORE, if (on) "auto" else "off").remove(PREF_CORE_WORKS).apply()
+
+    /** null = not tested yet, true = Steam signed in without its browser on this headset, false = it didn't. */
+    fun coreWorks(ctx: Context): Boolean? =
+        ctx.getSharedPreferences("runtime", 0).let { if (it.contains(PREF_CORE_WORKS)) it.getBoolean(PREF_CORE_WORKS, false) else null }
+
+    fun setCoreWorks(ctx: Context, works: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean(PREF_CORE_WORKS, works).apply()
+
+    /** Untested again (the next start tests it). */
+    fun forgetCore(ctx: Context) = ctx.getSharedPreferences("runtime", 0).edit().remove(PREF_CORE_WORKS).apply()
+
+    /**
      * Steam's own settings that cost the most without a GPU (its windows are drawn by its built-in
      * browser, in software here): smooth scrolling, and GPU / video acceleration in its web views.
      * Written while Wine isn't running.
