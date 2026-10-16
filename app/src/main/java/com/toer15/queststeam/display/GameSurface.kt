@@ -19,7 +19,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -79,6 +82,7 @@ fun GameSurface(view: XServerView, onLeave: () -> Unit) {
                 },
             )
         }
+        WaitingPanel(Modifier.align(Alignment.Center))
         Text(
             "✕  Leave game", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
             modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(50))
@@ -94,6 +98,27 @@ fun GameSurface(view: XServerView, onLeave: () -> Unit) {
                 .background(Color.Black.copy(alpha = 0.45f)).focusRing().clickable { typing = true }
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         )
+    }
+}
+
+/**
+ * Until the game has drawn its first frame the screen would be black: what Play waits for, in the middle
+ * ("Launching R.E.P.O.… 34s · Steam is signing in (34s of about 80s)"). Gone with the first frame.
+ */
+@Composable
+private fun WaitingPanel(modifier: Modifier) {
+    var text by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            text = BuiltInDisplay.waitingNote()
+            delay(500)
+        }
+    }
+    val shown = text ?: return
+    Column(modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        CircularProgressIndicator(color = Color.White.copy(alpha = 0.85f), strokeWidth = 3.dp, modifier = Modifier.size(36.dp))
+        Spacer(Modifier.height(16.dp))
+        Text(shown, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
     }
 }
 

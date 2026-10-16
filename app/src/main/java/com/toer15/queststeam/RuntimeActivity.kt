@@ -631,8 +631,9 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     var warm by remember { mutableStateOf(SteamWindows.warmUp(ctx)) }
     var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
     var core by remember { mutableStateOf(SteamWindows.coreAllowed(ctx)) }
+    var steamStarts by remember { mutableStateOf(SteamWindows.steamStartsGame(ctx)) }
     Text(
-        "Play uses Steam's own applaunch for the game you pick, and that Steam keeps running for your next game (it doesn't start again). Steam's window stays off unless you press Open Steam.",
+        "Steam runs in the background (never shown) and the game you pick starts next to it, so the next game starts at once. Steam's window stays off unless you press Open Steam.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
     )
     Spacer(Modifier.height(10.dp))
@@ -694,6 +695,24 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                     color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for ((value, label) in listOf(false to "The app starts the game", true to "Steam starts the game (experimental)")) {
+                    val sel = steamStarts == value
+                    Text(
+                        (if (sel) "✓ " else "") + label,
+                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                            .focusRing().clickable { steamStarts = value; SteamWindows.setSteamStartsGame(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (steamStarts) "Steam starts the game with its own Play command. On this headset the game it started crashed at once (v0.19.0, v0.19.1), so this is for testing."
+                else "Steam signs in first, then the app starts the game next to it (the way that worked in v0.16.0).",
+                color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+            )
             Spacer(Modifier.height(8.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for ((value, label) in listOf(true to "Steam without its browser", false to "Steam with its browser")) {

@@ -3,12 +3,13 @@ package com.toer15.queststeam.play
 /**
  * What one Play tap does.
  *
- * Steam itself starts a game with `steam.exe -silent -applaunch <appid>`, then that game's own
- * arguments. Play uses that same command when Steam isn't running yet, so the game opens the way it
- * does from Steam, and that Steam stays for the next game. With Steam already running (started for an
- * earlier game, or when the app opened), the game starts next to it at once: Steam doesn't start again.
- * The screen says Launching that game. Steam's window is not shown. Opening Steam is the only path
- * that shows Steam.
+ * With Steam already running (started when the app opened, or for an earlier game) the game starts next to
+ * it at once: Steam doesn't start again. With no Steam running, Steam starts first, in the background and
+ * never shown, and the app starts the game next to it the moment it has signed in ([SteamRole.STEAM_FIRST]):
+ * that Steam then stays for the next game. Steam can also be asked to start the game itself with
+ * `steam.exe -silent -applaunch <appid>` ([SteamRole.APPLAUNCH], an option: on the Quest the game Steam
+ * started crashed at once). Either way the game screen comes up right away and says what it waits for.
+ * Opening Steam is the only path that shows Steam's window.
  */
 object DirectLaunch {
     enum class SteamRole {
@@ -16,6 +17,8 @@ object DirectLaunch {
         NONE,
         /** Steam's own `-applaunch` for this app id. The game opens. Steam's window does not. */
         APPLAUNCH,
+        /** No Steam is running: it starts first (in the background), then the app starts the game next to it. */
+        STEAM_FIRST,
         /** Steam is already running: the game starts next to it, and Steam doesn't start a second time. */
         BESIDE_STEAM,
         /** The user asked to open Steam itself. */
@@ -47,14 +50,21 @@ object DirectLaunch {
     }
 
     /**
-     * The line at the top of the game screen until the game draws: "Launching R.E.P.O.… 12s · Steam is signing in
-     * (93s last time)". [lastSignInS]: how long Steam took to sign in last time, if known.
+     * What the game screen says in the middle until the game draws: "Launching R.E.P.O.… 34s · Steam is signing in
+     * (34s of about 80s)". [lastSignInS]: how long Steam took to sign in last time, if known; [steamSeconds]: how long
+     * this Steam has been starting.
      */
-    fun waitingNote(title: String, seconds: Long, wait: Wait, lastSignInS: Long? = null): String = launching(title, seconds) + when (wait) {
-        Wait.NONE -> ""
-        Wait.STEAM_SIGNING_IN -> " · Steam is signing in" + (lastSignInS?.let { " (${it}s last time)" } ?: "")
-        Wait.STEAM_STARTING_GAME -> " · Steam is starting it"
-    }
+    fun waitingNote(title: String, seconds: Long, wait: Wait, lastSignInS: Long? = null, steamSeconds: Long? = null): String =
+        launching(title, seconds) + when (wait) {
+            Wait.NONE -> ""
+            Wait.STEAM_SIGNING_IN -> " · Steam is signing in" + when {
+                steamSeconds != null && lastSignInS != null -> " (${steamSeconds}s of about ${lastSignInS}s)"
+                lastSignInS != null -> " (${lastSignInS}s last time)"
+                steamSeconds != null -> " (${steamSeconds}s)"
+                else -> ""
+            }
+            Wait.STEAM_STARTING_GAME -> " · Steam is starting it"
+        }
 
     /**
      * A library game fills the display as soon as its process is started.
@@ -76,7 +86,11 @@ object DirectLaunch {
     fun applaunchArgs(appId: Int, gameArgs: List<String>, steamFlags: List<String> = emptyList()): List<String> =
         listOf("-silent") + steamFlags + listOf("-applaunch", appId.toString()) + gameArgs
 
-    /** [steamRunning]: Steam's session is up already (its flat games start in it). */
+    /**
+     * [steamRunning]: Steam's session is up already (its flat games start in it). [steamStartsGame]: Steam is asked
+     * to start the game itself when it isn't running (the experimental option); otherwise Steam starts first and
+     * the app starts the game next to it.
+     */
     fun plan(
         title: String,
         openingSteam: Boolean,
@@ -85,12 +99,15 @@ object DirectLaunch {
         appId: Int = 0,
         steamInstalled: Boolean = false,
         steamRunning: Boolean = false,
+        steamStartsGame: Boolean = true,
     ): Plan {
         if (openingSteam) return Plan(SteamRole.SHOW_STEAM, "Starting Steam…", waitForSteamSignIn = false)
         if (!runtimeInstalled) return Plan(SteamRole.NONE, PREPARING, waitForSteamSignIn = false)
         if (!gameFileExists) return Plan(SteamRole.NONE, launching(title), waitForSteamSignIn = false)
         if (steamRunning) return Plan(SteamRole.BESIDE_STEAM, launching(title), waitForSteamSignIn = false)
-        if (usesApplaunch(false, appId, steamInstalled)) return Plan(SteamRole.APPLAUNCH, launching(title), waitForSteamSignIn = false)
+        if (usesApplaunch(false, appId, steamInstalled)) {
+            return Plan(if (steamStartsGame) SteamRole.APPLAUNCH else SteamRole.STEAM_FIRST, launching(title), waitForSteamSignIn = false)
+        }
         return Plan(SteamRole.NONE, launching(title), waitForSteamSignIn = false)
     }
 }

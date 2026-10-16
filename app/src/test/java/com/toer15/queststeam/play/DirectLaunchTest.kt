@@ -77,6 +77,36 @@ class DirectLaunchTest {
         assertEquals(DirectLaunch.SteamRole.SHOW_STEAM, steam.steam)
     }
 
+    @Test fun noSteamRunningMeansSteamStartsFirstAndTheAppStartsTheGame() {
+        val cold = DirectLaunch.plan(
+            "R.E.P.O.", openingSteam = false, runtimeInstalled = true, gameFileExists = true,
+            appId = 3241660, steamInstalled = true, steamStartsGame = false,
+        )
+        assertEquals(DirectLaunch.SteamRole.STEAM_FIRST, cold.steam)
+        assertEquals("Launching R.E.P.O.…", cold.step)
+        assertFalse(cold.step.contains("Starting Steam"))
+        // A game that isn't in Steam's library (no app id) has nothing for Steam to do: it starts alone.
+        val loose = DirectLaunch.plan("Game", false, true, true, appId = 0, steamInstalled = true, steamStartsGame = false)
+        assertEquals(DirectLaunch.SteamRole.NONE, loose.steam)
+        // Steam not installed: alone.
+        val noSteam = DirectLaunch.plan("Game", false, true, true, appId = 3241660, steamInstalled = false, steamStartsGame = false)
+        assertEquals(DirectLaunch.SteamRole.NONE, noSteam.steam)
+        // Steam running already: next to it, whichever way Steam starts games.
+        for (starts in listOf(true, false)) {
+            val beside = DirectLaunch.plan("Game", false, true, true, appId = 3241660, steamInstalled = true, steamRunning = true, steamStartsGame = starts)
+            assertEquals(DirectLaunch.SteamRole.BESIDE_STEAM, beside.steam)
+        }
+    }
+
+    @Test fun theGameScreenShowsHowFarSteamIs() {
+        assertEquals(
+            "Launching R.E.P.O.… 34s · Steam is signing in (34s of about 80s)",
+            DirectLaunch.waitingNote("R.E.P.O.", 34, DirectLaunch.Wait.STEAM_SIGNING_IN, lastSignInS = 80, steamSeconds = 34),
+        )
+        assertEquals("Launching R.E.P.O.… 5s · Steam is signing in (5s)", DirectLaunch.waitingNote("R.E.P.O.", 5, DirectLaunch.Wait.STEAM_SIGNING_IN, steamSeconds = 5))
+        assertEquals("Launching R.E.P.O.… 5s", DirectLaunch.waitingNote("R.E.P.O.", 5, DirectLaunch.Wait.NONE, lastSignInS = 80, steamSeconds = 5))
+    }
+
     @Test fun theGameScreenSaysWhatItWaitsFor() {
         assertEquals("Launching R.E.P.O.… 12s", DirectLaunch.waitingNote("R.E.P.O.", 12, DirectLaunch.Wait.NONE))
         assertEquals(

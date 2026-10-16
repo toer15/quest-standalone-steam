@@ -381,6 +381,11 @@ object GameRunner {
     /** True once Steam's session has signed in (it says so in its connection log); logs it the first time. */
     private fun checkSteamSignIn(l: GameLauncher): Boolean {
         if (steamSignedIn) return true
+        // When Steam first writes to its connection log it has started connecting: where the minute and more of waiting goes.
+        if (!steamConnectNoted && steamStartedAt > 0 && SteamWindows.connectionLog(l).let { it.isFile && it.length() > steamLogOffset }) {
+            steamConnectNoted = true
+            appendLog("Steam started connecting ${(System.currentTimeMillis() - steamStartedAt) / 1000}s after it started.")
+        }
         if (!SteamWindows.loggedOnSince(l, steamLogOffset)) return false
         synchronized(this) {
             if (!steamSignedIn) {
@@ -392,10 +397,17 @@ object GameRunner {
                     "Steam is signed in (${took}s after it started${if (steamCoreOnly) ", without its browser" else ""})." +
                         if (used.isNotEmpty()) " Processor time so far: $used." else ""
                 )
+                SteamWindows.connectionLines(l, steamLogOffset).takeIf { it.isNotEmpty() }?.let { lines ->
+                    appendLog("[steam connection log]")
+                    lines.forEach { appendLog("  $it") }
+                }
             }
         }
         return true
     }
+
+    /** Steam has written to its connection log since it started (see [checkSteamSignIn]). */
+    @Volatile private var steamConnectNoted = false
 
     /** When Play was pressed, for "on screen N s after Play" (the start-time goal); 0 once reported. */
     @Volatile private var playPressedAt = 0L
@@ -425,6 +437,8 @@ object GameRunner {
     private suspend fun launchSteamSession(ctx: Context, l: GameLauncher, env: Map<String, String>, gen: Int, core: Boolean = false): Boolean {
         steamLogOffset = withContext(Dispatchers.IO) { SteamWindows.connectionLog(l).let { if (it.isFile) it.length() else 0L } }
         steamSignedIn = false
+        steamConnectNoted = false
+        steamStartedAt = System.currentTimeMillis()
         var steamLines = 0
         val onSteamLine: (String) -> Unit = { line ->
             val keep = (line.contains("err:") || line.startsWith("wine:") || line.contains("Box64", ignoreCase = true)) && !line.contains("fixme")
@@ -543,15 +557,22 @@ object GameRunner {
     /**
      * [core]: without Steam's browser (the default once that has worked, or while it's untested; never after
      * it didn't sign in). The first time is a test: if Steam doesn't sign in that way, it starts again with
-     * its browser, as it always did, and the result is remembered.
+     * its browser, as it always did, and the result is remembered. Returns when Steam has signed in (or didn't).
+     * [forGame]: this start is for a Play on that game (see [startWithNewSteam]), not the one when the app opens.
      */
-    private suspend fun startSteamInBackground(ctx: Context, l: GameLauncher, core: Boolean = SteamWindows.coreAllowed(ctx) && SteamWindows.coreWorks(ctx) != false) {
+    private suspend fun startSteamInBackground(
+        ctx: Context, l: GameLauncher, core: Boolean = SteamWindows.coreAllowed(ctx) && SteamWindows.coreWorks(ctx) != false,
+        forGame: String? = null,
+    ) {
         val gen = ++launchGen
         steamEnv = null
         sessionGame = null
         gameStartedAt = System.currentTimeMillis()
         markBackgroundErrors()
-        appendLog("Getting Steam ready in the background, so games start right away (Runtime settings → Steam for Windows).")
+        appendLog(
+            if (forGame != null) "Steam starts first, in the background (its window stays off): $forGame starts next to it as soon as Steam has signed in."
+            else "Getting Steam ready in the background, so games start right away (Runtime settings → Steam for Windows).",
+        )
         prepareRuntime(ctx, l)
         if (gen != launchGen) return // a game was started meanwhile
         val env = mutableMapOf<String, String>()
@@ -599,28 +620,10 @@ object GameRunner {
                 appendLog("Steam doesn't sign in without its browser on this headset: starting it with its browser as before (remembered; Runtime settings → Steam for Windows tests again).")
             }
             steamRestarting = true // a Play waiting for Steam keeps waiting through the restart
-            startSteamInBackground(ctx, l, core = false)
+            startSteamInBackground(ctx, l, core = false, forGame = forGame)
             return
         }
         if (awaitSteamSignIn(l)) getLastGameReady(ctx, l)
-    }
-
-    /**
-     * Play pressed while Steam is being tested without its browser and hasn't even tried to connect: not worth
-     * waiting for. The test is dropped (it stays untested for the next start) and Play starts Steam as it always did.
-     */
-    private suspend fun abandonCoreTrial(l: GameLauncher) {
-        coreTrial = false
-        steamRestarting = false
-        warmJob?.cancelAndJoin()
-        ++launchGen
-        steamEnv = null
-        sessionGame = null
-        steamSignedIn = false
-        steamCoreOnly = false
-        withContext(Dispatchers.IO) { l.stop() }
-        BuiltInDisplay.stop()
-        appendLog("Play was pressed during the test of Steam without its browser: Steam starts as usual now, and the test runs again next time.")
     }
 
     /** How big the caches that make later starts faster are, for the log (they should grow, then stay). */
@@ -814,13 +817,9 @@ object GameRunner {
                     if (!openingSteam) _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
                 }
                 val l = launcher ?: GameLauncher(app).also { launcher = it }
-                if (coreTrial) {
-                    // Play during the test. A Steam that is already connecting without its browser is on its way: it is kept (its
-                    // head start counts) and waited for like any Steam. One that hasn't tried to connect isn't: the test is dropped.
-                    val connecting = withContext(Dispatchers.IO) { SteamWindows.connectionLog(l).let { it.isFile && it.length() > steamLogOffset } }
-                    if (connecting) appendLog("Play was pressed while Steam is starting without its browser; it is connecting, so it's kept for the game.")
-                    else abandonCoreTrial(l)
-                }
+                // (Pressing Play while Steam is being tested without its browser doesn't end the test: Steam's start goes on and
+                // the game starts when it has signed in. The test is how Steam gets much faster to sign in, so it must finish once.)
+                if (coreTrial) appendLog("Play was pressed while Steam is being tested without its browser: the test goes on, and $title starts when Steam has signed in.")
                 // A game getting ready in the background stops waiting: it's shown if it's this one, else closed.
                 readyJob?.cancelAndJoin()
                 val vrGame = mode == RuntimeActivity.MODE_VR && VrBridge.isVrGame(gameRoot(l, exe))
@@ -839,10 +838,12 @@ object GameRunner {
                     val plan = DirectLaunch.plan(
                         title, openingSteam = false, runtimeInstalled = true, gameFileExists = true,
                         appId = appId, steamInstalled = SteamWindows.isInstalled(l), steamRunning = !vrGame && steamRunning(),
+                        steamStartsGame = SteamWindows.steamStartsGame(app),
                     )
                     appendLog(
                         when (plan.steam) {
                             DirectLaunch.SteamRole.BESIDE_STEAM -> "Play: $title starts next to the Steam that's already running (Steam doesn't start again)."
+                            DirectLaunch.SteamRole.STEAM_FIRST -> "Play: Steam starts first, in the background (its window stays off), then $title starts next to it and Steam stays for the next game."
                             DirectLaunch.SteamRole.APPLAUNCH -> "Play: Steam applaunch $appId ($title). Steam starts this game and stays for the next one. Steam's window stays off."
                             else -> "Play: only $title${if (appId > 0) " (app $appId)" else ""}. ${exe.name} starts."
                         },
@@ -859,12 +860,16 @@ object GameRunner {
                         } else startInSteam(app, exe, args, title, appId)
                         return@launch
                     }
-                    if (plan.steam == DirectLaunch.SteamRole.APPLAUNCH && !SteamWindows.isSignedIn(l)) {
-                        // Nobody has signed in to this Steam yet: Steam can't start the game before that, and its sign-in needs its window.
+                    if ((plan.steam == DirectLaunch.SteamRole.APPLAUNCH || plan.steam == DirectLaunch.SteamRole.STEAM_FIRST) && !SteamWindows.isSignedIn(l)) {
+                        // Nobody has signed in to this Steam yet: Steam can't start in the background before that, and its sign-in needs its window.
                         appendLog("Sign in to Steam first: opening Steam. When you're signed in, leave Steam and press Play on $title again.")
                         ensureSteamClient(l, "Steam")
                         start(ctx, SteamWindows.exe(l), SteamWindows.args(app).joinToString(" "), RuntimeActivity.MODE_FLAT, "Steam: sign in, then play $title")
                         watchSteamSignIn(l)
+                        return@launch
+                    }
+                    if (plan.steam == DirectLaunch.SteamRole.STEAM_FIRST && !vrGame) {
+                        startWithNewSteam(app, l, exe, args, title, appId)
                         return@launch
                     }
                     _stage.value = LaunchStage.Working(title, plan.step)
@@ -994,7 +999,8 @@ object GameRunner {
         }
 
         val id = if (!SteamWindows.isSteam(exe)) (if (appId > 0) appId else gameDir.name.toIntOrNull() ?: 0) else 0
-        val applaunch = DirectLaunch.usesApplaunch(SteamWindows.isSteam(exe), id, SteamWindows.isInstalled(l))
+        // Steam's own Play command is an option (see SteamWindows.steamStartsGame); otherwise this is a game that starts on its own.
+        val applaunch = SteamWindows.steamStartsGame(ctx) && DirectLaunch.usesApplaunch(SteamWindows.isSteam(exe), id, SteamWindows.isInstalled(l))
         // That command starts Steam too: Steam stays for the next games, and the game it starts is watched (see watchApplaunch).
         val adopt = applaunch && builtIn && !inVr
         if (!SteamWindows.isSteam(exe)) {
@@ -1224,7 +1230,10 @@ object GameRunner {
             }
         } else appendLog("Starting $title next to the running Steam.")
         // (Steam may have restarted while it signed in: its environment now.)
-        val base = steamEnv ?: return
+        val base = steamEnv ?: run {
+            _stage.value = LaunchStage.Failed(title, "Steam closed before $title could start. The log below shows why.")
+            return
+        }
         withContext(Dispatchers.IO) { l.pause(SteamWindows.WEB_HELPER, true) }
         trimAppMemory(ctx, collect = false)
         val result = launchInSession(ctx, l, base, exe, args, title, appId)
@@ -1233,6 +1242,20 @@ object GameRunner {
         PlayingService.start(ctx, title)
         appendLog("The game display is up. $title is starting in it.")
         watchGameExit(ctx, l, exe.name, title)
+    }
+
+    /**
+     * Play with no Steam running: Steam starts first, in the background (never shown; without its browser once that has
+     * worked on this headset), and the game starts next to it the moment Steam has signed in ([startInSteam]), the way it
+     * did before v0.18.6. That Steam stays for the next game. The game screen comes up as soon as its display exists and says
+     * what it waits for (see [watchOnScreen]).
+     */
+    private suspend fun startWithNewSteam(ctx: Context, l: GameLauncher, exe: File, args: String, title: String, appId: Int) {
+        val play = playGen
+        watchOnScreen(ctx, l, title, exe.name)
+        startSteamInBackground(ctx, l, forGame = title)
+        if (play != playGen) return // Leave or Stop meanwhile: nothing more starts
+        startInSteam(ctx, exe, args, title, appId)
     }
 
     /**
@@ -1289,13 +1312,17 @@ object GameRunner {
         scope.launch {
             val t0 = System.currentTimeMillis()
             var seen = false
-            var misses = 0
+            var goneSince = 0L
             while (sessionGame == name && gameGen == mine && steamRunning()) {
-                delay(2000)
-                if (withContext(Dispatchers.IO) { l.isRunning(name) }) { seen = true; misses = 0; continue }
+                // Looked at twice a second at first, so a game that crashes right after it started is caught alive, then every two seconds.
+                delay(if (System.currentTimeMillis() - t0 < 20_000) 500 else 2000)
+                val now = System.currentTimeMillis()
+                if (withContext(Dispatchers.IO) { l.isRunning(name) }) { seen = true; goneSince = 0L; continue }
                 // Wine starts it through its explorer: it can take a while to show up under its own name.
-                if (!seen && System.currentTimeMillis() - t0 < 60_000) continue
-                if (++misses >= 3) break
+                if (!seen) { if (now - t0 >= GAME_APPEAR_S * 1000L) break else continue }
+                // (Wine renames a process while it starts: gone for a few seconds is not closed.)
+                if (goneSince == 0L) goneSince = now
+                if (now - goneSince >= 6_000) break
             }
             if (sessionGame != name || gameGen != mine) return@launch // left with "Leave game", or another game started
             sessionGame = null
@@ -1984,6 +2011,8 @@ object GameRunner {
      */
     private fun watchOnScreen(ctx: Context, l: GameLauncher, title: String, exeName: String) {
         val play = playGen
+        if (watchedPlay == play) return // this Play's watcher is already running
+        watchedPlay = play
         val cls = exeName.lowercase()
         scope.launch {
             val started = System.currentTimeMillis()
@@ -1991,6 +2020,8 @@ object GameRunner {
             var lastGameLog = ""
             try {
                 while (play == playGen && _stage.value.let { it !is LaunchStage.Idle && it !is LaunchStage.Failed }) {
+                    // Steam had to start first: the game screen replaces the loading screen as soon as its display exists.
+                    if (_stage.value is LaunchStage.Working && BuiltInDisplay.view != null) _stage.value = LaunchStage.Running(title, vr = false)
                     if (BuiltInDisplay.gameWindow.value && BuiltInDisplay.expectedWindowClass == cls) {
                         gameShownAt = System.currentTimeMillis()
                         noteOnScreen(title)
@@ -1999,7 +2030,8 @@ object GameRunner {
                     val secs = (System.currentTimeMillis() - started) / 1000
                     if (secs >= BUILT_IN_TIMEOUT_S) { appendLog("No game window after ${secs}s. The game display stays open."); return@launch }
                     val wait = steamWait(exeName)
-                    BuiltInDisplay.waitingText = DirectLaunch.waitingNote(title, secs, wait, SteamWindows.lastSignInS(ctx, steamCoreOnly))
+                    val steamSecs = if (steamEnv != null && steamStartedAt > 0) (System.currentTimeMillis() - steamStartedAt) / 1000 else null
+                    BuiltInDisplay.waitingText = DirectLaunch.waitingNote(title, secs, wait, SteamWindows.lastSignInS(ctx, steamCoreOnly), steamSecs)
                     if (secs - lastNote >= 15) {
                         lastNote = secs
                         appendLog(
@@ -2025,6 +2057,9 @@ object GameRunner {
             }
         }
     }
+
+    /** The Play whose game-screen watcher runs ([watchOnScreen]); one watcher per Play. */
+    @Volatile private var watchedPlay = -1
 
     /** What the game [exeName] on its screen waits for before it runs (see [watchOnScreen]). */
     private fun steamWait(exeName: String): DirectLaunch.Wait = when {
@@ -2118,12 +2153,14 @@ object GameRunner {
     private const val STEAM_TIMEOUT_S = 40 * 60
     /** The test of Steam without its browser: gives up when Steam hasn't tried to connect by then, or hasn't signed in by then. */
     private const val CORE_SILENT_S = 40
-    private const val CORE_TRIAL_S = 90
+    private const val CORE_TRIAL_S = 75
     /** The same for a start after the test passed (more patient: a slow network is not the browser's fault). */
     private const val CORE_KNOWN_SILENT_S = 60
     private const val CORE_KNOWN_S = 150
     /** A game gets ready in the background only with at least this much memory free. */
     private const val READY_MIN_FREE_MB = 1000
+    /** A game Wine started that no process shows up for after this long never started (it crashed at once, or wasn't started). */
+    private const val GAME_APPEAR_S = 30
     /** A game that closed by itself gets ready again only if it had been running at least this long (2 minutes). */
     private const val READY_AGAIN_MIN_RUN_MS = 120_000L
     /** Steam's own Play command (see [watchApplaunch]): how long Steam may take after signing in to start the game before the app starts it itself. */

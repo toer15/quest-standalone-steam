@@ -91,17 +91,25 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.19.1
+      - name: Publish release v0.19.2
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.19.1
+          tag_name: v0.19.2
           target_commitish: ${{ github.sha }}
-          name: "v0.19.1: the first Play is fast too"
+          name: "v0.19.2: the game starts the way that worked, and the screen says what it waits for"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.19.2:** fixes the black screen and the crash in the v0.19.0 / v0.19.1 logs.
+            - **What the logs showed.** Steam took 80 and 86 seconds to sign in. Then Steam's own Play command (`-applaunch`, added in v0.18.6) started R.E.P.O. and it crashed at once, at the same spot in both logs (an access violation, `addr 0x2803fecac`). Nothing was drawn, so the screen stayed black, and the app kept waiting for more than a minute before it admitted the game had closed. In v0.19.1 pressing Play right after opening the app also threw away the Steam that was starting in the background and began again.
+            - **The game starts the way that worked before v0.18.6.** With no Steam running, Steam starts first in the background (its window stays off) and the app starts the game next to it the moment Steam has signed in; that Steam stays for the next game. Steam's own Play command is still there as an option: Runtime settings → Steam for Windows → **Steam starts the game (experimental)**.
+            - **The game screen says what it waits for.** It comes up as soon as its display exists, with the text in the middle instead of black: "Launching R.E.P.O.… 34s · Steam is signing in (34s of about 80s)". It goes away with the game's first frame.
+            - **Pressing Play never throws away Steam's start.** Steam keeps starting and the game starts when it has signed in. This also lets the Steam-without-its-browser test finish (it never could in your logs, because Play ended it): once, the first Play can take up to 40 seconds longer if Steam doesn't sign in that way (then it starts with its browser, remembered); if it does sign in, Steam starts much faster from then on.
+            - **A game that crashes at start is told within seconds** (it used to take over a minute): "R.E.P.O. closed while starting", with the game's log and the memory use.
+            - **Where Steam's wait goes.** The log now says when Steam started connecting and lists the first lines of its connection log when it has signed in, to find what the 80 seconds are spent on.
 
             **v0.19.1:** the first Play after opening the app is fast too.
             - **Steam gets ready in the background when you open the app again** (you never see it). By the time you've picked a game it has usually signed in, so **Play** starts the game right away instead of first waiting a minute or two for Steam. Press Play sooner and the game's screen says Steam is still signing in; the game starts the moment it is.

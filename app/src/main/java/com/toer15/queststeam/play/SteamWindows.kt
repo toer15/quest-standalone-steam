@@ -260,6 +260,26 @@ object SteamWindows {
         }
     }.getOrDefault(false)
 
+    /** The first [n] lines Steam wrote to its connection log since [offset] (when it connected and what it said), for the app's log. */
+    fun connectionLines(l: GameLauncher, offset: Long, n: Int = 12): List<String> = runCatching {
+        val f = connectionLog(l)
+        if (!f.isFile || f.length() <= offset) return emptyList()
+        RandomAccessFile(f, "r").use { raf ->
+            raf.seek(offset)
+            val bytes = ByteArray((raf.length() - offset).coerceAtMost(64_000).toInt())
+            raf.readFully(bytes)
+            String(bytes).lines().filter { it.isNotBlank() }.take(n).map { it.take(160) }
+        }
+    }.getOrDefault(emptyList())
+
+    /**
+     * Steam's own Play command (steam.exe -applaunch <appid>) starts the game, instead of the app starting it next
+     * to a Steam that has signed in. Off by default: the game Steam started crashed at once on this headset
+     * (v0.19.0 and v0.19.1 logs: an access violation right after "Steam started R.E.P.O.").
+     */
+    fun steamStartsGame(ctx: Context) = ctx.getSharedPreferences("runtime", 0).getBoolean("steam_starts_game", false)
+    fun setSteamStartsGame(ctx: Context, on: Boolean) = ctx.getSharedPreferences("runtime", 0).edit().putBoolean("steam_starts_game", on).apply()
+
     /** Tells Steamworks which game this is when it isn't started from Steam's own library. */
     fun writeAppId(exeDir: File, appId: Int) {
         if (appId <= 0) return

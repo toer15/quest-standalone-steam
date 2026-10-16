@@ -80,12 +80,11 @@ object BuiltInDisplay {
 
     /**
      * "1280×720 · 30 fps" while the game sends frames (like a game stream's stats), how long since the
-     * last one when it stopped; before its first frame, [waitingText].
+     * last one when it stopped, null before its first frame (see [waitingNote]).
      */
     fun frameStatsText(): String? {
         val last = VortekRendererComponent.lastFrameTime
-        if (server == null) return null
-        if (last == 0L) return waitingText
+        if (last == 0L || server == null) return null
         val size = "${VortekRendererComponent.frameWidth}×${VortekRendererComponent.frameHeight}"
         val now = android.os.SystemClock.uptimeMillis()
         val age = now - last
@@ -95,10 +94,13 @@ object BuiltInDisplay {
     }
 
     /**
-     * The game screen is up before the game draws (see GameRunner.watchOnScreen): what it waits for, in the
-     * stats' place ("Launching R.E.P.O.… 12s · Steam is signing in"); null when there's nothing to say.
+     * The game screen is up before the game draws (see GameRunner.watchOnScreen): what it waits for
+     * ("Launching R.E.P.O.… 12s · Steam is signing in"); null when there's nothing to say.
      */
     @Volatile var waitingText: String? = null
+
+    /** What the game screen says in the middle until the game has drawn its first frame (it would be black otherwise); null once it has. */
+    fun waitingNote(): String? = if (server != null && VortekRendererComponent.lastFrameTime == 0L) waitingText else null
 
     @Volatile private var startTime: String? = null
     @Volatile private var startTimeAt = 0L
