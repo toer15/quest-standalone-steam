@@ -787,7 +787,8 @@ object GameRunner {
     }
 
     fun play(ctx: Context, exe: File, args: String, mode: String, title: String, appId: Int = 0) {
-        val busy = _stage.value is LaunchStage.Working || _stage.value is LaunchStage.Opening
+        // A Play that's still starting (also with its game screen up, waiting for Steam) isn't started a second time.
+        val busy = _stage.value is LaunchStage.Working || _stage.value is LaunchStage.Opening || _stage.value is LaunchStage.Running
         if (busy && job?.isActive == true) return
         val openingSteam = SteamWindows.isSteam(exe)
         if (!openingSteam && !exe.isFile) {
@@ -1253,8 +1254,20 @@ object GameRunner {
     private suspend fun startWithNewSteam(ctx: Context, l: GameLauncher, exe: File, args: String, title: String, appId: Int) {
         val play = playGen
         watchOnScreen(ctx, l, title, exe.name)
-        startSteamInBackground(ctx, l, forGame = title)
-        if (play != playGen) return // Leave or Stop meanwhile: nothing more starts
+        // Steam's start (with the test of Steam without its browser) runs apart from this Play: Leave doesn't end it halfway
+        // (a Steam left without the test's way back would never sign in), only Stop does.
+        val steamStart = scope.launch {
+            try {
+                startSteamInBackground(ctx, l, forGame = title)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appendLog("Couldn't start Steam: $e")
+            }
+        }
+        warmJob = steamStart
+        steamStart.join()
+        if (play != playGen) return // Leave or Stop meanwhile: the game doesn't start
         startInSteam(ctx, exe, args, title, appId)
     }
 
