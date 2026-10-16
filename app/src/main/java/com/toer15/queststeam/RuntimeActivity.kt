@@ -1,139 +1,262 @@
 package com.toer15.queststeam
 
+import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.provider.DocumentsContract
-import android.text.InputType
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.ScrollView
-import android.widget.TextView
+import android.view.KeyEvent
+import android.view.MotionEvent
+import com.toer15.queststeam.display.BuiltInDisplay
+import com.toer15.queststeam.display.GameDisplay
+import com.toer15.queststeam.display.GameSurface
+import com.toer15.queststeam.display.LeaveGameDialog
+import com.toer15.queststeam.display.gameKeyEvent
+import com.toer15.queststeam.display.GameDisplayRow
+import com.toer15.queststeam.display.Vortek
+import com.toer15.queststeam.play.SteamWindows
+import com.toer15.queststeam.display.PlayingService
+import com.toer15.queststeam.gamepad.ControllerRelay
+import com.toer15.queststeam.play.GameRunner
+import com.toer15.queststeam.play.LastGame
+import com.toer15.queststeam.play.LaunchStage
+import com.toer15.queststeam.play.LaunchOverlay
+import com.toer15.queststeam.gamepad.Controllers
+import com.toer15.queststeam.gamepad.GamepadBridge
+import com.toer15.queststeam.ui.ControllerStatus
+import com.toer15.queststeam.ui.OverlayPermissionRow
+import com.toer15.queststeam.ui.focusRing
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
-import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.toer15.queststeam.launcher.DeviceMode
 import com.toer15.queststeam.launcher.GameLauncher
 import com.toer15.queststeam.launcher.RuntimeInstaller
+import com.toer15.queststeam.ui.LocalDeviceUi
+import com.toer15.queststeam.ui.SteamColors
+import com.toer15.queststeam.ui.SteamTheme
+import com.toer15.queststeam.ui.formatBytes
+import com.toer15.queststeam.ui.steamBackdrop
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** Runtime installer + "pick a game and run it with Box64/Wine" screen, with live logs. */
-class RuntimeActivity : AppCompatActivity() {
+/** Windows runtime screen (Box64 + Wine): download/delete the runtime, smoke test, run games, logs. */
+class RuntimeActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_EXE = "exe"
         const val EXTRA_TITLE = "title"
+        const val EXTRA_ARGS = "args"
+        /** [MODE_VR] or [MODE_FLAT], from the Play popup. */
+        const val EXTRA_MODE = "mode"
+        const val MODE_VR = "vr"
+        const val MODE_FLAT = "flat"
+        /** Steam app id, for the game's picture on the loading screen. */
+        const val EXTRA_APPID = "appid"
+        /** Open Steam for Windows' own window (from the Friends tab). */
+        const val EXTRA_OPEN_STEAM = "open_steam"
     }
 
-    private lateinit var launcher: GameLauncher
-    private lateinit var status: TextView
-    private lateinit var progress: ProgressBar
-    private lateinit var logView: TextView
-    private lateinit var logScroll: ScrollView
-    private lateinit var displayField: EditText
-    private val log = StringBuilder()
+    private val vm by lazy { androidx.lifecycle.ViewModelProvider(this)[RuntimeViewModel::class.java] }
 
-    private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) importGame(uri, isTree = true)
+    // While a game runs and this screen is in front, the controller goes to the game.
+    // While a game runs: controller → game (XInput); with the game on screen, keys → the game's keyboard
+    // (Back still asks "Leave game?").
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (!vm.gameRunning) return super.dispatchKeyEvent(event)
+        val gameOnScreen = BuiltInDisplay.view?.isAttachedToWindow == true
+        return (if (gameOnScreen) gameKeyEvent(event) else GamepadBridge.onKey(event)) || super.dispatchKeyEvent(event)
     }
-    private val pickExe = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) importGame(uri, isTree = false)
+
+    override fun onPause() {
+        super.onPause()
+        BuiltInDisplay.view?.let { if (it.isAttachedToWindow) it.onPause() }
     }
+
+    override fun onResume() {
+        super.onResume()
+        BuiltInDisplay.view?.let { if (it.isAttachedToWindow) it.onResume() }
+    }
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
+        (vm.gameRunning && GamepadBridge.onMotion(event)) || super.dispatchGenericMotionEvent(event)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        launcher = GameLauncher(this)
-        val prefs = getSharedPreferences("runtime", MODE_PRIVATE)
-
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
-        fun btn(label: String, onClick: () -> Unit) = Button(this).apply { text = label; setOnClickListener { onClick() } }.also { root.addView(it) }
-
-        root.addView(TextView(this).apply { textSize = 20f; text = "Runtime (Box64 + Wine) — ${DeviceMode.label(this@RuntimeActivity)}" })
-        status = TextView(this).also { root.addView(it) }
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }.also { root.addView(it) }
-
-        btn("Install / reinstall runtime (downloads ~157 MB)") { install() }
-        btn("Smoke test: wine cmd /c ver (no display needed)") { launcher.smokeTest(::appendLog).also { appendLog(it.message) } }
-
-        root.addView(TextView(this).apply { text = "X display (Termux:X11 TCP, blank = none):" })
-        displayField = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT
-            setText(prefs.getString("display", "127.0.0.1:0"))
-        }.also { root.addView(it) }
-
-        btn("Import game folder…") { pickFolder.launch(null) }
-        btn("Import single .exe…") { pickExe.launch(arrayOf("*/*")) }
-        btn("Run an imported game…") { chooseAndRun() }
-        btn("Stop") { launcher.stop(); appendLog("[stopped]") }
-
-        logScroll = ScrollView(this)
-        logView = TextView(this).apply { textSize = 12f; setTextIsSelectable(true); typeface = android.graphics.Typeface.MONOSPACE }
-        logScroll.addView(logView)
-        root.addView(logScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        setContentView(root)
-
-        displayField.setOnFocusChangeListener { _, _ -> prefs.edit().putString("display", displayField.text.toString()).apply() }
-        refreshStatus()
-        intent.getStringExtra(EXTRA_EXE)?.let { path ->
-            title = intent.getStringExtra(EXTRA_TITLE) ?: "Play"
-            val display = displayField.text.toString().trim().ifBlank { null }
-            if (!launcher.isInstalled) appendLog("Runtime not installed: tap Install runtime first, then Play again.")
-            else {
-                if (display != null && display.startsWith("127.0.0.1")) tryOpenTermuxX11()
-                appendLog(launcher.launchExe(File(path), display, ::appendLog).message)
-            }
-        } ?: if (intent.hasExtra(EXTRA_TITLE)) appendLog("No .exe found for this game.") else Unit
+        window.statusBarColor = 0xFF0E141B.toInt()
+        window.navigationBarColor = 0xFF070B10.toInt()
+        val exe = intent.getStringExtra(EXTRA_EXE)
+        val title = intent.getStringExtra(EXTRA_TITLE)
+        val args = intent.getStringExtra(EXTRA_ARGS).orEmpty()
+        val mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_VR
+        val appId = intent.getIntExtra(EXTRA_APPID, 0)
+        if (savedInstanceState == null && intent.getBooleanExtra(EXTRA_OPEN_STEAM, false)) GameRunner.openSteam(this)
+        setContent { SteamTheme { RuntimeScreen(title, exe, args, mode, appId, onClose = { finish() }) } }
     }
+}
 
-    private fun refreshStatus() {
-        status.text = if (launcher.isInstalled) "Runtime installed at ${launcher.rootfs.path}" else "Runtime not installed"
-    }
+/** Runtime state that survives panel resizes. */
+class RuntimeViewModel(app: Application) : AndroidViewModel(app) {
+    val launcher = GameLauncher(app)
+    private val installer = RuntimeInstaller(app)
+    private val prefs = app.getSharedPreferences("runtime", 0)
 
-    private fun appendLog(line: String) = runOnUiThread {
-        log.append(line).append('\n')
-        if (log.length > 200_000) log.delete(0, log.length - 150_000)
-        logView.text = log
-        logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
-    }
+    /** Shared with the game starter (GameRunner), so the VR panel and this screen show the same log. */
+    val log: StateFlow<String> = GameRunner.log
+    private val _installed = MutableStateFlow(installer.isInstalled)
+    val installed: StateFlow<Boolean> = _installed
+    private val _needsUpdate = MutableStateFlow(installer.needsUpdate)
+    val needsUpdate: StateFlow<Boolean> = _needsUpdate
+    private val _progress = MutableStateFlow<RuntimeInstaller.Progress?>(null)
+    val progress: StateFlow<RuntimeInstaller.Progress?> = _progress
+    private val _size = MutableStateFlow(-1L)
+    val size: StateFlow<Long> = _size
+    private var startedPlay = false
+    val stage: StateFlow<LaunchStage> = GameRunner.stage
 
-    private fun install() {
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    RuntimeInstaller(this@RuntimeActivity).install(::appendLog) { p ->
-                        runOnUiThread { status.text = "${p.stage} ${(p.fraction * 100).toInt()}%"; progress.progress = (p.fraction * 1000).toInt() }
-                    }
-                }
-                appendLog("Runtime installed.")
-            } catch (e: Exception) {
-                appendLog("Install failed: $e"); e.cause?.let { appendLog("  cause: $it") }
-            }
-            refreshStatus()
+    var display: String
+        get() = prefs.getString("display", BuiltInDisplay.DISPLAY) ?: BuiltInDisplay.DISPLAY
+        set(v) { prefs.edit().putString("display", v).apply() }
+
+    /** Set when a game can't start because the game display app isn't installed (shows the install popup). */
+    val needsDisplay: StateFlow<Boolean> = GameRunner.needsDisplay
+    fun dismissDisplayPrompt() = GameRunner.dismissDisplayPrompt()
+
+    init { refresh() }
+
+    fun appendLog(line: String) = GameRunner.appendLog(line)
+
+    fun refresh() {
+        _installed.value = installer.isInstalled
+        _needsUpdate.value = installer.needsUpdate
+        viewModelScope.launch {
+            _size.value = if (installer.isInstalled) withContext(Dispatchers.IO) { runCatching { installer.sizeOnDisk() }.getOrDefault(-1L) } else -1L
         }
     }
 
-    private fun importGame(uri: Uri, isTree: Boolean) {
-        if (!launcher.isInstalled) { appendLog("Install the runtime first."); return }
-        lifecycleScope.launch {
+    fun install(onInstalled: () -> Unit = {}) {
+        if (_progress.value != null) return
+        _progress.value = RuntimeInstaller.Progress("Starting…", 0f)
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { installer.install(::appendLog) { _progress.value = it } }
+                appendLog("Runtime downloaded and installed.")
+                refresh()
+                onInstalled()
+            } catch (e: Exception) {
+                appendLog("Download failed: $e")
+                e.cause?.let { appendLog("  cause: $it") }
+            } finally {
+                _progress.value = null
+                refresh()
+            }
+        }
+    }
+
+    fun delete() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { installer.delete(::appendLog) }
+            refresh()
+        }
+    }
+
+    fun smokeTest() {
+        viewModelScope.launch(Dispatchers.IO) {
+            appendLog("Smoke test: wine cmd /c ver (should print a Windows version)")
+            appendLog(launcher.smokeTest(::appendLog).message)
+        }
+    }
+
+    fun stop() = GameRunner.stop(getApplication<Application>())
+
+    /** "Leave" on the game screen (Steam keeps running in the background; see GameRunner.leave). */
+    fun leave() = GameRunner.leave(getApplication<Application>())
+
+    /** True while a game (or Steam) is on screen or starting: keys and the controller go to it. */
+    val gameRunning get() = GameRunner.isPlaying
+
+    /** Starts a game (see GameRunner): the loading screen follows [stage]. */
+    fun launchGame(ctx: Context, exe: File, args: String = "", mode: String = RuntimeActivity.MODE_VR, title: String = exe.nameWithoutExtension, appId: Int = 0) =
+        GameRunner.play(ctx, exe, args, mode, title, appId)
+
+    /** Play from a game card: once per screen (rotating the panel doesn't start it again). */
+    fun playOnce(ctx: Context, exePath: String, args: String, mode: String, title: String?, appId: Int) {
+        if (startedPlay) return
+        startedPlay = true
+        val exe = File(exePath)
+        launchGame(ctx, exe, args, mode, title ?: exe.nameWithoutExtension, appId)
+    }
+
+    fun importGame(ctx: Context, uri: Uri, isTree: Boolean) {
+        viewModelScope.launch {
             appendLog("Importing $uri …")
             val dest = withContext(Dispatchers.IO) {
                 runCatching {
+                    launcher.gamesDir.mkdirs()
                     if (isTree) {
-                        val doc = DocumentFile.fromTreeUri(this@RuntimeActivity, uri)!!
+                        val doc = DocumentFile.fromTreeUri(ctx, uri)!!
                         val dir = File(launcher.gamesDir, doc.name ?: "game").apply { mkdirs() }
-                        copyTree(doc, dir); dir
+                        copyTree(ctx, doc, dir)
+                        dir
                     } else {
-                        val name = DocumentFile.fromSingleUri(this@RuntimeActivity, uri)?.name ?: "game.exe"
+                        val name = DocumentFile.fromSingleUri(ctx, uri)?.name ?: "game.exe"
                         val dir = File(launcher.gamesDir, name.substringBeforeLast('.')).apply { mkdirs() }
-                        contentResolver.openInputStream(uri)!!.use { i -> File(dir, name).outputStream().use { i.copyTo(it) } }
+                        ctx.contentResolver.openInputStream(uri)!!.use { i -> File(dir, name).outputStream().use { i.copyTo(it) } }
                         dir
                     }
                 }
@@ -142,30 +265,594 @@ class RuntimeActivity : AppCompatActivity() {
         }
     }
 
-    private fun copyTree(doc: DocumentFile, dir: File) {
+    private fun copyTree(ctx: Context, doc: DocumentFile, dir: File) {
         for (child in doc.listFiles()) {
             val name = child.name ?: continue
-            if (child.isDirectory) copyTree(child, File(dir, name).apply { mkdirs() })
-            else contentResolver.openInputStream(child.uri)?.use { i -> File(dir, name).outputStream().use { i.copyTo(it) } }
+            if (child.isDirectory) copyTree(ctx, child, File(dir, name).apply { mkdirs() })
+            else ctx.contentResolver.openInputStream(child.uri)?.use { i -> File(dir, name).outputStream().use { i.copyTo(it) } }
         }
     }
 
-    private fun chooseAndRun() {
-        val exes = launcher.findExes(launcher.gamesDir)
-        if (exes.isEmpty()) { appendLog("No .exe imported yet."); return }
-        val labels = exes.map { it.relativeTo(launcher.gamesDir).path }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("Run which .exe?").setItems(labels) { _, i ->
-            val display = displayField.text.toString().trim().ifBlank { null }
-            getSharedPreferences("runtime", MODE_PRIVATE).edit().putString("display", display ?: "").apply()
-            if (display != null && display.startsWith("127.0.0.1")) tryOpenTermuxX11()
-            appendLog(launcher.launchExe(exes[i], display, ::appendLog).message)
-        }.show()
+    fun importedExes(): List<File> = launcher.findExes(launcher.gamesDir)
+
+
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RuntimeScreen(title: String?, exePath: String?, args: String, mode: String, appId: Int, onClose: () -> Unit, vm: RuntimeViewModel = viewModel()) {
+    // While the game runs on the built-in display, this window shows the game itself; when the game
+    // ends (or you leave it) you're back in the app: the library if you came from a game card.
+    val playStage by vm.stage.collectAsState()
+    val gameView by BuiltInDisplay.viewState.collectAsState()
+    var askLeave by remember { mutableStateOf(false) }
+    var wasPlaying by remember { mutableStateOf(false) }
+    LaunchedEffect(playStage) {
+        if (playStage is LaunchStage.Running || playStage is LaunchStage.Opening) wasPlaying = true
+        else if (playStage == LaunchStage.Idle && wasPlaying && exePath != null) onClose()
+    }
+    val inGame = gameView != null && when (val s = playStage) {
+        is LaunchStage.Running -> !s.vr
+        is LaunchStage.Opening -> true
+        else -> false
+    }
+    androidx.activity.compose.BackHandler(enabled = inGame) { askLeave = true }
+    if (inGame) {
+        GameSurface(gameView!!, onLeave = { askLeave = true })
+        val onScreen = (playStage as? LaunchStage.Running)?.title ?: title ?: "the game"
+        val steamOnScreen = onScreen.startsWith("Steam")
+        val leaveCtx = LocalContext.current
+        if (askLeave) LeaveGameDialog(
+            if (steamOnScreen) "Steam" else onScreen,
+            onStay = { askLeave = false },
+            // A game waits paused (Quick Resume): Play brings it back in seconds. Steam's own window just leaves.
+            onLeave = { askLeave = false; if (steamOnScreen) vm.leave() else GameRunner.pauseGame(leaveCtx); if (exePath != null) onClose() },
+            message = if (steamOnScreen) "Steam keeps running in the background, so it opens again at once and your games start faster."
+            else "Leave: the game waits paused, and Play brings it back in a few seconds where you left it (Quick Resume). Close game ends it" +
+                (if (GameRunner.steamRunning()) "; Steam keeps running either way." else "."),
+            onCloseGame = if (steamOnScreen) null else ({ askLeave = false; vm.leave(); if (exePath != null) onClose() }),
+        )
+        return
+    }
+    val ctx = LocalContext.current
+    val ui = LocalDeviceUi.current
+    val installed by vm.installed.collectAsState()
+    val needsUpdate by vm.needsUpdate.collectAsState()
+    val progress by vm.progress.collectAsState()
+    val size by vm.size.collectAsState()
+    val log by vm.log.collectAsState()
+    var confirmDelete by remember { mutableStateOf(false) }
+    var chooseExe by remember { mutableStateOf<List<File>?>(null) }
+    var display by remember { mutableStateOf(vm.display) }
+
+    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+        if (uri != null) vm.importGame(ctx, uri, true)
+    }
+    val pickExe = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) vm.importGame(ctx, uri, false)
     }
 
-    /** Brings Termux:X11 to the front if installed so the game window is visible. */
-    private fun tryOpenTermuxX11() {
-        packageManager.getLaunchIntentForPackage("com.termux.x11")?.let {
-            runCatching { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        } ?: appendLog("Termux:X11 not installed — see README (Display setup).")
+    LaunchedEffect(exePath) {
+        if (exePath != null) vm.playOnce(ctx, exePath, args, mode, title, appId)
+        else if (title != null) GameRunner.missingGame(title)
+    }
+
+    Box(Modifier.fillMaxSize().steamBackdrop(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 1100.dp).fillMaxSize().padding(horizontal = ui.gutter)) {
+            // Top bar: X back to the library, then the title.
+            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(ui.iconButton + 4.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.08f))
+                        .clickable(onClick = onClose),
+                    contentAlignment = Alignment.Center,
+                ) { Text("✕", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(title ?: "Runtime & settings", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    Text("App ${BuildConfig.VERSION_NAME} · ${DeviceMode.label(ctx)}", color = SteamColors.Muted, fontSize = 13.sp)
+                }
+            }
+
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                // Runtime card: (Downloaded) badge and a Download / Delete button.
+                Card {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Windows runtime", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.width(10.dp))
+                        if (installed) Pill("(Downloaded)", SteamColors.GreenBright)
+                        else if (progress == null) Pill("Not downloaded", SteamColors.Muted)
+                    }
+                    Text(
+                        when {
+                            progress != null -> "Downloading and installing…"
+                            installed && needsUpdate -> "Box64 + Wine" + (if (size > 0) " · ${formatBytes(size)}" else "") +
+                                " · an update with the GPU driver (Turnip + DXVK) is available"
+                            installed -> "Box64 + Wine + Turnip + DXVK" + (if (size > 0) " · ${formatBytes(size)}" else "")
+                            else -> "Box64 + Wine + GPU driver, about 157 MB to download"
+                        },
+                        color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+                    )
+                    val p = progress
+                    if (p != null) {
+                        Spacer(Modifier.height(12.dp))
+                        LinearProgressIndicator(
+                            progress = { p.fraction.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
+                            color = SteamColors.Accent,
+                            trackColor = Color.White.copy(alpha = 0.1f),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text("${p.stage} · ${(p.fraction * 100).toInt()}%", color = SteamColors.Text, fontSize = 13.sp)
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (p == null) {
+                            if (installed) {
+                                if (needsUpdate) PrimaryButton("Update runtime") { vm.install() }
+                                DangerButton("Delete this runtime download") { confirmDelete = true }
+                            } else {
+                                PrimaryButton("Download runtime") { vm.install() }
+                            }
+                        }
+                    }
+                }
+
+                // Game window: the bundled display app, installed with one tap.
+                Card {
+                    Text("Game display", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    if (BuiltInDisplay.isBuiltIn(display.trim())) {
+                        Text("✓ Built into this app: games show right here in this window.", color = SteamColors.GreenBright, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Nothing to install. Point and pull the trigger to click in a game; Back or ✕ Leave game returns to the app.", color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    } else GameDisplayRow(onMessage = vm::appendLog)
+                    Spacer(Modifier.height(14.dp))
+                    GamePictureRow()
+                    Spacer(Modifier.height(14.dp))
+                    GameSpeedRow()
+                    Spacer(Modifier.height(14.dp))
+                    GpuDriverRow()
+                    Spacer(Modifier.height(14.dp))
+                    GameSoundRow()
+                }
+
+                // Steam for Windows inside the runtime, for games that need the Steam client.
+                Card {
+                    Text("Steam for Windows", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    SteamWindowsRow(vm, installed)
+                }
+
+                // Controllers: the exact model when connected, and the permission for flat games.
+                Card {
+                    Text("Controllers", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    ControllerStatus()
+                    Spacer(Modifier.height(10.dp))
+                    OverlayPermissionRow { if (!ControllerRelay.requestOverlay(ctx)) vm.appendLog("This headset has no settings page for that. On a PC run: adb shell appops set com.qssteam SYSTEM_ALERT_WINDOW allow") }
+                    Text(
+                        "With it allowed, a \"🎮 → game\" badge passes the controller to flat games; tap the badge to give the keyboard back.",
+                        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+
+                Card {
+                    Text("Test & play", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SecondaryButton("Smoke test (wine cmd /c ver)", enabled = installed) { vm.smokeTest() }
+                        SecondaryButton("Run an imported game…", enabled = installed) {
+                            val exes = vm.importedExes()
+                            if (exes.isEmpty()) vm.appendLog("No .exe imported yet.") else chooseExe = exes
+                        }
+                        SecondaryButton("Import game folder…") { pickFolder.launch(null) }
+                        SecondaryButton("Import single .exe…") { pickExe.launch(arrayOf("*/*")) }
+                        SecondaryButton("Stop game") { vm.stop() }
+                        SecondaryButton("Open the app in VR") {
+                            if (VrBridge.isAvailable(ctx)) VrBridge.enterVr(ctx) else vm.appendLog("VR bridge DLL is missing from this build.")
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = display,
+                        onValueChange = { display = it; vm.display = it },
+                        singleLine = true,
+                        label = { Text("Game display (:0 = built into this app; 127.0.0.1:0 = the Termux:X11 app)") },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = SteamColors.Accent, unfocusedBorderColor = Color.White.copy(alpha = 0.16f),
+                            focusedTextColor = SteamColors.Text, unfocusedTextColor = SteamColors.Text, cursorColor = SteamColors.Accent,
+                            focusedLabelColor = SteamColors.Accent, unfocusedLabelColor = SteamColors.Muted,
+                        ),
+                    )
+                }
+
+                Card {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Log", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                        var copied by remember { mutableStateOf(false) }
+                        SecondaryButton(if (copied) "✓ Copied" else "Copy log", enabled = log.isNotBlank()) {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(GameRunner.logForSharing()))
+                            copied = true
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        SecondaryButton("Share log", enabled = log.isNotBlank()) {
+                            runCatching { com.toer15.queststeam.play.LogShare.share(ctx) }.onFailure { vm.appendLog("Couldn't share the log: ${it.message}") }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        SecondaryButton("Clear log", enabled = log.isNotBlank()) { GameRunner.clearLog(); copied = false }
+                    }
+                    // Long logs don't fit in one message: copy them part by part.
+                    val parts = remember(log) { if (log.isBlank()) emptyList() else GameRunner.logParts() }
+                    if (parts.size > 1) {
+                        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                        var copiedPart by remember(log) { mutableStateOf(-1) }
+                        Spacer(Modifier.height(10.dp))
+                        Text("Too long for one message? Copy it in parts and paste them one by one:", color = SteamColors.Muted, fontSize = 13.sp)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            parts.forEachIndexed { i, part ->
+                                SecondaryButton(if (copiedPart == i) "✓ Part ${i + 1} copied" else "Copy part ${i + 1}/${parts.size}") {
+                                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(part))
+                                    copiedPart = i
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Hold on the text to select it, then Copy (or Select all).", color = SteamColors.Muted, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(
+                            log.ifBlank { "Messages from the runtime and games show up here." },
+                            color = Color(0xFFC8D2DA), fontSize = 12.sp, fontFamily = FontFamily.Monospace, lineHeight = 16.sp,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.35f)).padding(12.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+
+    // Loading screen: "Loading…" until the game's window is up, then "Opening game now", then the game.
+    val stage by vm.stage.collectAsState()
+    // Opened from a game's Play button: cancelling, closing an error, stopping the game or the game
+    // ending goes straight back to the library, not to this settings screen.
+    val fromCard = exePath != null || title != null
+    LaunchOverlay(
+        stage = stage, appId = appId, log = log,
+        onShowGame = { GameRunner.showGameNow(ctx) },
+        onStop = { GameRunner.cancelStart(ctx); if (fromCard) onClose() },
+        onDismiss = { GameRunner.dismissFailure(); if (fromCard) onClose() },
+    )
+
+    // A game was started without the display app: install it here, then play.
+    val needsDisplay by vm.needsDisplay.collectAsState()
+    if (needsDisplay) {
+        val ready = com.toer15.queststeam.display.rememberDisplayInstalled()
+        AlertDialog(
+            onDismissRequest = vm::dismissDisplayPrompt,
+            title = { Text(if (ready) "Game display installed" else "Install the game display") },
+            text = {
+                Column {
+                    Text(
+                        if (ready) "Everything's ready. Tap Play to start ${title ?: "the game"}."
+                        else "Games show their window through the game display app (Termux:X11). It comes with Quest Steam; tap Install and confirm. You don't need the Termux app.",
+                        fontSize = 14.sp, lineHeight = 20.sp,
+                    )
+                    if (!ready) { Spacer(Modifier.height(12.dp)); GameDisplayRow(onMessage = vm::appendLog) }
+                }
+            },
+            confirmButton = {
+                if (ready && exePath != null) TextButton(onClick = { vm.dismissDisplayPrompt(); vm.launchGame(ctx, File(exePath), args, mode, title ?: File(exePath).nameWithoutExtension) }) { Text("Play") }
+            },
+            dismissButton = { TextButton(onClick = vm::dismissDisplayPrompt) { Text("Close") } },
+        )
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this runtime download?") },
+            text = { Text("Frees the space used by Box64, Wine and the GPU driver. Your downloaded games are kept and come back when you download the runtime again.") },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; vm.delete() }) { Text("Delete", color = SteamColors.Danger) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+    }
+
+    val exes = chooseExe
+    if (exes != null) {
+        AlertDialog(
+            onDismissRequest = { chooseExe = null },
+            title = { Text("Run which .exe?") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    exes.forEach { f ->
+                        Text(
+                            f.relativeTo(vm.launcher.gamesDir).path,
+                            color = SteamColors.Text, fontSize = 14.sp,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                .clickable { chooseExe = null; vm.launchGame(ctx, f) }
+                                .padding(vertical = 10.dp, horizontal = 6.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { chooseExe = null }) { Text("Close") } },
+        )
+    }
+}
+
+@Composable
+private fun Card(content: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp).clip(RoundedCornerShape(22.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+            .padding(18.dp),
+    ) { content() }
+}
+
+@Composable
+private fun Pill(text: String, color: Color) {
+    Text(
+        text, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(color.copy(alpha = 0.15f)).padding(horizontal = 10.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun PrimaryButton(label: String, onClick: () -> Unit) {
+    Button(
+        onClick = onClick, shape = RoundedCornerShape(50), modifier = Modifier.height(LocalDeviceUi.current.buttonHeight),
+        colors = ButtonDefaults.buttonColors(containerColor = SteamColors.Accent, contentColor = Color(0xFF0E141B)),
+    ) { Text(label, fontWeight = FontWeight.Bold) }
+}
+
+@Composable
+private fun DangerButton(label: String, onClick: () -> Unit) {
+    Button(
+        onClick = onClick, shape = RoundedCornerShape(50), modifier = Modifier.height(LocalDeviceUi.current.buttonHeight),
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A2328), contentColor = Color(0xFFFFD6D6)),
+    ) { Text(label, fontWeight = FontWeight.Bold) }
+}
+
+/** Install / open / sign in Steam for Windows, and whether it starts with games. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
+    val ctx = LocalContext.current
+    val stage by vm.stage.collectAsState()
+    val steamInstalled = remember(stage) { SteamWindows.isInstalled(vm.launcher) }
+    val signedIn = remember(stage) { SteamWindows.isSignedIn(vm.launcher) }
+    var light by remember { mutableStateOf(SteamWindows.light(ctx)) }
+    var warm by remember { mutableStateOf(SteamWindows.warmUp(ctx)) }
+    var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
+    var steamStarts by remember { mutableStateOf(SteamWindows.steamStartsGame(ctx)) }
+    Text(
+        "Steam runs in the background (never shown) and the game you pick starts next to it, so the next game starts at once. Steam's window stays off unless you press Open Steam.",
+        color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+    )
+    Spacer(Modifier.height(10.dp))
+    when {
+        !runtimeInstalled -> Text("Download the Windows runtime first.", color = SteamColors.Muted, fontSize = 14.sp)
+        !steamInstalled -> PrimaryButton("Install Steam for Windows") { GameRunner.installSteam(ctx) }
+        else -> {
+            Text(
+                if (signedIn) "✓ Installed and signed in" else "✓ Installed · not signed in yet",
+                color = if (signedIn) SteamColors.GreenBright else SteamColors.Text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            )
+            if (!signedIn) Text(
+                "Open Steam: the first start updates Steam (several minutes), then sign in once — the QR code with the Steam app on your phone is easiest.",
+                color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val running = remember(stage) { GameRunner.steamRunning() }
+                PrimaryButton(if (running) "Show Steam" else if (signedIn) "Open Steam" else "Open Steam and sign in") { GameRunner.openSteam(ctx) }
+                if (running) SecondaryButton("Close Steam") { vm.stop() }
+                for ((value, label) in listOf(true to "Light Steam (less memory)", false to "Full Steam")) {
+                    val sel = light == value
+                    Text(
+                        (if (sel) "✓ " else "") + label,
+                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                            .focusRing().clickable { light = value; SteamWindows.setLight(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
+                for ((value, label) in listOf(true to "Get Steam ready when the app opens", false to "Don't start Steam on open")) {
+                    val sel = warm == value
+                    Text(
+                        (if (sel) "✓ " else "") + label,
+                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                            .focusRing().clickable { warm = value; SteamWindows.setWarmUp(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
+            }
+            if (warm) {
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for ((value, label) in listOf(true to "Get my last game ready too", false to "Only Steam")) {
+                        val sel = readyGame == value
+                        Text(
+                            (if (sel) "✓ " else "") + label,
+                            color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                            modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                                .focusRing().clickable { readyGame = value; LastGame.setEnabled(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                val last = remember(stage) { LastGame.get(ctx)?.title }
+                Text(
+                    "Steam starts in the background when you open the app and signs in, so pressing Play starts the game right away instead of waiting a minute or two for Steam first." +
+                        if (!readyGame) "" else " Then the last game you played next to Steam" + (last?.let { " ($it)" } ?: "") +
+                            " starts too, muted and out of sight, and waits paused at its menu: Play shows it in a few seconds. Another game, or Steam's window, closes it.",
+                    color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for ((value, label) in listOf(false to "The app starts the game", true to "Steam starts the game (experimental)")) {
+                    val sel = steamStarts == value
+                    Text(
+                        (if (sel) "✓ " else "") + label,
+                        color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                            .focusRing().clickable { steamStarts = value; SteamWindows.setSteamStartsGame(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (steamStarts) "Steam starts the game with its own Play command. On this headset the game it started crashed at once (v0.19.0, v0.19.1), so this is for testing."
+                else "Steam signs in first, then the app starts the game next to it (the way that worked in v0.16.0).",
+                color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+            )
+            if (light) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Light Steam: Steam's windows run only while they're on screen; once Steam has signed in they wait paused, and Steam itself keeps running for your games.",
+                    color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
+                )
+            }
+        }
+    }
+}
+
+/** Game sound on/off. Off gives Wine no audio device (for a game that crashes in its sound code). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GameSoundRow() {
+    val ctx = LocalContext.current
+    var on by remember { mutableStateOf(BuiltInDisplay.soundEnabled(ctx)) }
+    Text("Game sound", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(6.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((value, label) in listOf(true to "On", false to "Off")) {
+            val sel = on == value
+            Text(
+                (if (sel) "✓ " else "") + label,
+                color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                    .focusRing().clickable { on = value; BuiltInDisplay.setSoundEnabled(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+        }
+    }
+    Text(
+        if (on) "Games play sound through the headset." else "Games run without sound.",
+        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+/**
+ * How the game's picture is shown: the direct view (only the frames the game sends, scaled to fill
+ * the screen, like a game stream) or the whole Windows desktop; and the size the game draws at.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GamePictureRow() {
+    val ctx = LocalContext.current
+    var direct by remember { mutableStateOf(BuiltInDisplay.directView(ctx)) }
+    var res by remember { mutableStateOf(BuiltInDisplay.gameResolution(ctx)) }
+    Text("Game picture", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(6.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((value, label) in listOf(true to "Direct (like a game stream)", false to "Whole Windows desktop")) {
+            val sel = direct == value
+            Text(
+                (if (sel) "✓ " else "") + label,
+                color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                    .focusRing().clickable { direct = value; BuiltInDisplay.setDirectView(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+        }
+    }
+    Text(
+        if (direct) "The screen shows exactly the frames the game sends, scaled to fill it, so Steam's windows can't cover them. When the game isn't sending frames (loading, a dialog, Steam), the whole Windows desktop shows. Tap the size/fps label at the top of the game screen to switch while playing."
+        else "The screen shows the whole Windows desktop as Wine draws it, with the game's window in it.",
+        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+    )
+    if (direct) {
+        Spacer(Modifier.height(10.dp))
+        Text("Game resolution", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for ((value, label) in listOf("1280x720" to "1280×720", "960x540" to "960×540 (faster)")) {
+                val sel = res == value
+                Text(
+                    (if (sel) "✓ " else "") + label,
+                    color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                        .focusRing().clickable { res = value; BuiltInDisplay.setGameResolution(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                )
+            }
+        }
+        Text(
+            "The game draws at this size and its picture is scaled up to the screen, like a game stream. Smaller is faster for the headset and uses a little less memory. Applies from the next game start.",
+            color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+        )
+    }
+}
+
+/** How fast the Windows translation runs games and Steam: Box64's own settings (Fast) or Winlator's safer preset. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GameSpeedRow() {
+    val ctx = LocalContext.current
+    var mode by remember { mutableStateOf(com.toer15.queststeam.play.GameSpeed.selected(ctx)) }
+    Text("Game speed", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(6.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((value, label) in listOf(com.toer15.queststeam.play.GameSpeed.FAST to "Fast (recommended)", com.toer15.queststeam.play.GameSpeed.SAFE to "Safe")) {
+            val sel = mode == value
+            Text(
+                (if (sel) "✓ " else "") + label,
+                color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                    .focusRing().clickable { mode = value; com.toer15.queststeam.play.GameSpeed.select(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+        }
+    }
+    Text(
+        if (mode == com.toer15.queststeam.play.GameSpeed.FAST) "Box64's own settings translate Windows code into much faster code, and keep the translation on storage so a game's next start skips most of the work. If a game crashes at start, try Safe."
+        else "Winlator's safer, slower settings. Use them for a game that crashes with Fast.",
+        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+/** GPU driver for games: Vortek (the headset's own Vulkan driver, default) or Mesa Turnip. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GpuDriverRow() {
+    val ctx = LocalContext.current
+    var driver by remember { mutableStateOf(Vortek.selected(ctx)) }
+    Text("GPU driver", color = SteamColors.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(6.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((id, label) in listOf(Vortek.VORTEK to "Vortek (recommended)", Vortek.TURNIP to "Turnip")) {
+            val on = driver == id
+            Text(
+                (if (on) "✓ " else "") + label,
+                color = if (on) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                    .focusRing().clickable { driver = id; Vortek.select(ctx, id) }.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+        }
+    }
+    Text(
+        if (driver == Vortek.VORTEK) "Games draw with the Quest's own GPU driver. Works on the Quest; pick Turnip only to test."
+        else "Mesa Turnip talks to the GPU directly; the Quest usually refuses it (\"VK_ERROR_OUT_OF_DEVICE_MEMORY\").",
+        color = SteamColors.Muted, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+@Composable
+private fun SecondaryButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(50), modifier = Modifier.height(LocalDeviceUi.current.buttonHeight)) {
+        Text(label, color = if (enabled) SteamColors.Text else SteamColors.Muted)
     }
 }

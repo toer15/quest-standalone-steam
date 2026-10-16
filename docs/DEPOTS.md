@@ -1,6 +1,6 @@
 # Getting your games' Windows files
 
-The app does **not** handle your Steam password. Download depots on a PC (or in Termux) with your own account, then copy them to the headset.
+Since v0.4.0 the app downloads games itself: sign in to Steam in the app, flip a card and tap **Download**. The steps below are the manual fallback. Download depots on a PC (or in Termux) with your own account, then use **Import from folder** on the card.
 
 ## Option A: SteamCMD
 ```
@@ -22,4 +22,4 @@ adb shell run-as com.toer15.queststeam cp -r /sdcard/Download/game_APPID/. files
 
 Notes: many games need the Steam client running (Steamworks DRM / `steam_api64.dll`). That's another TODO: Goldberg-style emulation is *not* included; using the real Steam client inside Wine is the honest route, and is even slower.
 
-Roadmap idea: integrate [JavaSteam](https://github.com/Longi94/JavaSteam) to download depots in-app with the user logging in directly to Steam's CM servers (credentials never stored by us).
+In-app downloads use [JavaSteam](https://github.com/Longi94/JavaSteam)'s DepotDownloader (see `steamclient/`).

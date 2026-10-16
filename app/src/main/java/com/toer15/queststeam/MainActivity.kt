@@ -3,6 +3,28 @@ package com.toer15.queststeam
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.KeyEvent
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import com.toer15.queststeam.gamepad.PadNav
+import com.toer15.queststeam.play.GameRunner
+import com.toer15.queststeam.play.LastGame
+import com.toer15.queststeam.steam.FriendsScreen
+import com.toer15.queststeam.store.StoreActivity
+import com.toer15.queststeam.store.StoreApi
+import com.toer15.queststeam.store.StoreGameDialog
+import com.toer15.queststeam.store.StoreItem
+import com.toer15.queststeam.store.StoreScreen
+import com.toer15.queststeam.ui.ControllerChip
+import com.toer15.queststeam.ui.PlayDialog
+import com.toer15.queststeam.ui.PlayMode
+import com.toer15.queststeam.ui.VrSupport
+import com.toer15.queststeam.ui.focusRing
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -36,6 +58,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -85,12 +110,20 @@ import com.toer15.queststeam.launcher.DeviceMode
 import com.toer15.queststeam.steam.KeylessSteam
 import com.toer15.queststeam.steam.OwnedGame
 import com.toer15.queststeam.steam.SessionStore
+import com.toer15.queststeam.steam.SteamAccount
+import com.toer15.queststeam.ui.LocalDeviceUi
+import com.toer15.queststeam.ui.FilterPanel
+import com.toer15.queststeam.ui.HomeFilters
+import com.toer15.queststeam.update.UpdateDialog
+import com.toer15.queststeam.update.UpdateUi
+import com.toer15.queststeam.update.UpdateViewModel
+import androidx.compose.foundation.layout.widthIn
 import com.toer15.queststeam.ui.CardActions
 import com.toer15.queststeam.ui.CategoryPopup
 import com.toer15.queststeam.ui.GameCard
 import com.toer15.queststeam.ui.LetterFilter
 import com.toer15.queststeam.ui.LibraryViewModel
-import com.toer15.queststeam.ui.SteamArt
+import com.toer15.queststeam.ui.GameArt
 import com.toer15.queststeam.ui.SteamColors
 import com.toer15.queststeam.ui.SteamTheme
 import com.toer15.queststeam.ui.steamBackdrop
@@ -100,14 +133,29 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = 0xFF0E141B.toInt()
         window.navigationBarColor = 0xFF070B10.toInt()
-        if (SessionStore(this).steamId == null) {
+        if (SessionStore(this).steamId == null && !SteamAccount.get(this).session.isSignedIn) {
             startActivity(Intent(this, LoginActivity::class.java)); finish(); return
         }
-        setContent { SteamTheme { LauncherApp(onSignedOut = { startActivity(Intent(this, LoginActivity::class.java)); finish() }) } }
+        if (intent.getBooleanExtra(com.toer15.queststeam.update.UpdatedReceiver.EXTRA_JUST_UPDATED, false)) {
+            android.widget.Toast.makeText(this, "Updated to ${BuildConfig.VERSION_NAME}", android.widget.Toast.LENGTH_LONG).show()
+            (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(21)
+        }
+        val toLogin = { startActivity(Intent(this, LoginActivity::class.java)); finish() }
+        setContent { SteamTheme { LauncherApp(onSignedOut = toLogin, onSteamSignIn = toLogin) } }
+        // Steam gets ready in the background (never shown), so it's signed in by the time you press Play.
+        // Without it (switched off, or not signed in yet) only the runtime gets ready.
+        window.decorView.postDelayed({
+            if (!GameRunner.warmUpSteam(this)) GameRunner.warmDisplay(this)
+        }, 400)
     }
+
+    // A Bluetooth controller drives the app like a console (see PadNav).
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        PadNav.handle(event) { super.dispatchKeyEvent(it) } ?: super.dispatchKeyEvent(event)
 }
 
-private enum class Tab { Home, Games }
+/** Top bar tabs, left to right: Home, Store (middle), Games. */
+private enum class Tab { Home, Store, Games, Friends }
 
 /** Built-in filters; genres from the Steam store are appended dynamically. */
 object Categories {
@@ -118,7 +166,16 @@ object Categories {
 }
 
 @Composable
-private fun LauncherApp(onSignedOut: () -> Unit, vm: LibraryViewModel = viewModel()) {
+internal fun LauncherApp(
+    onSignedOut: () -> Unit,
+    onSteamSignIn: () -> Unit,
+    /** Shown as the panel inside the VR view: VR games start right there, without leaving VR. */
+    inVr: Boolean = false,
+    vm: LibraryViewModel = viewModel(),
+    updates: UpdateViewModel = viewModel(),
+) {
+    val ui = LocalDeviceUi.current
+    val updateState by updates.ui.collectAsState()
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     val games by vm.games.collectAsState()
@@ -129,56 +186,215 @@ private fun LauncherApp(onSignedOut: () -> Unit, vm: LibraryViewModel = viewMode
     var pendingImport by remember { mutableStateOf<Int?>(null) }
     var confirmUninstall by remember { mutableStateOf<OwnedGame?>(null) }
     var showKey by remember { mutableStateOf(false) }
+    var lastCrash by remember { mutableStateOf(CrashGuard.lastCrash()) }
+    var homeFilters by remember { mutableStateOf(HomeFilters()) }
+    var filtersOpen by remember { mutableStateOf(false) }
+    var playFor by remember { mutableStateOf<OwnedGame?>(null) }
+    var storeItem by remember { mutableStateOf<StoreItem?>(null) }
+    // Back from Steam's checkout: sync so a game just bought shows up in the library.
+    val storeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.sync() }
+    val homeTabFocus = remember { FocusRequester() }
+
+    // Controller buttons (LB/RB tabs, B back, Y filters, X sync, Start updates).
+    LaunchedEffect(Unit) {
+        PadNav.actions.collect { a ->
+            when (a) {
+                PadNav.Action.Back -> when {
+                    storeItem != null -> storeItem = null
+                    playFor != null -> playFor = null
+                    filtersOpen -> filtersOpen = false
+                    PadNav.consumeBack() -> Unit
+                    tab != Tab.Home -> tab = Tab.Home
+                }
+                PadNav.Action.TabLeft -> tab = Tab.entries[(tab.ordinal - 1 + Tab.entries.size) % Tab.entries.size]
+                PadNav.Action.TabRight -> tab = Tab.entries[(tab.ordinal + 1) % Tab.entries.size]
+                PadNav.Action.Filters -> if (tab == Tab.Home) filtersOpen = !filtersOpen
+                PadNav.Action.Sync -> vm.sync()
+                PadNav.Action.Updates -> updates.check()
+                PadNav.Action.FocusStart -> runCatching { homeTabFocus.requestFocus() }
+            }
+        }
+    }
+    // A new release can come out while the app stays open: check again whenever it comes back.
+    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) updates.checkQuietly() }
+        lifecycle.lifecycle.addObserver(obs)
+        onDispose { lifecycle.lifecycle.removeObserver(obs) }
+    }
 
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         val id = pendingImport; pendingImport = null
         if (uri != null && id != null) vm.downloads.download(id, FolderImportSource(uri))
     }
 
-    fun actionsFor(g: OwnedGame) = CardActions(
+    // One CardActions per game, so cards don't recompose just because new lambdas were created.
+    val actionsCache = remember { HashMap<Int, CardActions>() }
+    fun newActions(g: OwnedGame) = CardActions(
         onDownload = { vm.downloads.download(g.appId) },
         onImport = { pendingImport = g.appId; pickFolder.launch(null) },
         onCancel = { vm.downloads.cancel(g.appId) },
-        onPlay = {
-            val exe = vm.downloads.mainExe(g.appId)
-            ctx.startActivity(Intent(ctx, RuntimeActivity::class.java).putExtra(RuntimeActivity.EXTRA_EXE, exe?.path).putExtra(RuntimeActivity.EXTRA_TITLE, g.name))
-        },
+        // Steam-style popup first: VR or flat, and the controller status.
+        onPlay = { playFor = g },
         onUninstall = { confirmUninstall = g },
     )
+    fun actionsFor(g: OwnedGame) = actionsCache.getOrPut(g.appId) { newActions(g) }
     fun stateOf(g: OwnedGame) = states[g.appId] ?: vm.downloads.stateOf(g.appId)
 
-    Column(Modifier.fillMaxSize().steamBackdrop()) {
-        TopBar(tab, { tab = it }, profile?.avatarUrl, profile?.personaName, syncing,
-            onSync = vm::sync,
-            onSettings = { ctx.startActivity(Intent(ctx, RuntimeActivity::class.java)) },
-            onSignOut = { vm.signOut(); onSignedOut() },
-            onApiKey = { showKey = true })
-        if (status.isNotBlank()) Text(
-            status,
-            color = if (status == KeylessSteam.SIGN_IN_AGAIN) Color(0xFFFFC46B) else SteamColors.Muted,
-            fontSize = 13.sp, lineHeight = 18.sp,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+    fun play(g: OwnedGame, mode: PlayMode) {
+        val vr = mode == PlayMode.VR
+        val exe = vm.downloads.mainExe(g.appId, vr)
+        if (inVr && vr && exe != null) {
+            // Already in the headset view: start the game here; the panel shows the loading screen.
+            GameRunner.play(ctx, exe, vm.downloads.launchArgs(g.appId, true), RuntimeActivity.MODE_VR, g.name, g.appId)
+            return
+        }
+        ctx.startActivity(
+            Intent(ctx, RuntimeActivity::class.java)
+                .putExtra(RuntimeActivity.EXTRA_EXE, exe?.path)
+                .putExtra(RuntimeActivity.EXTRA_ARGS, vm.downloads.launchArgs(g.appId, vr))
+                .putExtra(RuntimeActivity.EXTRA_TITLE, g.name)
+                .putExtra(RuntimeActivity.EXTRA_MODE, if (vr) RuntimeActivity.MODE_VR else RuntimeActivity.MODE_FLAT)
+                .putExtra(RuntimeActivity.EXTRA_APPID, g.appId)
         )
-        AnimatedContent(
-            targetState = tab,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            transitionSpec = {
-                val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                (slideInHorizontally(tween(320)) { dir * it / 6 } + fadeIn(tween(280))) togetherWith
-                    (slideOutHorizontally(tween(240)) { -dir * it / 8 } + fadeOut(tween(180)))
-            },
-            label = "tabs",
-        ) { current ->
-            when (current) {
-                Tab.Home -> HomeScreen(games, ::stateOf, ::actionsFor, onBrowse = { tab = Tab.Games }, onSync = vm::sync)
-                Tab.Games -> GamesScreen(games, ::stateOf, ::actionsFor)
+    }
+
+    Box(
+        Modifier.fillMaxSize().steamBackdrop().onFocusChanged { PadNav.hasFocus = it.hasFocus },
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Column(Modifier.widthIn(max = ui.contentMaxWidth).fillMaxSize()) {
+            TopBar(tab, { tab = it }, homeTabFocus, profile?.avatarUrl, profile?.personaName, syncing,
+                steamClient = vm.steamClientSignedIn,
+                onSync = vm::sync,
+                onSettings = { ctx.startActivity(Intent(ctx, RuntimeActivity::class.java)) },
+                onEnterVr = if (!inVr && VrBridge.canPlayInVr(ctx)) ({ VrBridge.enterVr(ctx) }) else null,
+                onSignOut = { vm.signOut(); onSignedOut() },
+                onSteamSignIn = onSteamSignIn,
+                onApiKey = { showKey = true })
+            if (status.isNotBlank()) Text(
+                status,
+                color = if (status == KeylessSteam.SIGN_IN_AGAIN || status.contains("Sign in to Steam")) Color(0xFFFFC46B) else SteamColors.Muted,
+                fontSize = if (ui.isQuest) 15.sp else 13.sp, lineHeight = 19.sp,
+                modifier = Modifier.padding(horizontal = ui.gutter, vertical = 6.dp),
+            )
+            AnimatedContent(
+                targetState = tab,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                transitionSpec = {
+                    val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                    (slideInHorizontally(tween(320)) { dir * it / 6 } + fadeIn(tween(280))) togetherWith
+                        (slideOutHorizontally(tween(240)) { -dir * it / 8 } + fadeOut(tween(180)))
+                },
+                label = "tabs",
+            ) { current ->
+                when (current) {
+                    Tab.Home -> HomeScreen(
+                        games, ::stateOf, ::actionsFor, onBrowse = { tab = Tab.Games }, onSync = vm::sync,
+                        onCheckUpdates = updates::check, filters = homeFilters, onOpenFilters = { filtersOpen = true },
+                    )
+                    Tab.Store -> StoreScreen(owned = remember(games) { games.mapTo(HashSet()) { it.appId } }, onOpenGame = { storeItem = it })
+                    Tab.Games -> GamesScreen(games, ::stateOf, ::actionsFor)
+                    Tab.Friends -> FriendsScreen(
+                        profile?.personaName, profile?.avatarUrl,
+                        knownGame = { id -> games.firstOrNull { it.appId == id }?.name },
+                        onSignIn = onSteamSignIn,
+                        onOpenSteamWindow = {
+                            ctx.startActivity(Intent(ctx, RuntimeActivity::class.java).putExtra(RuntimeActivity.EXTRA_OPEN_STEAM, true))
+                        },
+                    )
+                }
             }
+        }
+        val allGenres = remember(games) { games.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
+        FilterPanel(
+            visible = filtersOpen && tab == Tab.Home,
+            filters = homeFilters,
+            genres = allGenres,
+            matching = homeFilters.apply(games) { stateOf(it) is GameState.Installed }.size,
+            onChange = { homeFilters = it },
+            onClose = { filtersOpen = false },
+        )
+        storeItem?.let { item ->
+            StoreGameDialog(
+                item = item,
+                owned = games.any { it.appId == item.appId },
+                onBuy = { storeLauncher.launch(StoreActivity.intent(ctx, StoreApi.storeUrl(item.appId))) },
+                onOpenInLibrary = { storeItem = null; tab = Tab.Games },
+                onDismiss = { storeItem = null },
+            )
+        }
+        playFor?.let { g ->
+            // VR is offered for VR games when the headset bridge is in this build; SteamVR (OpenVR) games can use it.
+            val canVr = VrBridge.canPlayInVr(ctx)
+            val steamVr by produceState<Boolean?>(null, g.appId) {
+                value = withContext(Dispatchers.IO) { runCatching { VrBridge.isVrGame(vm.downloads.dirFor(g.appId)) }.getOrDefault(false) }
+            }
+            val vrOffered = canVr && (g.isVr || steamVr == true || vm.downloads.hasVrLaunch(g.appId))
+            PlayDialog(
+                game = g,
+                vrOffered = vrOffered,
+                vrSupport = if (steamVr == false && g.isVr) VrSupport.NOT_STEAMVR else VrSupport.YES,
+                onPlay = { mode -> playFor = null; play(g, mode) },
+                onDismiss = { playFor = null },
+            )
         }
     }
 
-    if (showKey) ApiKeyDialog(vm.apiKey.orEmpty(), onSave = { vm.apiKey = it; showKey = false }, onDismiss = { showKey = false })
+    // Platform dialogs need an Activity window; the VR panel is a virtual display, so it skips these
+    // (updates and crash reports show in the 2D app) and confirms Uninstall inside the panel.
+    if (!inVr) UpdateDialog(
+        state = updateState,
+        onUpdateNow = updates::updateNow,
+        onInstall = { updates.install(it.release, it.apk) },
+        onCancel = updates::cancel,
+        onDismiss = updates::dismiss,
+        onRetry = { (updateState as? UpdateUi.Failed)?.release?.let(updates::updateNow) ?: updates.check() },
+    )
 
-    confirmUninstall?.let { g ->
+    if (!inVr) lastCrash?.let { report ->
+        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+        AlertDialog(
+            onDismissRequest = { CrashGuard.clearLastCrash(); lastCrash = null },
+            title = { Text("The app closed unexpectedly last time") },
+            text = {
+                Column {
+                    Text("Copy this and send it to the developer so it can be fixed:", fontSize = 13.sp)
+                    Text(
+                        report.take(4000), fontSize = 11.sp, lineHeight = 14.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 8.dp).heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(report)) }) { Text("Copy") }
+            },
+            dismissButton = { TextButton(onClick = { CrashGuard.clearLastCrash(); lastCrash = null }) { Text("Close") } },
+        )
+    }
+
+    if (showKey && !inVr) ApiKeyDialog(vm.apiKey.orEmpty(), onSave = { vm.apiKey = it; showKey = false }, onDismiss = { showKey = false })
+
+    if (inVr) confirmUninstall?.let { g ->
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable { confirmUninstall = null },
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                Modifier.clip(RoundedCornerShape(24.dp)).background(SteamColors.Panel).clickable {}.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("Uninstall ${g.name}?", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Text("Deletes the game's files from this device.", color = SteamColors.Muted, fontSize = 14.sp)
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextButton(onClick = { confirmUninstall = null }) { Text("Cancel") }
+                    TextButton(onClick = { vm.downloads.uninstall(g.appId); confirmUninstall = null }) { Text("Uninstall", color = SteamColors.Danger) }
+                }
+            }
+        }
+    } else confirmUninstall?.let { g ->
         AlertDialog(onDismissRequest = { confirmUninstall = null },
             title = { Text("Uninstall ${g.name}?") }, text = { Text("Deletes the game's files from this device.") },
             confirmButton = { TextButton(onClick = { vm.downloads.uninstall(g.appId); confirmUninstall = null }) { Text("Uninstall") } },
@@ -186,27 +402,37 @@ private fun LauncherApp(onSignedOut: () -> Unit, vm: LibraryViewModel = viewMode
     }
 }
 
+/** Spins only while syncing; an always-running infinite animation would redraw the app every frame. */
 @Composable
-private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String?, syncing: Boolean,
-                   onSync: () -> Unit, onSettings: () -> Unit, onSignOut: () -> Unit, onApiKey: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
+private fun SyncIcon(syncing: Boolean) {
+    if (!syncing) { Icon(Icons.Filled.Refresh, "Sync Steam account", tint = SteamColors.Text); return }
     val spin by rememberInfiniteTransition(label = "sync").animateFloat(
         initialValue = 0f, targetValue = 360f,
         animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
         label = "syncSpin",
     )
+    Icon(Icons.Filled.Refresh, "Syncing", tint = SteamColors.Text, modifier = Modifier.graphicsLayer { rotationZ = spin })
+}
+
+@Composable
+private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, homeFocus: FocusRequester, avatar: String?, name: String?, syncing: Boolean, steamClient: Boolean,
+                   onSync: () -> Unit, onSettings: () -> Unit, onEnterVr: (() -> Unit)?, onSignOut: () -> Unit, onSteamSignIn: () -> Unit, onApiKey: () -> Unit) {
+    val ui = LocalDeviceUi.current
+    var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().background(SteamColors.Glass)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = ui.gutter - 4.dp, vertical = if (ui.isQuest) 12.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 for (t in Tab.entries) {
                     val sel = t == tab
                     val bar by animateDpAsState(if (sel) 26.dp else 0.dp, tween(280), label = "tabBar")
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { onTab(t) }.padding(horizontal = 14.dp, vertical = 6.dp),
+                        modifier = (if (t == Tab.Home) Modifier.focusRequester(homeFocus) else Modifier)
+                            .clip(RoundedCornerShape(12.dp)).focusRing(RoundedCornerShape(12.dp)).clickable { onTab(t) }
+                            .padding(horizontal = ui.tabPadH, vertical = ui.tabPadV),
                     ) {
                         Text(
-                            t.name.uppercase(), fontWeight = FontWeight.Bold, fontSize = 15.sp, letterSpacing = 1.1.sp,
+                            t.name.uppercase(), fontWeight = FontWeight.Bold, fontSize = ui.tabText, letterSpacing = 1.1.sp,
                             color = if (sel) Color.White else SteamColors.Muted,
                         )
                         Box(Modifier.padding(top = 5.dp).width(bar).height(3.dp).clip(RoundedCornerShape(50)).background(SteamColors.Accent))
@@ -214,14 +440,25 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String
                 }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onSync, enabled = !syncing) {
-                Icon(Icons.Filled.Refresh, "Sync Steam account", tint = SteamColors.Text, modifier = Modifier.graphicsLayer { if (syncing) rotationZ = spin })
+            // A game waiting in the background: getting ready, or ready (Play shows it at once).
+            BackgroundGameChip(Modifier.padding(end = 8.dp))
+            // Connected controller (exact model) or "No controller".
+            ControllerChip(Modifier.padding(end = 8.dp))
+            // The app in the headset view (library, downloads and VR games, with the Touch controllers).
+            if (onEnterVr != null) Text(
+                "🥽 VR", color = SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                modifier = Modifier.padding(end = 6.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.07f))
+                    .focusRing().clickable(onClick = onEnterVr).padding(horizontal = 14.dp, vertical = 9.dp),
+            )
+            IconButton(onClick = onSync, enabled = !syncing, modifier = Modifier.focusRing().size(ui.iconButton)) {
+                SyncIcon(syncing)
             }
-            IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Runtime settings", tint = SteamColors.Text) }
+            if (ui.isQuest) IconButton(onClick = onSettings, modifier = Modifier.focusRing().size(ui.iconButton)) { Icon(Icons.Filled.Settings, "Runtime settings", tint = SteamColors.Text) }
             Box {
                 Box(
-                    Modifier.size(42.dp).clip(CircleShape)
+                    Modifier.size(ui.avatar).clip(CircleShape)
                         .background(Brush.linearGradient(listOf(SteamColors.Accent, Color.White)))
+                        .focusRing(CircleShape)
                         .clickable { menu = true }
                         .padding(2.dp).clip(CircleShape).background(SteamColors.Card),
                     contentAlignment = Alignment.Center,
@@ -231,6 +468,7 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text(name ?: "Steam user") }, onClick = {}, enabled = false)
+                    if (!steamClient) DropdownMenuItem(text = { Text("Sign in to Steam (sync + downloads)") }, onClick = { menu = false; onSteamSignIn() })
                     DropdownMenuItem(text = { Text("Sync Steam account") }, onClick = { menu = false; onSync() })
                     DropdownMenuItem(text = { Text("Runtime & settings") }, onClick = { menu = false; onSettings() })
                     DropdownMenuItem(text = { Text("Steam API key (optional)…") }, onClick = { menu = false; onApiKey() })
@@ -242,31 +480,92 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, avatar: String?, name: String
     }
 }
 
+/**
+ * "R.E.P.O.: getting ready…", then "▶ R.E.P.O. ready" while a game waits in the background (see
+ * GameRunner.getLastGameReady, and Quick Resume): Play shows it in a few seconds. Tap it to play.
+ */
+@Composable
+private fun BackgroundGameChip(modifier: Modifier = Modifier) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val waiting by GameRunner.backgroundGame.collectAsState()
+    val g = waiting ?: return
+    val last = remember(g) { LastGame.get(ctx)?.takeIf { it.exe.name.equals(g.exe, ignoreCase = true) } }
+    Text(
+        if (g.ready) "▶ ${g.title} ready" else "${g.title}: getting ready…",
+        color = if (g.ready) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1,
+        modifier = modifier.clip(RoundedCornerShape(50)).background(if (g.ready) SteamColors.GreenBright else Color.White.copy(alpha = 0.07f))
+            .then(
+                if (last == null) Modifier
+                else Modifier.focusRing().clickable {
+                    ctx.startActivity(
+                        Intent(ctx, RuntimeActivity::class.java)
+                            .putExtra(RuntimeActivity.EXTRA_EXE, last.exe.path)
+                            .putExtra(RuntimeActivity.EXTRA_ARGS, last.args)
+                            .putExtra(RuntimeActivity.EXTRA_TITLE, last.title)
+                            .putExtra(RuntimeActivity.EXTRA_MODE, RuntimeActivity.MODE_FLAT)
+                            .putExtra(RuntimeActivity.EXTRA_APPID, last.appId)
+                    )
+                }
+            )
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    )
+}
+
 @Composable
 private fun HomeScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameState, actionsFor: (OwnedGame) -> CardActions,
-                       onBrowse: () -> Unit, onSync: () -> Unit) {
-    val installed = games.filter { stateOf(it) is GameState.Installed || stateOf(it) is GameState.Downloading }
-    val recent = games.sortedByDescending { it.playtimeMinutes }.take(12)
-    val hero = games.maxByOrNull { it.playtimeMinutes }
+                       onBrowse: () -> Unit, onSync: () -> Unit, onCheckUpdates: () -> Unit,
+                       filters: HomeFilters, onOpenFilters: () -> Unit) {
+    // Everything on Home follows the filter panel.
+    val shown = filters.apply(games) { stateOf(it) is GameState.Installed }
+    val installed = shown.filter { stateOf(it) is GameState.Installed || stateOf(it) is GameState.Downloading }
+    val recent = shown.sortedByDescending { it.playtimeMinutes }.take(12)
+    val hero = shown.maxByOrNull { it.playtimeMinutes }
+    val ui = LocalDeviceUi.current
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
         item {
-            Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                Text("Welcome back", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, letterSpacing = (-0.4).sp)
-                Text(DeviceMode.label(androidx.compose.ui.platform.LocalContext.current), color = SteamColors.Muted, fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth().padding(horizontal = ui.gutter, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Welcome back", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = ui.welcomeText, letterSpacing = (-0.4).sp)
+                    Text(DeviceMode.label(androidx.compose.ui.platform.LocalContext.current), color = SteamColors.Muted, fontSize = 13.sp)
+                }
+                // Filters: side panel with check boxes (VR only, installed, genres, sort).
+                Text(
+                    if (filters.activeCount > 0) "☰  Filters (${filters.activeCount})" else "☰  Filters",
+                    color = if (filters.activeCount > 0) Color(0xFF0E141B) else SteamColors.Text,
+                    fontSize = if (ui.isQuest) 16.sp else 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clip(RoundedCornerShape(50))
+                        .background(if (filters.activeCount > 0) SteamColors.Accent else Color.White.copy(alpha = 0.07f))
+                        .focusRing()
+                        .clickable(onClick = onOpenFilters)
+                        .padding(horizontal = if (ui.isQuest) 18.dp else 12.dp, vertical = if (ui.isQuest) 12.dp else 8.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                // Check for updates: opens the update popup.
+                Text(
+                    "⟳  Check for updates",
+                    color = SteamColors.Text, fontSize = if (ui.isQuest) 16.sp else 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.07f))
+                        .focusRing()
+                        .clickable(onClick = onCheckUpdates)
+                        .padding(horizontal = if (ui.isQuest) 18.dp else 12.dp, vertical = if (ui.isQuest) 12.dp else 8.dp),
+                )
             }
         }
         if (games.isEmpty()) {
             item {
                 Button(
                     onClick = onSync, shape = RoundedCornerShape(50),
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = ui.gutter, vertical = 8.dp).height(ui.buttonHeight),
                     colors = ButtonDefaults.buttonColors(containerColor = SteamColors.Accent, contentColor = Color(0xFF0E141B)),
-                ) { Text("Sync Steam account", fontWeight = FontWeight.Bold) }
+                ) { Text("Sync Steam games", fontWeight = FontWeight.Bold) }
             }
-        } else if (hero != null) {
+        } else if (hero == null) {
+            item { Text("No games match the filters.", color = SteamColors.Muted, modifier = Modifier.padding(horizontal = ui.gutter, vertical = 12.dp)) }
+        } else {
             item { HeroBanner(hero, stateOf(hero), actionsFor(hero)) }
-            item { Shelf("Installed & downloading", installed, stateOf, actionsFor, empty = "Nothing installed yet — open Games and tap a card.") }
+            item { Shelf("Installed & downloading", installed, stateOf, actionsFor, empty = "Nothing installed yet — tap a game card and Download.") }
             item { Shelf("Most played", recent, stateOf, actionsFor) }
+            item { Shelf("Your games · ${shown.size}", shown, stateOf, actionsFor, empty = "No games match the filters.") }
             item {
                 TextButton(onClick = onBrowse, modifier = Modifier.padding(horizontal = 12.dp)) {
                     Text("Browse all ${games.size} games →", fontSize = 15.sp)
@@ -278,11 +577,12 @@ private fun HomeScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameState
 
 @Composable
 private fun HeroBanner(game: OwnedGame, state: GameState, actions: CardActions) {
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+    val ui = LocalDeviceUi.current
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = ui.gutter, vertical = 8.dp)) {
         val wide = maxWidth >= 720.dp
-        val h = if (wide) 280.dp else 210.dp
+        val h = ui.heroHeight
         Box(Modifier.fillMaxWidth().height(h).clip(RoundedCornerShape(28.dp)).background(SteamColors.Card)) {
-            SteamArt(game.headerUrl, game.name, Modifier.fillMaxSize(), ContentScale.Crop)
+            GameArt(game.appId, game.name, Modifier.fillMaxSize(), ContentScale.Crop, showNameIfMissing = true)
             Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xE6101418), Color(0x40101418), Color.Transparent))))
             Column(Modifier.align(Alignment.BottomStart).padding(22.dp)) {
                 if (game.isVr) Text(
@@ -290,13 +590,13 @@ private fun HeroBanner(game: OwnedGame, state: GameState, actions: CardActions) 
                     modifier = Modifier.padding(bottom = 8.dp).background(SteamColors.Accent, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 3.dp),
                 )
                 Text("Most played", color = SteamColors.Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
-                Text(game.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = if (wide) 32.sp else 24.sp, lineHeight = 34.sp)
+                Text(game.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = if (wide) ui.heroTitle else ui.heroTitle * 0.85f, lineHeight = ui.heroTitle * 1.1f, maxLines = 2)
                 Spacer(Modifier.height(6.dp))
                 Text("${game.playtimeMinutes / 60} h played", color = Color(0xFFD5DEE6), fontSize = 14.sp)
                 Spacer(Modifier.height(12.dp))
                 when (state) {
                     is GameState.Installed -> Button(
-                        onClick = actions.onPlay, shape = RoundedCornerShape(50),
+                        onClick = actions.onPlay, shape = RoundedCornerShape(50), modifier = Modifier.focusRing().height(ui.buttonHeight),
                         colors = ButtonDefaults.buttonColors(containerColor = SteamColors.Green, contentColor = Color.White),
                     ) { Text("Play Game") }
                     is GameState.Downloading -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -315,29 +615,38 @@ private fun HeroBanner(game: OwnedGame, state: GameState, actions: CardActions) 
 
 @Composable
 private fun Shelf(title: String, list: List<OwnedGame>, stateOf: (OwnedGame) -> GameState, actionsFor: (OwnedGame) -> CardActions, empty: String? = null) {
-    Text(title, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = Color.White, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+    val ui = LocalDeviceUi.current
+    Text(title, fontWeight = FontWeight.SemiBold, fontSize = if (ui.isQuest) 22.sp else 17.sp, color = Color.White, modifier = Modifier.padding(horizontal = ui.gutter, vertical = 8.dp))
     if (list.isEmpty() && empty != null) {
-        Text(empty, color = SteamColors.Muted, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        Text(empty, color = SteamColors.Muted, fontSize = 14.sp, modifier = Modifier.padding(horizontal = ui.gutter, vertical = 4.dp))
         return
     }
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 12.dp, top = 4.dp)) {
-        items(list, key = { it.appId }) { g -> GameCard(g, stateOf(g), actionsFor(g), Modifier.width(300.dp).padding(vertical = 6.dp)) }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(ui.cardGap), contentPadding = PaddingValues(start = ui.gutter, end = ui.gutter, bottom = 12.dp, top = 4.dp)) {
+        items(list, key = { it.appId }) { g -> GameCard(g, stateOf(g), actionsFor(g), Modifier.width(ui.shelfCardWidth).padding(vertical = 6.dp)) }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GamesScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameState, actionsFor: (OwnedGame) -> CardActions) {
+    val ui = LocalDeviceUi.current
     var category by rememberSaveable { mutableStateOf(Categories.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
     var letters by rememberSaveable { mutableStateOf("") } // "" = all, "A" or "A-F"
     var popup by remember { mutableStateOf(false) }
-    val genres = remember(games.map { it.genres }) { games.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
-    val cats = listOf(Categories.ALL, Categories.VR, Categories.INSTALLED) + genres
-    val shown = games.filter {
-        Categories.matches(category, it, stateOf(it) is GameState.Installed) &&
-            (query.isBlank() || it.name.contains(query, ignoreCase = true)) &&
-            LetterFilter.matches(letters, it.name)
+    // Only the installed set matters for filtering, not every download-progress tick.
+    val installed = games.filter { stateOf(it) is GameState.Installed }.mapTo(HashSet()) { it.appId }
+    val genres = remember(games) { games.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
+    val cats = remember(genres) { listOf(Categories.ALL, Categories.VR, Categories.INSTALLED) + genres }
+    val counts = remember(games, installed, cats) {
+        cats.associateWith { c -> games.count { Categories.matches(c, it, it.appId in installed) } }
+    }
+    val shown = remember(games, installed, category, query, letters) {
+        games.filter {
+            Categories.matches(category, it, it.appId in installed) &&
+                (query.isBlank() || it.name.contains(query, ignoreCase = true)) &&
+                LetterFilter.matches(letters, it.name)
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -346,24 +655,24 @@ private fun GamesScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameStat
                 selected = query.isNotBlank() || letters.isNotEmpty(),
                 onClick = { popup = true },
                 label = if (letters.isNotEmpty()) "☰ $letters" else if (query.isNotBlank()) "☰ \"$query\"" else "☰ Browse",
-                modifier = Modifier.padding(start = 16.dp),
+                modifier = Modifier.padding(start = ui.gutter),
             )
             LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(cats) { c ->
-                    val count = games.count { Categories.matches(c, it, stateOf(it) is GameState.Installed) }
+                    val count = counts[c] ?: 0
                     Box(Modifier.combinedClickable(onClick = { category = c }, onLongClick = { popup = true })) {
                         PillFilter(selected = c == category, onClick = { category = c }, label = "$c ($count)")
                     }
                 }
             }
         }
-        if (shown.isEmpty()) Text("No games match.", color = SteamColors.Muted, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        if (shown.isEmpty()) Text("No games match.", color = SteamColors.Muted, modifier = Modifier.padding(horizontal = ui.gutter, vertical = 8.dp))
         LazyVerticalGrid(
-            GridCells.Adaptive(220.dp),
+            GridCells.Adaptive(ui.gridCardMin),
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(ui.gutter),
+            horizontalArrangement = Arrangement.spacedBy(ui.cardGap),
+            verticalArrangement = Arrangement.spacedBy(ui.cardGap),
         ) {
             items(shown, key = { it.appId }) { g -> GameCard(g, stateOf(g), actionsFor(g), Modifier.padding(2.dp)) }
         }
@@ -378,10 +687,11 @@ private fun GamesScreen(games: List<OwnedGame>, stateOf: (OwnedGame) -> GameStat
 
 @Composable
 private fun PillFilter(selected: Boolean, onClick: () -> Unit, label: String, modifier: Modifier = Modifier) {
+    val ui = LocalDeviceUi.current
     FilterChip(
         selected = selected,
         onClick = onClick,
-        label = { Text(label) },
+        label = { Text(label, fontSize = if (ui.isQuest) 16.sp else 13.sp, modifier = Modifier.padding(vertical = if (ui.isQuest) 8.dp else 0.dp)) },
         modifier = modifier,
         shape = RoundedCornerShape(50),
         colors = FilterChipDefaults.filterChipColors(

@@ -56,14 +56,49 @@ class RuntimeCoreTest {
             assertTrue(Files.isSymbolicLink(z))
             assertEquals("/data/data/com.qssteam/files/rootfs", Files.readSymbolicLink(z).toString()) // NIO normalizes the // padding
             assertTrue(File(rootfs, "home/xuser/.wine/drive_c/windows/system32").isDirectory)
+            // Wine's own DLLs linked into the prefix (missing -> "could not load kernel32.dll", exit 53)
+            for (dir in listOf("system32", "syswow64")) {
+                val k32 = File(rootfs, "home/xuser/.wine/drive_c/windows/$dir/kernel32.dll")
+                assertTrue("$dir/kernel32.dll", k32.exists())
+            }
+            // DXVK replaced Wine's d3d11 with a real file; Turnip installed
+            val d3d11 = File(rootfs, "home/xuser/.wine/drive_c/windows/system32/d3d11.dll").toPath()
+            assertFalse("DXVK d3d11.dll should be a real file", Files.isSymbolicLink(d3d11))
+            assertTrue(File(rootfs, "usr/lib/libvulkan_freedreno.so").isFile)
             // No leftover hardcoded paths anywhere
-            val leftovers = rootfs.walkTopDown().filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }
+            // Don't follow links: dosdevices/z: points at the real runtime path, which another test rewrites.
+            val leftovers = rootfs.walkTopDown().onEnter { !Files.isSymbolicLink(it.toPath()) }
+                .filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }
                 .count { f -> String(f.readBytes(), Charsets.ISO_8859_1).contains("/data/data/com.winlator/") }
             assertEquals(0, leftovers)
-            println("Extracted files: " + rootfs.walkTopDown().count())
+            println("Extracted files: " + rootfs.walkTopDown().onEnter { !Files.isSymbolicLink(it.toPath()) }.count())
         } finally {
             rootfs.deleteRecursively()
         }
+    }
+
+    /**
+     * Runs the app's smoke test (`box64 wine cmd /c ver`) on the real runtime, installed at the app's
+     * real path. Needs arm64 emulation (qemu-user binfmt) and a writable /data/data/com.qssteam/files:
+     *   -Dwinlator.apk=... -Dwinlator.smoke=1
+     */
+    @Test fun smokeTestRealRuntime() {
+        val path = System.getProperty("winlator.apk").orEmpty()
+        assumeTrue("set -Dwinlator.apk and -Dwinlator.smoke=1", path.isNotEmpty() && System.getProperty("winlator.smoke") == "1")
+        val rootfs = File("/data/data/$pkg/files/rootfs")
+        rootfs.deleteRecursively(); rootfs.mkdirs()
+        RuntimeCore.extractAll(File(path), rootfs, pkg) { _, _ -> }
+        val r = rootfs.path
+        val pb = ProcessBuilder("$r/usr/local/bin/box64", "$r/opt/wine/bin/wine", "cmd", "/c", "ver")
+            .directory(File(r, "home/xuser/.wine")).redirectErrorStream(true)
+        pb.environment().clear()
+        pb.environment().putAll(RuntimeCore.wineEnvironment(r, null, "test"))
+        val p = pb.start()
+        val out = p.inputStream.bufferedReader().readText()
+        val code = p.waitFor()
+        println(out)
+        assertEquals("exit code (53 = Wine couldn't load kernel32.dll)", 0, code)
+        assertTrue("Windows version printed", out.contains("Microsoft Windows"))
     }
 
     /** Real network download + verification: -Dwinlator.download=1 */

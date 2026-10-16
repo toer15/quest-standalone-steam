@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Meta Quest 3 build: runs as a large landscape 2D panel in Horizon OS. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- OpenXR runtime broker access (also merged from the Khronos loader AAR). -->
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+
+    <!-- required=false: a 2D panel app that can later open an immersive VR activity. -->
+    <uses-feature android:name="android.hardware.vr.headtracking" android:required="false" android:version="1" />
+    <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <application>
+        <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s|quest2|questpro" />
+
+        <activity android:name=".MainActivity" android:screenOrientation="landscape" android:resizeableActivity="true">
+            <layout android:defaultWidth="1400dp" android:defaultHeight="860dp" android:gravity="center" />
+        </activity>
+        <activity android:name=".LoginActivity" android:screenOrientation="landscape" android:resizeableActivity="true">
+            <layout android:defaultWidth="1100dp" android:defaultHeight="760dp" android:gravity="center" />
+        </activity>
+        <activity android:name=".RuntimeActivity" android:screenOrientation="landscape" />
+        <activity android:name=".store.StoreActivity" android:screenOrientation="landscape" android:resizeableActivity="true">
+            <layout android:defaultWidth="1400dp" android:defaultHeight="900dp" android:gravity="center" />
+        </activity>
+
+        <!-- Immersive SteamVR bridge view: OpenXR (Meta runtime) in libqssxr.so. -->
+        <activity
+            android:name=".QssXrActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.qssteam.vr"
+            android:screenOrientation="landscape"
+            android:resizeableActivity="false"
+            android:excludeFromRecents="true"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|uiMode"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+            <meta-data android:name="android.app.lib_name" android:value="qssxr" />
+            <intent-filter>
+                <action android:name="com.qssteam.action.VR" />
+                <category android:name="com.oculus.intent.category.VR" />
+                <category android:name="org.khronos.openxr.intent.category.IMMERSIVE_HMD" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

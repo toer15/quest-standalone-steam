@@ -30,12 +30,135 @@ object RuntimeCore {
     const val WINLATOR_APK_SHA256 = "ea5c81bf0e5b90a6b9ccb8007121ab6738c8646a5a60b341ce0ac2b33f1d100a"
     const val FROM_PREFIX = "/data/data/com.winlator/"
 
+    /** A value in [wineEnvironment]'s extra map that removes the variable (the program's own default applies). */
+    const val UNSET = "\u0000unset"
+
+    /**
+     * Box64's dynarec settings of Winlator's "Intermediate" preset (set by [wineEnvironment]). Unset
+     * them all (see [UNSET]) for Box64's own defaults, which run translated code much faster.
+     */
+    val BOX64_PRESET_KEYS = listOf(
+        "BOX64_DYNAREC_SAFEFLAGS", "BOX64_DYNAREC_FASTNAN", "BOX64_DYNAREC_FASTROUND", "BOX64_DYNAREC_X87DOUBLE",
+        "BOX64_DYNAREC_BIGBLOCK", "BOX64_DYNAREC_STRONGMEM", "BOX64_DYNAREC_FORWARD", "BOX64_DYNAREC_CALLRET",
+        "BOX64_DYNAREC_WAIT", "BOX64_DYNAREC_NATIVEFLAGS", "BOX64_DYNAREC_WEAKBARRIER",
+    )
+
     val ASSETS = listOf(
         Asset("assets/rootfs.tzst", "", "Extracting rootfs + Wine"),
         Asset("assets/box64/box64-0.4.4.tzst", "", "Extracting Box64"),
         Asset("assets/container_pattern.tzst", "home/xuser", "Creating Wine prefix"),
-        Asset("assets/dxwrapper/dxvk-2.4.1.tzst", "opt/dxvk", "Extracting DXVK (optional)"),
+        Asset("assets/rootfs_patches.tzst", "", "Applying Winlator patches"),
+        // GPU: Mesa Turnip (Vulkan for Adreno, e.g. Quest 3's XR2 Gen 2) + DXVK (D3D9/10/11 -> Vulkan) in the prefix.
+        Asset("assets/graphics_driver/turnip-26.2.0.tzst", "", "Installing Turnip GPU driver"),
+        Asset("assets/dxwrapper/dxvk-2.4.1.tzst", "home/xuser/.wine/drive_c/windows", "Installing DXVK"),
     )
+
+    /** Bumped when [ASSETS] change so existing installs are redone. */
+    const val LAYOUT_VERSION = 3
+
+    /**
+     * Winlator's box64 rc makes its patched Wine loader run usr/local/bin/winpreexec before steam.exe,
+     * Launcher.exe and CNC3.exe (BOX64_ENV…=WINPREEXEC=winpreexec). That helper asks Winlator's Java
+     * WinHandler over UDP 127.0.0.1:7947 and waits for the answer with no timeout; this app has no
+     * WinHandler, so those programs never started (Steam.exe at 0 s CPU, no window, no logs).
+     */
+    private val PRE_EXEC_LINE = Regex("^\\s*BOX64_ENV\\d*\\s*=\\s*WINPREEXEC\\s*=", RegexOption.IGNORE_CASE)
+
+    /** The rc text without its WINPREEXEC lines; everything else (Winlator's per-game fixes) stays. */
+    fun sanitizeBox64Rc(text: String): String =
+        text.lineSequence().filterNot { PRE_EXEC_LINE.containsMatchIn(it) }.joinToString("\n")
+
+    /**
+     * Removes the pre-exec hook from an installed runtime: the WINPREEXEC lines in etc/config.box64rc,
+     * and the helper itself (moved aside, so a WINPREEXEC from anywhere else fails fast instead of
+     * waiting: the loader only cancels a launch when the helper exits with code 2).
+     * Returns what it changed (empty = nothing to do).
+     */
+    fun disablePreExec(rootfs: File): List<String> {
+        val done = mutableListOf<String>()
+        val rc = File(rootfs, "etc/config.box64rc")
+        if (rc.isFile) {
+            val text = rc.readText()
+            val clean = sanitizeBox64Rc(text)
+            if (clean != text) { rc.writeText(clean); done += "removed WINPREEXEC from etc/config.box64rc" }
+        }
+        val helper = File(rootfs, "usr/local/bin/winpreexec")
+        if (helper.exists()) {
+            val off = File(helper.path + ".disabled")
+            off.delete()
+            if (helper.renameTo(off) || helper.delete()) done += "moved usr/local/bin/winpreexec aside"
+        }
+        return done
+    }
+
+    /**
+     * WINEDLLOVERRIDES ("d3d11,dxgi=n,b;winemenubuilder.exe=d") as registry values for
+     * HKCU\Software\Wine\DllOverrides: ("d3d11", "native,builtin"), ("winemenubuilder.exe", "").
+     */
+    fun dllOverrides(spec: String): List<Pair<String, String>> = spec.split(';').flatMap { part ->
+        val dlls = part.substringBefore('=', "").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val order = part.substringAfter('=', "").split(',').mapNotNull {
+            when (it.trim()) { "n" -> "native"; "b" -> "builtin"; else -> null }
+        }.joinToString(",")
+        dlls.map { it to order }
+    }
+
+    /** Environment for `box64 wine ...` in the installed runtime at [r] (pure, so tests use the same one). */
+    fun wineEnvironment(r: String, display: String?, mode: String, extra: Map<String, String> = emptyMap()): Map<String, String> =
+        buildMap {
+            put("HOME", "$r/home/xuser")
+            put("USER", "xuser")
+            put("TMPDIR", "$r/tmp")
+            put("WINEPREFIX", "$r/home/xuser/.wine")
+            put("WINEDEBUG", "-all,err+all")
+            put("PATH", "$r/usr/local/bin:$r/opt/wine/bin:$r/usr/bin:/system/bin")
+            put("LD_LIBRARY_PATH", "$r/usr/lib:/system/lib64")
+            put("BOX64_LD_LIBRARY_PATH", "$r/usr/lib/x86_64-linux-gnu:$r/opt/wine/lib/wine/x86_64-unix")
+            put("BOX64_PATH", "$r/opt/wine/bin")
+            put("BOX64_DYNAREC", "1")
+            put("BOX64_LOG", "0")
+            put("BOX64_NOBANNER", "1")
+            put("BOX64_DYNACACHE", "0")
+            // Winlator's "Intermediate" Box64 preset: safer flags/rounding than "Performance" for
+            // games that crash on start (Unity), still fast. Per-game fixes come from Winlator's rc file.
+            put("BOX64_DYNAREC_SAFEFLAGS", "2")
+            put("BOX64_DYNAREC_FASTNAN", "1")
+            put("BOX64_DYNAREC_FASTROUND", "0")
+            put("BOX64_DYNAREC_X87DOUBLE", "1")
+            put("BOX64_DYNAREC_BIGBLOCK", "2")
+            put("BOX64_DYNAREC_STRONGMEM", "0")
+            put("BOX64_DYNAREC_FORWARD", "128")
+            put("BOX64_DYNAREC_CALLRET", "0")
+            put("BOX64_DYNAREC_WAIT", "1")
+            put("BOX64_DYNAREC_NATIVEFLAGS", "0")
+            put("BOX64_DYNAREC_WEAKBARRIER", "2")
+            put("BOX64_RCFILE", "$r/etc/config.box64rc")
+            // Same as Winlator: no DXGI device manager (crashes some games under Wine), quiet Mesa.
+            put("WINE_DO_NOT_CREATE_DXGI_DEVICE_MANAGER", "1")
+            // Winlator's default: Wine's eventfd synchronization ("esync"). Waits and locks no longer go
+            // through wineserver each time, which matters for many-threaded programs (Steam's browser,
+            // modern games). Its shared memory is the runtime's tmp/shm (Winlator's patched glibc).
+            put("WINEESYNC", "1")
+            put("MESA_DEBUG", "silent")
+            put("MESA_NO_ERROR", "1")
+            // DXVK (installed into the prefix) for Direct3D 9/10/11, the game's own openvr_api.dll (our bridge),
+            // and our XInput DLLs (the player's Bluetooth controller, written by the app into QSS_PAD_SHM).
+            put("WINEDLLOVERRIDES", "d3d11,dxgi,d3d10core,d3d9=n,b;openvr_api=n,b;xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;winemenubuilder.exe=d")
+            // Turnip: Mesa's Vulkan driver for Adreno GPUs (Quest 3 = Adreno 740), from Winlator.
+            put("VK_ICD_FILENAMES", "$r/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json")
+            put("TU_OVERRIDE_HEAP_SIZE", "4096")
+            put("MESA_VK_WSI_PRESENT_MODE", "mailbox")
+            put("MESA_SHADER_CACHE_DIR", "$r/tmp/mesa-cache")
+            put("vblank_mode", "0")
+            put("DXVK_LOG_LEVEL", "info")
+            // DXVK's pipeline state cache: kept (not in tmp, which app updates clean), so later starts compile ahead.
+            put("DXVK_STATE_CACHE_PATH", "$r/home/xuser/.cache/dxvk")
+            // Written by the app before each game (Winlator's settings); Z: is the runtime's root.
+            put("DXVK_CONFIG_FILE", "Z:\\home\\xuser\\.config\\dxvk.conf")
+            put("QSS_MODE", mode)
+            if (!display.isNullOrBlank()) put("DISPLAY", display)
+            for ((k, v) in extra) if (v == UNSET) remove(k) else put(k, v)
+        }
 
     /** "/data/data/<pkg>" padded with '/' to the same length as [FROM_PREFIX]. */
     fun replacementPrefix(packageName: String): String {
@@ -140,11 +263,51 @@ object RuntimeCore {
                 dest.mkdirs()
                 CountingStream(zip.getInputStream(e), e.compressedSize.coerceAtLeast(e.size)) { progress(a.label, it) }
                     .use { untarZstd(it, dest, from, to) }
+                // The prefix template has an empty system32: Winlator fills it from Wine when it creates a
+                // container. Without this Wine exits with "could not load kernel32.dll" (exit code 53).
+                if (a.zipEntry == "assets/container_pattern.tzst") installWineDlls(rootfs)
                 progress(a.label, 1f)
             }
         }
+        disablePreExec(rootfs)
         File(rootfs, "tmp/shm").mkdirs()
         File(rootfs, "home/xuser/.wine/drive_c/games").mkdirs()
+    }
+
+    /**
+     * Links Wine's builtin Windows binaries into the prefix: x86_64-windows -> system32 and
+     * i386-windows -> syswow64. Symlinks save ~280 MB; DXVK, extracted later, replaces its own DLLs.
+     */
+    fun installWineDlls(rootfs: File) {
+        val wineLib = File(rootfs, "opt/wine/lib/wine")
+        val windows = File(rootfs, "home/xuser/.wine/drive_c/windows")
+        for ((src, dst) in listOf("x86_64-windows" to "system32", "i386-windows" to "syswow64")) {
+            val from = File(wineLib, src)
+            val to = File(windows, dst).apply { mkdirs() }
+            from.listFiles()?.forEach { f ->
+                if (!f.isFile) return@forEach
+                val out = File(to, f.name)
+                if (out.exists()) return@forEach
+                try {
+                    Files.createSymbolicLink(out.toPath(), f.toPath())
+                } catch (e: Exception) {
+                    f.copyTo(out)
+                }
+            }
+        }
+    }
+
+    /** True when Wine's core DLLs are in the prefix (else wine exits with code 53, "could not load kernel32.dll"). */
+    fun prefixHealthy(rootfs: File) =
+        File(rootfs, "home/xuser/.wine/drive_c/windows/system32/kernel32.dll").exists() &&
+            File(rootfs, "home/xuser/.wine/drive_c/windows/system32/ntdll.dll").exists()
+
+    /** Repairs a prefix from an older install by linking Wine's DLLs in. Returns true if it changed anything. */
+    fun repairPrefix(rootfs: File): Boolean {
+        if (prefixHealthy(rootfs) || !File(rootfs, "opt/wine/lib/wine/x86_64-windows/kernel32.dll").exists()) return false
+        installWineDlls(rootfs)
+        File(rootfs, "tmp").mkdirs()
+        return prefixHealthy(rootfs)
     }
 
     fun untarZstd(input: InputStream, dest: File, from: ByteArray, to: ByteArray) {

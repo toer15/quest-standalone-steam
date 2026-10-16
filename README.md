@@ -7,12 +7,102 @@ A fun experiment: can a Meta Quest 3 run your Steam (Windows) games **standalone
 3. Try to run them on the headset with **Box64 + Wine + DXVK** (like [Winlator](https://github.com/brunodev85/winlator)), with an **OpenVR → OpenXR bridge** (idea from OpenComposite) so VR games could reach the Quest's runtime.
 
 ## Download
-Grab `quest-standalone-steam.apk` from [Releases](https://github.com/toer15/quest-standalone-steam/releases) (built by GitHub Actions). One universal arm64 APK installs on **Android phones (Android 10+)** and **Meta Quest** (appears in Library → Unknown Sources). CI builds have no Steam API key unless you add a repo secret `STEAM_API_KEY` (Settings → Secrets → Actions); otherwise build locally with your key.
+**Meta Quest 3** (also 3S / 2 / Pro): [quest-steam-quest3.apk](https://github.com/toer15/quest-standalone-steam/releases/download/v0.19.3/quest-steam-quest3.apk)
 
-| | Phone | Quest 3 |
-|---|---|---|
-| Steam login + library | yes | yes (2D panel) |
-| Runtime installer, import game, run .exe | yes (flat, via Termux:X11) | yes (flat 2D panel via Termux:X11); VR bridge TODO |
+**v0.19.3:** the headset keeps answering while a game loads, and a game you close saves what it learned: the Windows programs run at a polite CPU priority (the headset's own threads and the app's display go first), the app watches the headset's memory and gives some back before Android has to close the app, **Close game** quits the game the way its window's ✕ does so Box64 can save its translation cache for the next start, and the "Steam without its browser" test that cost a first Play about 75 seconds is gone. Release: https://github.com/toer15/quest-standalone-steam/releases/tag/v0.19.3
+
+**v0.19.2:** fixes the black screen and the crash in the v0.19.0 / v0.19.1 logs: with no Steam running, Steam starts first in the background and the app starts the game next to it the moment it has signed in (the way that worked before v0.18.6), the game screen shows what it is waiting for instead of staying black, and a game that crashes at start is reported within seconds. Release: https://github.com/toer15/quest-standalone-steam/releases/tag/v0.19.2
+
+Built by GitHub Actions ([Releases](https://github.com/toer15/quest-standalone-steam/releases)). Sideload with SideQuest or `adb install`, then open it from Library → Unknown Sources. Later versions arrive through the app itself (Home → Check for updates). The phone version was dropped; the app is made for the Quest 3 panel: large landscape layout, big cards and buttons for controllers and hands.
+
+## v0.12.0: the Quest's own GPU driver (Vortek)
+
+Mesa Turnip can't get GPU memory on the Quest (`BO init VK_ERROR_OUT_OF_DEVICE_MEMORY`), so DXVK couldn't
+create a D3D11 device. Games now use **Vortek** from Winlator 11.2 (LGPL-2.1): the runtime's ICD
+`libvulkan_vortek.so` sends Vulkan calls over `<rootfs>/tmp/.vortek/V0` to `libvortekrenderer.so` in the app,
+which runs them on the headset's Vulkan driver and renders into AHardwareBuffers attached to the game's X
+window (`com.winlator.xenvironment.components.VortekRendererComponent`, `display/Vortek.kt`). CI copies the
+renderer from the Winlator APK; its helper library is renamed `libwlvortek.so` with its JNI names changed
+(`tools/vortek/bundle_vortek.py`) so it can sit next to our own `libwinlator.so`. DXVK 2.4.1 is used on
+Vulkan 1.3, else 1.10.3. Turnip stays selectable in the Runtime screen.
+
+## v0.11.0: the game inside the app's window
+
+Games now draw into an X server **built into the app**: Winlator's Java X server (LGPL-2.1, from
+[brunodev85/winlator](https://github.com/brunodev85/winlator) v10.1.0, `app/src/main/java/com/winlator`,
+native parts in `app/src/main/cpp/winlator`) with MIT-SHM (its SysV shared memory server), DRI3 and Present.
+The runtime's libxcb connects to `<rootfs>/tmp/.X11-unix/X0`; the game runs in Wine's virtual desktop
+(`explorer /desktop=shell,1280x720`) and `display/GameSurface.kt` shows it in the app's window with pointer
+input. Leaving the game returns to the library. Termux:X11 (`127.0.0.1:0` in the Runtime screen) remains an option.
+
+## v0.10.0: loading screen, the app in VR, cleanup after updates
+
+- **Play → Flat**: a loading screen ("Loading R.E.P.O.… 12s") stays up until the game has really opened its
+  window (checked over X11 with `launcher/XProbe.kt`), then "Opening game now…" and the game's window.
+  Starting games lives in `play/GameRunner.kt` (used by the Runtime screen and the VR panel).
+- **VR view** shows the app itself (library, downloads, Store, VR games) on a panel: an OpenXR quad layer
+  backed by an Android Surface (`XR_KHR_android_surface_swapchain`), rendered by a private virtual display
+  (`vr/VrPanel.kt`). Touch controller ray = pointer, trigger = tap, thumbstick = scroll, thumbstick click = recenter.
+- **After an update** the first start deletes what older versions left (`update/AppCleanup.kt`); games,
+  sign-in and the runtime are kept.
+
+## v0.9.3: built-in game display
+
+Wine draws games through X11. Termux:X11 (GPL-3.0, [source](https://github.com/termux/termux-x11)) is bundled
+(`assets/display/termux-x11.apk`, one-tap install) and its X server is started from this app with
+`app_process … com.termux.x11.CmdEntryPoint :0 -ac -listen tcp` (`display/GameDisplay.kt`), so the Termux app isn't needed.
+
+## v0.9.0: Store tab, reliable downloads, game sizes
+
+- **Store** tab (between Home and Games): search bar at the top, sections (top sellers, new & trending, specials,
+  VR, free, all games) and every game on Steam page by page, with prices in your currency. Buy opens Steam's own
+  checkout inside the app (`StoreActivity`); afterwards the library syncs and the game shows up with Download.
+- **Downloads keep going**: a foreground service with Wi-Fi/CPU wake locks keeps them running with the panel closed;
+  dropped connections and stalls reconnect and resume automatically; unfinished downloads resume after a restart.
+- **Sizes**: every card shows the game's real install size (Steam app info); downloading shows a blue bar over grey
+  with "37% of 4.5 GB · 3m left".
+- Game pictures fall back through Steam's newer image addresses, so cards aren't grey.
+
+## v0.8.0: Bluetooth controllers
+
+- Pair an Xbox, PlayStation (DualSense / DualShock), Switch Pro or 8BitDo controller in Quest Settings → Devices → Bluetooth.
+  The top bar shows the exact model when it's connected, or "No controller".
+- **In games:** the app writes the controller's state into `<rootfs>/tmp/gamepad.shm`; our XInput DLLs
+  (`openvr-bridge/win/xinput.cpp`, installed as `xinput1_1`…`xinput1_4` / `xinput9_1_0` in the Wine prefix) give it to the
+  game as an Xbox controller, with rumble. VR view: `QssXrActivity` passes the controller through; flat games: the
+  "🎮 → game" badge (needs "Display over other apps", or `adb shell appops set com.qssteam SYSTEM_ALERT_WINDOW allow`).
+  Games that only use DirectInput don't see it yet.
+- **In the app:** D-pad / left stick moves, A selects, B back, LB/RB tabs, Y filters, X sync, Start checks for updates.
+- **Play popup:** choose Play in VR or Play flat before a game starts.
+
+## v0.5.0: SteamVR games in the headset (Quest 3 app)
+On a Quest, **Play in VR** on a downloaded SteamVR game:
+1. Replaces the game's `openvr_api.dll` with the bridge (originals are kept as `*.qss-orig`).
+2. Starts the game with Box64 + Wine, using **Turnip** (Mesa Vulkan for the Quest 3's Adreno 740) and **DXVK** for Direct3D 11.
+3. Switches the headset to the immersive view (OpenXR, Meta's runtime). Your head and Touch controllers drive the game. The game's frames show in the headset, and the runtime's timewarp corrects for latency.
+
+Dark blue in the headset means the VR view is waiting for the game. Teal means the game connected but hasn't sent a frame yet. **Runtime & settings → Enter VR view** reopens it.
+Details and limits: [openvr-bridge/README.md](openvr-bridge/README.md). First-version limits:
+- 64-bit D3D11 games only.
+- Frames are copied through the CPU, so expect low frame rates.
+- Games still need Termux:X11 for their window.
+- Games that need the Steam client (Steamworks DRM) won't start.
+
+**Tested**: the Windows half under Wine in CI. A test D3D11 VR game gets poses and controller input, and its frames arrive in shared memory pixel-perfect. **Untested on hardware**: the headset half (OpenXR activity), Turnip + DXVK on Quest, and real games.
+
+## v0.4.0: Steam sign-in, auto-sync, real downloads
+1. **Sign in to Steam in the app** (Steam client protocol via [JavaSteam](https://github.com/Longi94/JavaSteam)):
+   - **Account & password**, with Steam Guard: approve in the Steam phone app, or type the code (authenticator or email).
+   - **QR code**: in the Steam phone app, open Steam Guard → scan the QR code. No password is typed on the device.
+   - The password goes RSA-encrypted straight to Steam and is never stored. The app keeps only Steam's refresh token in private storage, like the Steam client's "Remember me". Sign out deletes it.
+2. **Your games sync automatically** right after sign-in, from Steam's servers (`Player.GetOwnedGames`, with a licenses + PICS fallback). That includes private profiles. The list is saved, so it shows instantly on the next launch and then refreshes.
+3. **Download** on a flipped card fetches the game's Windows depots (64-bit, English) from Steam's CDN with JavaSteam's DepotDownloader. The card shows the phase, `done / total` and time left. When it finishes the card shows **Play Game**, and the front shows **Installed**. If a download fails or stalls (3 minutes with no data), tap **Retry download**: files already on disk are checked and reused.
+4. **Play Game** starts the game's largest `.exe` with Box64 + Wine. On the first Play the runtime is installed automatically (~157 MB).
+5. **Uninstall** (under Play Game) deletes the game's files.
+
+The old website sign-in (OpenID) is still there: "Library only? Sign in on Steam's website". It syncs the library but can't download. The profile menu then offers **Sign in to Steam (sync + downloads)**.
+
+**Untested on hardware**: every Steam network call above. This environment can't reach Steam's servers. The pure-JVM parts (`steamclient/`) compile against JavaSteam 1.8.0 and have unit tests. The Android builds compile in CI.
 
 ## Steam library without a built-in key (v0.3.2)
 The public APK ships with **no** Steam Web API key. Each player signs in with their own Steam account. A private profile still loads for its owner.
@@ -35,7 +125,7 @@ Jetpack Compose with a dark, Steam-style theme. It works on phones and as a Ques
 - **Games tab**: category slider with All / VR / Installed plus Steam store genres. **☰ Browse** (or a long-press on a chip) opens an animated popup that grows into a larger panel, with **Search games**, **All games** and an A–Z jump list (A–F, G–L, M–R, S–Z, #).
 - **Downloads** use pluggable `DownloadSource`s (`app/.../download/Downloads.kt`):
   - `FolderImportSource` works.
-  - `SteamDepotSource` is a **stub** that shows an honest error. Real Steam depot downloads need a Steam CM client (e.g. JavaSteam) with your Steam login + Steam Guard. That's the next milestone.
+  - `SteamDepotSource` downloads from Steam (v0.4.0, see above).
 - Play opens the runtime screen and launches the game's largest `.exe` via Box64 + Wine, with logs. The runtime installer and smoke test live under Settings.
 
 ## Runtime (v0.2.0): Box64 + Wine on the device
@@ -83,21 +173,23 @@ v0.2.0's installer could corrupt the downloaded Winlator APK: tapping Install tw
 
 ## Architecture
 ```
-app/            Kotlin UI: LoginActivity (Steam OpenID), LibraryActivity (GetOwnedGames + VR tagging)
+app/            Kotlin/Compose UI. Flavors: quest (Quest 3 panel) and phone. LoginActivity (Steam client + OpenID fallback)
+steamclient/    Pure-JVM Steam client: SteamSession (QR/password + Steam Guard, owned games), SteamDownloader (DepotDownloader)
 launcher/       GameLauncher: builds the box64 -> wine64 -> game.exe process (TODOs for runtime/prefix/X server/VR)
-openvr-bridge/  C++ stub of openvr_api exports to be backed by OpenXR
+openvr-bridge/  SteamVR bridge: Windows openvr_api.dll (win/), shared-memory contract (include/), Wine test (test/)
+app/src/quest/cpp/  Quest immersive OpenXR view (NativeActivity, libqssxr.so)
 docs/           Depot download + copy instructions
 ```
 
 ## Setup
 1. Install Android Studio (JDK 17, Android SDK 34, NDK for the bridge later).
 2. `cp local.properties.example local.properties` and, if you want one, set `STEAM_API_KEY` (from https://steamcommunity.com/dev/apikey). It's git-ignored — never commit it. The library loads from your Steam sign-in session; the key is only an optional fallback.
-3. Open in Android Studio, or run `gradle wrapper --gradle-version 8.7` once (the binary wrapper jar isn't committed) then `./gradlew :app:assembleDebug`.
+3. Open in Android Studio, or run `gradle wrapper --gradle-version 8.7` once (the binary wrapper jar isn't committed) then `./gradlew :app:assembleQuestDebug` (Quest 3) or `./gradlew :app:assemblePhoneDebug` (phone). Unit tests: `./gradlew :steamclient:test`.
 
 ## Sideload to Quest 3
 - Enable Developer Mode (Meta Horizon phone app → device → Developer mode).
 - USB to PC, accept the prompt in headset.
-- `adb install -r app/build/outputs/apk/debug/app-debug.apk` — or drag the APK into **SideQuest**.
+- `adb install -r quest-steam-quest3.apk` (or `app/build/outputs/apk/quest/debug/app-quest-debug.apk`), or drag the APK into **SideQuest**.
 - Find it under *Library → Unknown Sources*.
 
 ## Roadmap
@@ -106,11 +198,18 @@ docs/           Depot download + copy instructions
 - [ ] Embedded X server (port Winlator's Java XServer) instead of Termux:X11
 - [ ] sysvshm/ALSA helpers, Turnip Vulkan driver + DXVK install into prefix
 - [ ] Run a simple 2D Windows game end-to-end (milestone 1!)
-- [ ] In-app depot download via JavaSteam
-- [ ] openvr-bridge: mingw DLL + Wine unixlib thunk + OpenXR session
-- [ ] Head pose → IVRSystem, Touch controllers → IVRInput
-- [ ] DXVK VkImage → XrSwapchain submission
-- [ ] Try a tiny VR title
+- [x] In-app Steam sign-in (QR / password + Steam Guard) and auto library sync (v0.4.0, untested on hardware)
+- [x] In-app depot download via JavaSteam (v0.4.0, untested on hardware)
+- [x] Separate Quest 3 and phone apps
+- [ ] Foreground service so downloads continue with the headset asleep
+- [x] openvr-bridge: mingw openvr_api.dll + shared memory + OpenXR session (v0.5.0)
+- [x] Head pose → IVRSystem, Touch controllers → IVRInput (v0.5.0)
+- [x] D3D11 frames → XrSwapchain (CPU copy, v0.5.0)
+- [x] Turnip + DXVK in the runtime (v0.5.0)
+- [ ] Zero-copy frames (AHardwareBuffer/dma-buf) for speed
+- [ ] Older OpenVR interface versions, OpenGL/Vulkan submissions
+- [ ] Embedded X server so Termux:X11 isn't needed
+- [ ] Try a tiny VR title on hardware
 
 ## Disclaimer
 Personal experiment. Only run games you own. Not affiliated with Valve or Meta.

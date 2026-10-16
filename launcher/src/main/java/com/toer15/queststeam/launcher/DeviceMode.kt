@@ -11,5 +11,5 @@ object DeviceMode {
 
     fun hasVrFeature(ctx: Context) = ctx.packageManager.hasSystemFeature("android.hardware.vr.headtracking")
 
-    fun label(ctx: Context) = if (isQuest || hasVrFeature(ctx)) "Quest mode (VR bridge: TODO, flat window for now)" else "Phone mode (flat)"
+    fun label(ctx: Context) = if (isQuest || hasVrFeature(ctx)) "Quest mode · VR or flat games" else "Phone mode (flat)"
 }

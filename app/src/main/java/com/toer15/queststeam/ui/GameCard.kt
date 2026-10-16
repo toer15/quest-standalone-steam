@@ -1,16 +1,13 @@
 package com.toer15.queststeam.ui
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -18,7 +15,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -31,6 +30,12 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import com.toer15.queststeam.gamepad.PadNav
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,7 +44,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -70,7 +74,21 @@ fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: 
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val hovered by interaction.collectIsHoveredAsState()
-    val scale by animateFloatAsState(if (pressed) 0.97f else if (hovered) 1.025f else 1f, tween(140), label = "press")
+    val focused by interaction.collectIsFocusedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.97f else if (hovered || focused) 1.025f else 1f, tween(140), label = "press")
+    // Controller: A on a focused card flips it and moves focus to its main button (Download / Play /
+    // Cancel); D-pad reaches the others; B turns the card back and puts focus on it again.
+    var padFlip by remember { mutableStateOf(false) }
+    var refocusCard by remember { mutableStateOf(false) }
+    val cardFocus = remember { FocusRequester() }
+    DisposableEffect(flipped) {
+        val unflip: () -> Unit = { flipped = false; if (padFlip) refocusCard = true }
+        if (flipped) PadNav.pushBack(unflip)
+        onDispose { PadNav.removeBack(unflip) }
+    }
+    LaunchedEffect(refocusCard) {
+        if (refocusCard) { delay(60); runCatching { cardFocus.requestFocus() }; refocusCard = false }
+    }
     Box(
         modifier
             .aspectRatio(1.42f)
@@ -79,17 +97,20 @@ fun GameCard(game: OwnedGame, state: GameState, actions: CardActions, modifier: 
                 scaleY = scale
                 rotationY = rotation
                 cameraDistance = 18f * density
-                shadowElevation = 18.dp.toPx()
+                shadowElevation = 6.dp.toPx()
                 shape = CardShape
                 clip = false
                 spotShadowColor = Color.Black.copy(alpha = 0.45f)
             }
             .clip(CardShape)
+            // Controller focus: a bright outline on the selected card.
+            .border(if (focused) 3.dp else 0.dp, if (focused) SteamColors.Accent else Color.Transparent, CardShape)
             .hoverable(interaction)
-            .clickable(interactionSource = interaction, indication = null) { flipped = !flipped }
+            .focusRequester(cardFocus)
+            .clickable(interactionSource = interaction, indication = null) { padFlip = !flipped && focused; flipped = !flipped }
     ) {
         if (rotation <= 90f) CardFront(game, state)
-        else Box(Modifier.fillMaxSize().graphicsLayer { rotationY = 180f }) { CardBack(game, state, actions) }
+        else Box(Modifier.fillMaxSize().graphicsLayer { rotationY = 180f }) { CardBack(game, state, actions, autoFocus = padFlip) }
     }
 }
 
@@ -105,92 +126,93 @@ fun SteamArt(url: String, contentDescription: String, modifier: Modifier = Modif
     )
 }
 
+/** Static placeholder while art loads (an animated shimmer per card kept the whole grid redrawing). */
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val x by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1200f,
-        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart),
-        label = "shimmerX",
-    )
-    Box(
-        modifier.background(
-            Brush.linearGradient(
-                listOf(Color(0xFF1A2836), Color(0xFF3D5C73), Color(0xFF1A2836)),
-                start = Offset(x - 500f, 0f),
-                end = Offset(x, 280f),
-            ),
-        ),
-    )
+    Box(modifier.background(Brush.linearGradient(listOf(Color(0xFF1A2836), Color(0xFF2A4256), Color(0xFF1A2836)))))
 }
 
 @Composable
 private fun CardFront(game: OwnedGame, state: GameState) {
+    val ui = LocalDeviceUi.current
     Box(Modifier.fillMaxSize().background(SteamColors.Card)) {
-        SteamArt(game.headerUrl, game.name, Modifier.fillMaxSize())
+        GameArt(game.appId, game.name, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.42f to Color.Transparent, 1f to Color(0xF0101418))))
         if (game.isVr) Text(
             "VR", color = Color(0xFF0E141B), fontWeight = FontWeight.Bold, fontSize = 11.sp,
             modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).background(SteamColors.Accent, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 3.dp),
         )
-        if (state is GameState.Downloading) Box(Modifier.align(Alignment.TopStart).padding(10.dp)) {
-            if (state.total > 0) CircularProgressIndicator(
-                progress = { state.fraction.coerceIn(0f, 1f) },
-                modifier = Modifier.size(40.dp),
-                color = SteamColors.Accent,
-                trackColor = Color.White.copy(alpha = 0.2f),
-                strokeWidth = 3.5.dp,
-            ) else CircularProgressIndicator(modifier = Modifier.size(40.dp), color = SteamColors.Accent, strokeWidth = 3.5.dp)
-        }
-        Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
-            Text(game.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(14.dp)) {
+            Text(game.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = ui.cardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
+            val small = if (ui.isQuest) 14.sp else 11.sp
             when (state) {
-                is GameState.Installed -> Text(
-                    "Installed", color = Color(0xFF10200A), fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.background(SteamColors.GreenBright, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp),
+                is GameState.Installed -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Installed", color = Color(0xFF10200A), fontSize = small, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.background(SteamColors.GreenBright, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                    if (game.sizeBytes > 0) Text("  ${formatBytes(game.sizeBytes)}", color = Color(0xFFD5DEE6), fontSize = small)
+                }
+                // Blue bar sliding over grey, with "37% of 4.5 GB · 3m left".
+                is GameState.Downloading -> {
+                    DownloadBar(state, Modifier.fillMaxWidth().height(7.dp))
+                    Spacer(Modifier.height(4.dp))
+                    Text(progressLine(state, game.sizeBytes), color = SteamColors.Accent, fontSize = small, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                else -> Text(
+                    listOfNotNull(game.sizeBytes.takeIf { it > 0 }?.let(::formatBytes), "${game.playtimeMinutes / 60} h played").joinToString(" · "),
+                    color = Color(0xFFD5DEE6), fontSize = 13.sp,
                 )
-                is GameState.Downloading -> Text("Downloading ${(state.fraction * 100).toInt()}%", color = SteamColors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                else -> Text("${game.playtimeMinutes / 60} h played", color = Color(0xFFD5DEE6), fontSize = 13.sp)
             }
         }
     }
 }
 
 @Composable
-private fun CardBack(game: OwnedGame, state: GameState, a: CardActions) {
+private fun CardBack(game: OwnedGame, state: GameState, a: CardActions, autoFocus: Boolean = false) {
+    val ui = LocalDeviceUi.current
+    val btn = Modifier.fillMaxWidth().height(ui.buttonHeight)
+    // The main button for this state gets controller focus (again after Download → Downloading → Installed).
+    val primary = remember { FocusRequester() }
+    LaunchedEffect(autoFocus, state::class) {
+        if (autoFocus) { delay(50); runCatching { primary.requestFocus() } }
+    }
     Column(
         Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF24364A), SteamColors.Panel))).padding(14.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(game.name, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(game.name, fontWeight = FontWeight.Bold, color = Color.White, fontSize = ui.cardTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (game.genres.isNotEmpty()) Text(game.genres.take(3).joinToString(" · "), fontSize = 12.sp, color = SteamColors.Muted, maxLines = 1)
         Spacer(Modifier.height(10.dp))
         val green = ButtonDefaults.buttonColors(containerColor = SteamColors.Green, contentColor = Color.White)
         when (state) {
             is GameState.Downloading -> {
-                LinearProgressIndicator(
-                    progress = { state.fraction.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
-                    color = SteamColors.Accent,
-                    trackColor = Color.White.copy(alpha = 0.12f),
+                DownloadBar(state, Modifier.fillMaxWidth().height(10.dp))
+                Spacer(Modifier.height(6.dp))
+                val total = if (state.total > 0) state.total else game.sizeBytes
+                Text(
+                    if (total > 0) "${(state.fraction * 100).toInt()}% · ${formatBytes(state.bytes)} of ${formatBytes(total)}" else state.note ?: "Starting…",
+                    fontSize = if (ui.isQuest) 15.sp else 12.sp, color = SteamColors.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    state.etaSeconds?.let { "${formatEta(it)} left" } ?: state.note ?: "Estimating time left…",
+                    fontSize = if (ui.isQuest) 13.sp else 11.sp, color = SteamColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    "${formatBytes(state.bytes)} / ${if (state.total > 0) formatBytes(state.total) else "?"} · ${state.etaSeconds?.let { "${formatEta(it)} left" } ?: "estimating…"}",
-                    fontSize = 11.sp, color = SteamColors.Muted,
-                )
-                OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50)) { Text("Cancel") }
+                OutlinedButton(onClick = a.onCancel, shape = RoundedCornerShape(50), modifier = Modifier.focusRequester(primary).focusRing().height(ui.buttonHeight)) { Text("Cancel") }
             }
             is GameState.Installed -> {
-                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = Modifier.fillMaxWidth()) { Text("Play Game") }
-                OutlinedButton(onClick = a.onUninstall, shape = RoundedCornerShape(50), modifier = Modifier.fillMaxWidth()) { Text("Uninstall") }
+                Button(onClick = a.onPlay, colors = green, shape = RoundedCornerShape(50), modifier = btn.focusRequester(primary).focusRing()) { Text("Play Game", fontWeight = FontWeight.Bold) }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = a.onUninstall, shape = RoundedCornerShape(50), modifier = btn.focusRing()) { Text("Uninstall") }
             }
             else -> {
                 if (state is GameState.Failed) Text(state.message, fontSize = 11.sp, color = SteamColors.Danger, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = Modifier.fillMaxWidth()) { Text("Download") }
-                Text("Import from folder", color = SteamColors.Accent, fontSize = 13.sp, modifier = Modifier.clickable(onClick = a.onImport).padding(6.dp))
+                Button(onClick = a.onDownload, shape = RoundedCornerShape(50), modifier = btn.focusRequester(primary).focusRing()) {
+                    Text((if (state is GameState.Failed) "Retry download" else "Download") + (if (game.sizeBytes > 0) " · ${formatBytes(game.sizeBytes)}" else ""), fontWeight = FontWeight.Bold)
+                }
+                Text("Import from folder", color = SteamColors.Accent, fontSize = 13.sp, modifier = Modifier.clip(RoundedCornerShape(50)).focusRing().clickable(onClick = a.onImport).padding(6.dp))
             }
         }
     }
@@ -206,4 +228,25 @@ fun formatEta(s: Long): String = when {
     s >= 3600 -> "${s / 3600}h ${(s % 3600) / 60}m"
     s >= 60 -> "${s / 60}m ${s % 60}s"
     else -> "${s}s"
+}
+
+/** Download progress: blue sliding over grey; animated stripes while the size isn't known yet. */
+@Composable
+fun DownloadBar(state: GameState.Downloading, modifier: Modifier = Modifier) {
+    val track = Color(0xFF4A5663)
+    if (state.total > 0) {
+        val p by animateFloatAsState(state.fraction.coerceIn(0f, 1f), tween(400), label = "dl")
+        Box(modifier.clip(RoundedCornerShape(50)).background(track)) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(p).clip(RoundedCornerShape(50)).background(Brush.horizontalGradient(listOf(Color(0xFF1A9FFF), SteamColors.Accent))))
+        }
+    } else {
+        LinearProgressIndicator(modifier = modifier.clip(RoundedCornerShape(50)), color = SteamColors.Accent, trackColor = track)
+    }
+}
+
+/** "37% of 4.5 GB · 3m left" (or the current step while the size is unknown). */
+fun progressLine(s: GameState.Downloading, knownSize: Long): String {
+    val total = if (s.total > 0) s.total else knownSize
+    if (total <= 0 || s.total <= 0) return listOfNotNull(s.note ?: "Starting…", knownSize.takeIf { it > 0 }?.let { formatBytes(it) }).joinToString(" · ")
+    return "${(s.fraction * 100).toInt()}% of ${formatBytes(total)}" + (s.etaSeconds?.let { " · ${formatEta(it)} left" } ?: "")
 }

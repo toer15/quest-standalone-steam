@@ -1,7 +1,7 @@
-name: Build APK
+name: Build APKs
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**', 'cursor/**']
   workflow_dispatch:
 permissions:
   contents: write
@@ -14,7 +14,48 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.7' }
-      - name: Build debug APK
+      - uses: docker/setup-qemu-action@v3
+        with: { platforms: arm64 }
+      - uses: actions/cache@v4
+        with: { path: ~/.cache/qss, key: winlator-11.2.0 }
+      - name: Fetch Winlator runtime (cached) for the real runtime smoke test
+        run: |
+          mkdir -p ~/.cache/qss
+          [ -f ~/.cache/qss/Winlator_11.2.apk ] || curl -sSfL -o ~/.cache/qss/Winlator_11.2.apk https://github.com/brunodev85/winlator/releases/download/v11.2.0/Winlator_11.2.apk
+          # The runtime is installed at the app's real path, like on the device.
+          sudo mkdir -p /data/data/com.qssteam/files && sudo chown -R "$USER" /data
+      - name: Bundle the Vortek GPU driver + DXVK (Winlator 11.2, LGPL-2.1)
+        run: |
+          python3 tools/vortek/bundle_vortek.py ~/.cache/qss/Winlator_11.2.apk app/src/quest/jniLibs/arm64-v8a app/src/quest/assets/graphics
+          readelf -d app/src/quest/jniLibs/arm64-v8a/libvortekrenderer.so | grep -q "NEEDED.*libwlvortek.so"
+          readelf -d app/src/quest/jniLibs/arm64-v8a/libwlvortek.so | grep -q "SONAME.*libwlvortek.so"
+          ! grep -q Java_com_winlator app/src/quest/jniLibs/arm64-v8a/libwlvortek.so
+      - name: Build the SteamVR + controller bridge DLLs (mingw) and test them under Wine
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends mingw-w64 wine64 xvfb libgl1-mesa-dri
+          openvr-bridge/win/build.sh app/src/quest/assets/vrbridge/openvr_api.dll
+          openvr-bridge/test/run_wine_test.sh app/src/quest/assets/vrbridge/openvr_api.dll
+          # Controller bridge: XInput DLLs (64 + 32-bit), tested with a fake controller under Wine.
+          openvr-bridge/win/build_xinput.sh app/src/quest/assets/gamepad
+          openvr-bridge/test/run_pad_test.sh app/src/quest/assets/gamepad/xinput64.dll
+      - name: Bundle the game display app (Termux:X11, GPL-3.0, github.com/termux/termux-x11)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p app/src/quest/assets/display
+          rel=$(gh api repos/termux/termux-x11/releases/tags/nightly)
+          url=$(echo "$rel" | jq -r '.assets[] | select(.name | test("arm64-v8a.*\\.apk$")) | .browser_download_url' | head -1)
+          [ -n "$url" ] || url=$(echo "$rel" | jq -r '.assets[] | select(.name | test("universal.*\\.apk$")) | .browser_download_url' | head -1)
+          echo "Termux:X11: $url"
+          curl -sSfL -o app/src/quest/assets/display/termux-x11.apk "$url"
+          ls -l app/src/quest/assets/display/termux-x11.apk
+          # Keyboard layouts for its X server (XKB_CONFIG_ROOT); without them it quits at start.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends xkb-data zip
+          (cd /usr/share/X11 && zip -qr "$GITHUB_WORKSPACE/app/src/quest/assets/display/xkb.zip" xkb)
+          unzip -l app/src/quest/assets/display/xkb.zip | grep -E "xkb/rules/evdev$|xkb/symbols/us$|xkb/keycodes/evdev$" | tee /dev/stderr | wc -l | grep -qx 3
+          ls -l app/src/quest/assets/display/xkb.zip
+      - name: Build the Quest 3 APK
         env:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
         run: |
@@ -22,15 +63,351 @@ jobs:
           # gradle-wrapper.jar is binary and not committed; regenerate it here
           [ -f gradle/wrapper/gradle-wrapper.jar ] || gradle wrapper --gradle-version 8.7
           chmod +x gradlew
-          ./gradlew :launcher:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk quest-standalone-steam.apk
+          ./gradlew :steamclient:test :launcher:testDebugUnitTest :app:testQuestDebugUnitTest \
+            -Dwinlator.apk=$HOME/.cache/qss/Winlator_11.2.apk -Dwinlator.smoke=1 -Dsteam.live=1 \
+            :app:assembleQuestRelease --no-daemon 2>&1 | tee build.log; status=${PIPESTATUS[0]}
+          # Short summary of compiler errors / failed tests at the end of the log.
+          grep -E "^e: |FAILED|Test.*>|OutOfMemory|Gradle .* disappeared|exit value" build.log | sort -u | head -60 || true
+          grep -A15 "What went wrong" build.log | grep -vE "^\s+at " | head -60 || true
+          [ "$status" -eq 0 ] || exit "$status"
+          apk=app/build/outputs/apk/quest/release/app-quest-release.apk
+          [ -f "$apk" ] || { echo "Signed release APK missing (unsigned build?):"; find app/build/outputs/apk -name "*.apk"; exit 1; }
+          cp "$apk" quest-steam-quest3.apk
+          # Never publish an APK Android would refuse: check the signature and that the package parses.
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$bt/apksigner" verify --verbose --print-certs quest-steam-quest3.apk | grep -E "Verified using|Signer #1 certificate SHA-256"
+          want=$(keytool -list -v -keystore app/sideload.jks -storepass queststeam -alias qss | sed -n 's/.*SHA256: //p' | tr -d ': ' | tr 'A-F' 'a-f')
+          "$bt/apksigner" verify --print-certs quest-steam-quest3.apk | grep -qi "SHA-256 digest: $want" \
+            || { echo "APK is not signed with the sideload key ($want)"; exit 1; }
+          "$bt/aapt2" dump badging quest-steam-quest3.apk | head -3
+          # The game's GPU path: our X server (libwinlator) + Vortek (renderer, helpers, guest driver, DXVK).
+          for f in lib/arm64-v8a/libwinlator.so lib/arm64-v8a/libvortekrenderer.so lib/arm64-v8a/libwlvortek.so lib/arm64-v8a/libmain_hook.so lib/arm64-v8a/libhook_impl.so \
+                   assets/graphics/vortek-2.1.tzst assets/graphics/default.box64rc assets/graphics/dxvk-1.10.3.tzst assets/graphics/dxvk-2.4.1.tzst; do
+            unzip -l quest-steam-quest3.apk "$f" | grep -q "$f" || { echo "missing in APK: $f"; exit 1; }
+          done
+          "$bt/aapt2" dump badging app/src/quest/assets/display/termux-x11.apk | head -1 | tee /dev/stderr | grep -q "name='com.termux.x11'"
       - uses: actions/upload-artifact@v4
-        with: { name: quest-standalone-steam-apk, path: quest-standalone-steam.apk }
-      - name: Publish release v0.3.2
+        with:
+          name: quest-steam-apks
+          path: |
+            quest-steam-quest3.apk
+      - name: Publish release v0.19.3
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.3.2
-          name: "v0.3.2 (private libraries, modern UI)"
+          tag_name: v0.19.3
+          target_commitish: ${{ github.sha }}
+          name: "v0.19.3: the headset keeps answering while a game loads, and a closed game saves what it learned"
           prerelease: true
-          files: quest-standalone-steam.apk
-          body: "Your library loads from your own Steam sign-in, including when the profile is private. If the session cookies are missing, the app asks you to sign out and sign in again. An optional Web API key is only a fallback. Dark gradient UI with a glassy bar, hero banner, flip cards, and pill categories for phones and Quest 2D panels. Untested on hardware."
+          files: |
+            quest-steam-quest3.apk
+          body: |
+            **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.19.3:** the headset keeps answering while a game loads, a game you close saves what it learned, and the Steam test that cost the first Play 75 seconds is gone.
+            - **What your v0.19.2 log showed.** Steam's browser ran as 5 to 7 processes with 2.5 to 4 GB while Steam signed in (96 seconds), the game started with 1108 MB free and reached its first frame with 655 MB free (the lowest in the log), and the 164 seconds before the game started included a 75 second test of "Steam without its browser" that could not work: current Steam ignores that option, so its browser started anyway. Windows programs used 3 to 4.6 GB of the headset's 7.7 GB; nothing in the log shows what made the app reset, so the next one prints why Android closed it at the start of the next log.
+            - **The Steam-without-its-browser test is gone** (no setting for it any more). A first Play with no Steam running is about 75 seconds shorter than in your log (about 140 instead of 214 seconds, going by its numbers). Steam itself still needs about 96 seconds to sign in on a cold start and the game about 50 more; that part did not get faster. Opening the app first (Steam gets ready in the background) and your last game getting ready still make Play start at once.
+            - **Windows programs run at a polite CPU priority.** Wine and Box64 start dozens of threads that use every core for minutes while Steam signs in and a game loads; at the normal priority they take the processor from the headset's own threads and this app's display. Now they use every free core at full speed but give way to anything else that wants it. While a game runs, Steam's programs get the lowest priority (and the small cores); with you in the app and Steam signed in, everything Wine runs does. The log says "CPU priority: …" with the number of threads it changed (0 means Android did not allow it).
+            - **The app watches the headset's memory.** When it gets tight, the pictures the app keeps are given back. When it is almost out (about 220 MB above the line where Android itself calls memory low), the app closes what is not needed right now before Android has to close everything: Steam's browser once Steam has signed in (it only draws Steam's windows; the log says whether Steam started it again), then a game waiting in the background (Play starts it as usual). It also reacts to Android's own "give memory back" warnings. The log says "Memory is getting low / almost out" with the numbers, and every memory line now has Android's own line, the lowest free memory since the start, the app's own memory and the headset's temperature when it is not normal.
+            - **Close game quits the game the way its window's ✕ does.** Box64 writes what it translated for a program (its translation cache) only when the program ends cleanly (I checked this in Box64's source); a killed game wrote nothing, so every start did all the translating again. DXVK's shader cache may gain from it too (not checked). The game now gets 20 seconds to quit (a Play on another game does not wait more than 2.5 seconds); a game that does not quit, or has no window, is ended as before. The line "Caches for faster starts: Box64 translations N MB in K files (newest written …)" shows whether it worked: the numbers should grow after the first game you close this way, and the next start of that game should load faster. This is a bet from Box64's source and not tested on a headset.
+            - **For the next log:** when Steam has signed in the log lists its browser processes with their command line, and every "memory:" line has the new numbers.
+            - **Not tested:** nothing here could be tried on a headset. Whether the polite priority and the memory watch stop the resets, and how much faster the second start of a game gets, is for your next logs to show.
+
+            **v0.19.2:** fixes the black screen and the crash in the v0.19.0 / v0.19.1 logs.
+            - **What the logs showed.** Steam took 80 and 86 seconds to sign in. Then Steam's own Play command (`-applaunch`, added in v0.18.6) started R.E.P.O. and it crashed at once, at the same spot in both logs (an access violation, `addr 0x2803fecac`). Nothing was drawn, so the screen stayed black, and the app kept waiting for more than a minute before it admitted the game had closed. In v0.19.1 pressing Play right after opening the app also threw away the Steam that was starting in the background and began again.
+            - **The game starts the way that worked before v0.18.6.** With no Steam running, Steam starts first in the background (its window stays off) and the app starts the game next to it the moment Steam has signed in; that Steam stays for the next game. Steam's own Play command is still there as an option: Runtime settings → Steam for Windows → **Steam starts the game (experimental)**.
+            - **The game screen says what it waits for.** It comes up as soon as its display exists, with the text in the middle instead of black: "Launching R.E.P.O.… 34s · Steam is signing in (34s of about 80s)". It goes away with the game's first frame.
+            - **Pressing Play never throws away Steam's start.** Steam keeps starting and the game starts when it has signed in. This also lets the Steam-without-its-browser test finish (it never could in your logs, because Play ended it): once, the first Play can take up to 40 seconds longer if Steam doesn't sign in that way (then it starts with its browser, remembered); if it does sign in, Steam starts much faster from then on.
+            - **A game that crashes at start is told within seconds** (it used to take over a minute): "R.E.P.O. closed while starting", with the game's log and the memory use.
+            - **Where Steam's wait goes.** The log now says when Steam started connecting and lists the first lines of its connection log when it has signed in, to find what the 80 seconds are spent on.
+
+            **v0.19.1:** the first Play after opening the app is fast too.
+            - **Steam gets ready in the background when you open the app again** (you never see it). By the time you've picked a game it has usually signed in, so **Play** starts the game right away instead of first waiting a minute or two for Steam. Press Play sooner and the game's screen says Steam is still signing in; the game starts the moment it is.
+            - **Your last game gets ready too** once Steam has signed in (when enough memory is free): it loads muted and out of sight and waits paused at its menu, so **Play** on it shows it in a few seconds.
+            - On for everyone now (v0.18.1 to v0.19.0 had it off). Runtime settings → Steam for Windows → **Don't start Steam on open** turns it off.
+            - The **Start with games** switch is gone: since v0.18.6 games always start with Steam, so it did nothing.
+
+            **v0.19.0:** Play keeps Steam running instead of starting it again for every game.
+            - **A Steam that's running is kept.** v0.18.6 closed a running Steam when you pressed Play and started a new one for the game, so every Play waited for Steam to start and sign in again (93 seconds in your v0.16.0 log). Now the game starts next to the Steam that's already running: right away once Steam is signed in, and if it's still signing in, the game starts the moment it is. Steam's window stays off.
+            - **The Steam that Play starts stays.** When no Steam is running, Play still starts the game with Steam's own `steam.exe -silent -applaunch <appid>` (v0.18.6). That Steam now keeps running when you quit the game, so your next game, or the same one again, starts without a Steam start.
+            - **If Steam doesn't start the game** within 45 seconds of signing in (a Steam dialog nobody sees, or an update Steam wants first), the app starts it next to Steam itself, the way it starts every later game.
+            - **The game screen says what it's waiting for.** It still comes up as soon as you press Play (v0.18.6). Until the game draws, the bar at the top says what's happening, for example "Launching R.E.P.O.… 34s · Steam is signing in (93s last time)", then "· Steam is starting it", then the fps counter takes over. A game that closes before it shows anything now says so and shows the log, instead of dropping you back in the library without a word.
+            - While Steam signs in for a game, Steam gets full speed. In v0.18.6 it got the lowest priority as soon as the game screen was up, which slowed its sign-in.
+            - **From v0.18.0 "the game you quit gets ready again", which v0.18.0 "Play starts the chosen game" replaced on GitHub:** a game you quit from its own menu after playing at least two minutes gets ready again in the background (muted, paused at its menu), so the next **Play** on it is instant. The start-time line in the log also says how much of the wait was Steam and how much the game itself ("⏱ R.E.P.O. is on screen 95s after Play (60s before the game started, the game itself 35s…)").
+
+            **v0.18.6:** Play starts the game the way Steam does.
+            - The command is Steam's own `steam.exe -silent -applaunch <appid>`, then that game's launch options.
+            - The screen says **Launching &lt;game&gt;**. Steam's window stays off.
+            - The game is registered in Steam's library first, so applaunch can find it.
+            - **Open Steam** still opens Steam's window when you ask for it.
+
+            **v0.18.5:** Pressing Play on a library game starts only that game's .exe.
+            - The game's own Steam app id is written for that process (`SteamAppId`, `SteamGameId`, `steam_appid.txt`).
+            - steam.exe is not started. The screen does not say Starting Steam.
+            - **Open Steam** still opens Steam when you ask for it.
+
+            **v0.18.4:** The game stays on its display. R.E.P.O. was drawing one frame and then quitting because Steamworks could not open a pipe to the Steam client.
+            - Play still shows only the game. The screen does not say Starting Steam.
+            - steam.exe starts in the background with no window, and the game starts after that client is connected.
+            - **Open Steam** still opens Steam's window when you ask for it.
+
+            **v0.18.3:** Play still starts only the game you picked, and that game's display is shown again.
+            - The game display is created when you press Play, on the game screen, so the picture has a surface.
+            - Pressing Play starts that game's .exe through Box64/Wine. steam.exe is not launched.
+            - **Open Steam** still opens Steam when you ask for it.
+
+            **v0.18.2:** Play opens the game you picked in a few seconds. It does not start the Steam app.
+            - When the app opens, it prepares the game display only. steam.exe is not launched.
+            - Pressing Play starts that game's .exe through Box64/Wine and puts the game display on screen right away.
+            - The next Play reuses the display, so it does not rebuild it.
+            - **Open Steam** still opens Steam when you ask for it.
+
+            **v0.18.1:** Play starts only the game. It does not start Steam, and the screen does not say Starting Steam.
+            - Pressing Play runs that game's .exe through Box64/Wine. steam.exe is not launched.
+            - The loading screen says **Launching &lt;game&gt;**, then the game fills the display.
+            - Steam no longer starts by itself when the app opens. **Open Steam** still opens Steam when you ask for it.
+
+            **v0.18.0:** Play opens the game you picked. It no longer sits on Starting Steam.
+            - Pressing Play starts that game's .exe through Box64/Wine immediately (`SteamAppId` / `steam_appid.txt`, Steam's own launch options). Steam, when the game needs it, starts silent in the background (`-silent`, no Steam window on the game screen) and Play does not wait for it to sign in.
+            - The loading screen says **Preparing runtime**, then **Launching &lt;game&gt;**, then the game fills the display (**Running**). A missing .exe says so instead of opening Steam.
+            - A Steam that was already getting ready when you press Play is kept. The game starts as soon as the display is up.
+            - Steam's own windows are not drawn while a game is on screen. **Show Steam** still opens them.
+
+            **v0.17.1:** fixes Play soon after opening the app waiting longer than before.
+            - In v0.17.0, pressing Play while Steam was still being tested without its browser dropped Steam and started it from scratch, so the head start was lost and Play could wait longer than in v0.16.0. Now a Steam that is already connecting without its browser is kept and waited for like any Steam; only one that hasn't tried to connect yet is dropped. If the test then fails while Play waits, Steam restarts with its browser and Play keeps waiting through the restart (it used to wait up to four minutes with no way back).
+            - The **Starting Steam…** screen says what it is waiting for: Steam's sign-in (the game itself starts from the app, but its Steam features need the Steam client signed in first, as on a PC), whether Steam runs without its browser, how long Steam took last time, and which Steam programs are running.
+
+            **v0.17.0:** only the part of Steam a game needs, and a steadier fps counter.
+            - **Steam without its browser (a test, then automatic).** Your v0.16.0 log: Steam took 93 seconds to sign in; of the 78 seconds of processor time, 62 went to Steam's browser (`steamwebhelper.exe`, up to 3 GB of memory), which only draws Steam's windows, and 16 to `steam.exe` itself. A game needs Steam's core, not its windows. The first time Steam gets ready after this update, the app starts it with Steam's `-no-browser` option and waits to see if it signs in. If it does, that is remembered and Steam starts that way from now on: faster to sign in, and the memory stays free for the game. If it doesn't (whether this Steam signs in without its browser is not known until tried), the app starts Steam with its browser again, as before, and remembers that. Press Play during the test and the test stops at once; Steam starts as before and the test runs again next time. Runtime settings → Steam for Windows → **Steam without its browser** / **Steam with its browser** switches it (and tests again).
+            - Steam's own window (**Show Steam**, the Friends tab's **Show its window**) is drawn by the browser: with Steam running without it, the app restarts Steam with the browser first (a game waiting in the background closes).
+            - **Steadier fps counter.** It used to count in fixed one-second blocks that the chip read on its own timer, so it jumped by a few fps even for a steady game. It now counts the last two seconds at the moment it is read, and refreshes twice a second. The app does not cap the game's frame rate (the game presents without waiting for the screen); the fps is what the Windows translation can do.
+            - **Frame rate history in the log.** Every 15 seconds the "Vortek: N frames shown" line also says the fps over those seconds, the slowest second and the longest wait between two frames, so a drop (like the menu going from 22–25 fps to 2 fps in your log) shows when it happened.
+            - The line "Steam is signed in" now also lists the processor time Steam's programs used.
+            - A game gets ready in the background only with at least 1000 MB of memory free (it waits up to 90 seconds for room, for example while Steam's browser memory is being compressed).
+
+            **v0.16.0:** your last game ready before you press Play, like a console.
+            - **Get my last game ready too** (Runtime settings → Steam for Windows, on by default together with **Get Steam ready when the app opens**). Once Steam has signed in in the background after you open the app, the last game you played next to Steam starts too, muted and out of sight, loads, and waits paused at its menu. **Play** then shows it in a few seconds instead of loading it for a minute or more.
+            - The top bar shows **R.E.P.O.: getting ready…**, then **▶ R.E.P.O. ready**. Tap it to play.
+            - Press Play while it's still loading and you get its loading screen, counting the time it has already loaded; nothing starts twice. Playing another game, opening Steam's window or closing Steam closes it. If it closes by itself while getting ready, it isn't started in the background again until you've played it.
+            - Its sound stays off until you press Play, and your controller and pointer only reach a game while it's on screen, so it can't react while you look around the app.
+            - The log says how long the game took to get ready and how fast Play showed it ("⏱ R.E.P.O. is on screen 1.2s after Play").
+
+            **v0.15.0:**
+            - **Quick Resume, like a console.** Leaving a game (✕ Leave game → **Leave (pause)**) no longer closes it: it waits paused, using no processor time, and **Play** brings it back in a few seconds, right where you were. **Close game** ends it. Starting another game, opening Steam's window or closing Steam ends a paused game first.
+            - **Steam signs in sooner.** While Steam gets ready it now runs at full speed on all processor cores. In v0.14.4 it had the lowest priority and the small cores while you were in the app, and Light Steam showed it only two cores: that's why it took 104 seconds. Its windows still wait paused once it has signed in.
+            - Each game start logs how big the caches that make later starts faster are (Box64 translations, Vortek textures, DXVK pipelines), to check that they grow and stay.
+
+            **v0.14.4:** toward the goal of Play → game on screen in 20–30 seconds.
+            - **Steam gets ready when the app opens** (Runtime settings → Steam for Windows → **Get Steam ready when the app opens**, on by default). Steam starts and signs in in the background while you look around the app, so Play starts the game right away instead of first waiting a minute or two for Steam. Press Play before Steam is signed in and the game starts the moment it is.
+            - **Steam's windows only run while they're on screen.** Once Steam has signed in, its browser (most of Steam's memory and processor time) waits paused, and comes back when you tap **Show Steam**. Games keep working: R.E.P.O. signed in to Steam that way in your last log. The app stays fast while Steam waits in the background.
+            - **Faster translation** (Runtime settings → Game display → **Game speed: Fast**, the default): Box64's own settings instead of Winlator's safer preset, so the game's and Steam's Windows code runs much faster. Box64 also keeps its translation on storage for games, so a game's second start skips most of the translating. If a game crashes at start, pick **Safe**.
+            - **Game caches survive app updates.** The Quest's GPU can't read the texture formats PC games ship, so Vortek decodes them and keeps the results on storage. That cache now holds up to 2 GB instead of 256 MB, and app updates no longer wipe it. DXVK's pipeline cache is kept too. Until now every update emptied both, so every first start after an update did all that work again.
+            - **Cancel on the loading screen keeps Steam running**, so the next Play doesn't wait for Steam to start again.
+            - **The time from Play to the game on screen** is in the log ("⏱ R.E.P.O. is on screen 28s after Play") and shows next to the fps at the top of the game screen.
+            - Games can queue up to three frames again, for more frames per second (v0.14.2 had cut it to one to save memory).
+
+            **v0.14.3:**
+            - **Direct game view, like a game stream** (Runtime settings → Game display → Game picture, on by default). Cloud gaming shows a video of the game's frames; the app now does the same with the frames the game sends to the headset's GPU: the screen shows exactly those frames, scaled to fill it. Steam's windows and Wine's desktop can no longer cover them or keep them hidden (for example when Wine draws a game into a window it keeps off screen). When the game isn't sending frames (loading, a Windows dialog, Steam's own window), the whole Windows desktop shows as before.
+            - **Stats at the top of the game screen**, like a stream's: the size of the game's picture and the frames per second it sends (for example 1280×720 · 30 fps), or how long it has sent nothing. Tap it to switch between the game's frames and the whole Windows desktop.
+            - **Game resolution** (with the direct view): 1280×720, or 960×540, which is faster for the headset; the picture is scaled up to the screen like a stream's quality setting. Unity games (like R.E.P.O.) are told the size directly, since they otherwise reuse the size they saved last time.
+            - Your pointer lands on the right spot of the game in the direct view, also when the picture is scaled.
+
+            **v0.14.2:**
+            - **Steam's browser pauses when memory runs low during a game.** A game only needs Steam itself, not the browser that draws Steam's windows, which is the biggest part of Steam. When the headset gets low on memory while a game runs next to Steam, that browser is paused: it uses no CPU, and Android can compress its memory for the game. Steam stays signed in and keeps running for the game, and its windows come back when the game ends or you tap **Show Steam**. Box64's developers close it in the same situation for Steam on Linux. (Light Steam, on by default.)
+            - **Light Steam is lighter:** no Steam friends and chat windows (the app's FRIENDS tab has them), no crash-report process and no video decoder next to Steam's browser, and Steam sees two CPU cores, so its browser starts fewer threads.
+            - **Games' graphics use less memory:** games see 2 GB of video memory (the Quest shares its memory between the GPU and everything else), one frame is queued instead of three, and two shader compilers run instead of one per CPU core.
+            - The app empties its own picture cache before a game starts, and keeps a smaller one.
+            - **The log now survives however the app closes while a game or Steam runs**, also when you close the app yourself because the headset stopped responding. The next start shows what happened, then the log from before.
+            - While a game runs, the log notes free memory and what Steam and the game use, every minute.
+
+            **v0.14.1:**
+            - **The log survives the app being closed.** When Android closes the app while a game starts (for example because the headset ran out of memory), the next start shows that run's log again, starting with Android's own reason ("ran out of memory", "crashed in native code"…), the app's memory use at that moment, and errors the app caught in the background. Copy it or share it as usual.
+            - **Light Steam (on by default):** Steam's built-in browser runs as one process instead of five or six. Under the Windows translation each of those processes costs hundreds of MB, and next to a game that likely ran the headset out of memory (the headset stuttering, then the app closing). If Steam's window misbehaves, switch to **Full Steam** in Runtime settings → Steam for Windows.
+            - **Steam gets the lowest CPU priority while a game starts or runs** (and the small CPU cores), so the game gets the rest. In v0.14.0 Steam ran at full speed next to the game.
+            - Steam's browser is no longer restarted as "not responding" when it answers slowly.
+            - While a game loads, the log shows free memory and how much Steam and the game use, every 15 seconds.
+
+            **v0.14.0:**
+            - **Games start next to a running Steam again.** In v0.13.9, R.E.P.O. stayed on loading: the log showed "no driver could be loaded / The explorer process failed to start", meaning the game couldn't open its window. Games now get their own game screen (a Wine desktop) next to Steam's, exactly as when no Steam runs.
+            - **Fixed the game display running out of room for programs:** Winlator's display allowed 128 connections, and Steam uses many (every Wine program and its window threads). When it ran full, every later program got a broken connection and couldn't open a window. Now 1024, a full display refuses cleanly, and a broken slot is never handed out again. The display's three servers also no longer share one event buffer.
+            - The app no longer took a game that was still starting for one that had closed ("R.E.P.O. closed while starting" while it was loading).
+            - **New FRIENDS tab, fast like the Store:** your Steam friends with who's online and what they play, and chat with them. It uses the app's own Steam connection, not Steam for Windows' slow window. The card on top says whether Steam for online games is running, with **Show its window** and **Close it**.
+            - **The app stays fast while Steam runs in the background:** Steam's programs get the lowest CPU priority while you're in the app, and normal priority again when a game or Steam is on screen.
+            - **Steam starts faster:** its own programs no longer load DXVK and its GPU probes no longer start Vulkan. Each did a full GPU-driver handshake (your log had many), and one Steam process crashed doing it.
+            - **Close Steam lets Steam close itself**, so it saves its sign-in and settings, instead of ending it at once.
+            - While a game loads, the log shows the last lines the game wrote (Unity's Player.log) and how many programs are connected to the display, so a game stuck on loading shows where.
+
+            **v0.13.9:**
+            - **Steam stays running, like on a PC.** Leaving Steam's screen (✕ Leave) keeps Steam running in the background: **Show Steam** brings it back at once, and **Close Steam** (Runtime settings) ends it.
+            - **Games start inside the running Steam:** pressing Play while Steam runs starts the game right away, with no Steam restart and no sign-in wait. When the game closes you're back in the app and Steam is still signed in. If Steam isn't running, Play starts it first (signed in), then the game, and Steam stays for the next game.
+            - **Your downloaded games show up in Steam's own library as installed**, so Play in Steam starts them too (Steam may first check for an update).
+            - **Faster Wine:** Wine's fast synchronization (esync) is on, as in Winlator. Waits and locks no longer go through the Wine server each time, which helps Steam's browser and modern games most.
+            - Steam's heavy visual extras are off (smooth scrolling, and GPU and video acceleration in its windows, which have no GPU here).
+            - Games started by Steam get the same graphics (DXVK) and controller DLLs as games started by the app.
+
+            **v0.13.8:**
+            - **Steam's sign-in window now opens on screen.** Steam was running and showing "Sign in to Steam", but the app kept the loading screen up because it waited for a GPU frame, and Steam's window is drawn without the GPU. The app now switches as soon as Steam's sign-in window appears.
+            - **⌨ Keyboard** button on the game screen (top right): select a field in Steam or a game, type with the Quest's keyboard and the letters go straight into it (Tab, Enter and ⌫ buttons too). The box hides what you type, for passwords. You can also sign in with the QR code in the Steam phone app.
+            - The log shows Steam's connection attempts (connects, drops, sign-in results), to find out why a sign-in fails.
+
+            **v0.13.7:**
+            - **Fixes Steam never opening** (Steam.exe stuck at 0 seconds of processor time, no window, no Steam logs). The Winlator settings file the app uses tells Wine to run a helper before steam.exe; that helper waits for an answer from the Winlator app itself, which isn't there, so Steam waited forever. The app now removes that hook (the log says "Runtime fix: removed WINPREEXEC…" once).
+            - Steam's files are unpacked without leaving two copies of steam.exe (Steam.exe from the installer and steam.exe from Valve's package); an existing duplicate is cleaned up.
+            - An interrupted Steam download/unpack is finished on the next start instead of being taken as done.
+            - The running-programs list names helper processes (e.g. "Steam.exe(loading)"), and more of Steam's startup messages go to the log.
+
+            **v0.13.6:**
+            - While Steam starts, the loading screen lists the Windows programs that are running and how much processor time each has used (e.g. "Steam.exe 40s, steamwebhelper.exe ×3 25s"), so you can see it's working.
+            - The log adds the same list every 15 seconds, and when you stop, the last lines of Steam's own log files (why Steam didn't open its window).
+
+            **v0.13.5:**
+            - Steam starts faster after its first start: Box64 now keeps the code it translated for Steam on storage (its translation cache), so Steam doesn't have to be translated from scratch every time. Games keep Winlator's setting.
+
+            **v0.13.4:**
+            - **Steam for Windows downloads much faster:** the app now downloads Steam's files itself (4 at a time, from Valve's update server) and unpacks them, with a progress bar ("Downloading Steam… 120 of 380 MB"), instead of Steam's own updater doing it slowly under the Windows translation. Then Steam opens for sign-in.
+            - Works for Install Steam for Windows, Open Steam, and Play when Steam still needs signing in.
+
+            **v0.13.3:**
+            - **Steam's sign-in opens inside the app**, on the same screen as games (✕ Leave game brings you back). Pressing **Play** on a game before you've signed in to Steam opens Steam's sign-in first; the log says "✓ Signed in to Steam" when you're done, then press Play again.
+            - Steam's first start shows what it's doing: **Downloading Steam… 45%** with a progress bar, then **Unpacking / Installing Steam**, then Steam's window opens by itself. The lines under it are Steam's own messages.
+            - While Steam starts, the loading screen has no **Show game window** button any more (it only showed a black screen while Steam was still downloading); Steam's window opens by itself when it's ready.
+            - For games the button appears after 60 seconds instead of 20, as a fallback for a game that seems stuck.
+
+            **v0.13.2:**
+            - **Open Steam** shows what Steam is doing on its first start (it downloads and installs the real Steam, a few hundred MB, before any window appears): the loading screen shows Steam's own update log and a timer, and waits up to 40 minutes instead of 5.
+
+            **v0.13.1:**
+            - Fixes "Steam install failed: the installer ended (code 0) without steam.exe": Steam was installed, but Valve names it Steam.exe and the check looked for steam.exe (Android's storage is case-sensitive). Press **Install Steam for Windows** again; it finishes right away and **Open Steam and sign in** appears.
+
+            **v0.13.0:**
+            - **Steam for Windows** (Runtime settings → Steam for Windows): online games like R.E.P.O. need the Steam client running, as on a PC ("Steamworks failed to initialize … Could not determine Steam client install directory"). **Install Steam for Windows** downloads Valve's official installer and installs Steam inside the runtime; **Open Steam and sign in** shows Steam in the game screen (the first start updates Steam, which takes several minutes; then sign in once, e.g. with the QR code in the Steam phone app).
+            - When you press Play, the app starts Steam in the background first, waits until it is signed in ("Starting Steam… 40s"), then starts the game. Steam's overlay is off (too heavy). Can be turned off: "Don't start with games".
+            - Wine now sees the headset's network (like Winlator does): fixes "getaddrinfo Failed to resolve your host name" and lets Steam and online games connect.
+            - The loading screen waits for the game's own window (not Steam's or Wine's).
+
+            **v0.12.9:**
+            - **Select the log text yourself:** hold on the log (Runtime screen, or the "didn't start" screen), drag to choose, then Copy or Select all.
+            - **Copy part 1/2/3…** buttons under a long log: each part fits in one message; paste them one after another.
+            - Copy log / Share log: the summary covers only the last game start and includes the GPU driver's frame lines, a list of the windows on the game screen (shown or hidden, drawn by the GPU or not) and the last lines of the game's own log.
+
+            **v0.12.8:**
+            - Games start on Winlator's game desktop ("nogui": no taskbar or start menu), like Winlator does, instead of Wine's desktop with a shell.
+            - **Clicks and the pointer reach the game:** hiding Wine's desktop also blocked input to every window inside it, including the game.
+            - The loading screen switches to the game when the game presents its first frame through the GPU driver (Vulkan/DirectX games draw into a window Wine makes inside the game's window, so the old signal could miss them).
+            - The log says which window the GPU driver draws into and how many frames have been shown ("Vortek: 120 frames shown"), so a black screen can be told apart from a game that isn't drawing yet.
+
+            **v0.12.7:**
+            - **Fixes R.E.P.O. (and other Unity games) crashing right after the graphics started.** The crash was in Windows' audio system (mmdevapi → ucrtbase): Wine had no sound server to talk to and handed the game a broken audio device.
+            - **Game sound:** the app now runs Winlator's sound server (Wine's ALSA output → Android audio), so games play sound through the headset.
+            - Runtime settings → Game display → **Game sound** On/Off. Off gives games no audio device (for a game that has trouble with sound).
+
+            **v0.12.6:**
+            - **Copy log / Share log start with "== Why it stopped =="**: the crash (in which DLL), the game's own errors and DXVK's errors come first, so they survive when a messaging app cuts a long text. DXVK's long info lists (memory types, extensions) are left out of the copied text; the shared .txt file still has the complete log.
+
+            **v0.12.5:**
+            - **Share log**'s message text now always includes the crash details ([crash], [crash stack], Unity's graphics/GPU lines from Player.log, DXVK's log), not only the attached file.
+            - Unity's Player.log section also lists where UnityPlayer.dll / Mono / the game were loaded, so a crash address can be matched to a DLL.
+
+            **v0.12.4:**
+            - Direct3D 11 now starts on the Quest: DXVK 2.4.1 on Vortek (Adreno 740, Vulkan 1.3) creates a feature level 11_1 device.
+            - DXVK gets Winlator's settings file (dxvk.conf: constant buffer range checks).
+            - When a game crashes, the log now says in which DLL ("[crash] read of 0x… in UnityPlayer.dll+0x…") and lists the crash's call stack by DLL, from Unity's own module list.
+
+            **v0.12.3:**
+            - **Share log** button (Runtime screen → Log, and on the "game didn't start" screen): opens Android's share menu so the log can go straight to Messenger, Discord, email, Drive… The whole log is attached as a .txt file, with the important lines as the message text.
+            - **Copy log** button next to it: copies the whole log so it can be pasted into a message.
+            - Games run with Winlator's own Box64 and Wine settings: its per-game fixes file, the safer "Intermediate" Box64 preset (helps games that crash on start, like Unity games), and Winlator's Wine settings (no DXGI device manager).
+            - Crash info that means something: Unity's crash stack noise ("SymGetModuleInfo64 … DLL initialization failed") is filtered out of the game log, the Vulkan loader's chatter is gone, and DXVK's own log files (which GPU it found, why D3D11 failed) are added.
+
+            **v0.12.2:**
+            - **"Failed to initialize player / Failed to initialize graphics" (Unity, DirectX 11):** the app asked Android for the Quest's Vulkan version, which says 1.1, so it installed the old DXVK 1.10.3. It now asks the GPU driver itself (like Winlator) and uses DXVK 2.4.1 when the driver supports Vulkan 1.3.
+            - **Fixes the app closing with "OutOfMemoryError":** the game's screen buffers count against the app's memory, so the app now asks Android for the large memory limit (like Winlator).
+            - The loading screen no longer says "Opening game now" just because Wine's desktop appeared; it waits for the game's own window.
+            - Better error info: the error screen shows Wine/DXVK errors instead of the GPU driver's info dump, DXVK says which GPU it found and why it fails, and Unity games' own Player.log errors are added to the log.
+
+            **v0.12.1:**
+            - **Fixes the next game failing after a stopped one** ("X Error … BadWindow … X_CreateWindow"): stopping a game left Wine's background processes running, and the next game used their old windows. Now every Wine process from the last game is closed before a game starts and when it stops.
+            - Vortek: its cache files now go to this app's own folder (they pointed at Winlator's), and it gets the helper libraries Winlator ships with it.
+            - The log shows what the GPU driver does ("Vortek: the game's Vulkan connected", "Vulkan device ready", or why it failed) plus the app's own Android log lines about the GPU, so the next screenshot shows exactly where it stops.
+
+            **v0.12.0:**
+            - **Fixes games stopping with "BO init VK_ERROR_OUT_OF_DEVICE_MEMORY" / "Failed to create D3D11 device".** The Quest doesn't let the Turnip GPU driver use the GPU. Games now draw through **Vortek** (Winlator 11's default): the game's Vulkan calls run on the Quest's own GPU driver inside this app, and the picture goes straight into the game screen in the app's window.
+            - DXVK is matched to the headset: DXVK 2.4.1 on Vulkan 1.3, else DXVK 1.10.3 (installed automatically).
+            - Runtime settings → Game display → **GPU driver**: Vortek (recommended) or Turnip.
+            - The log shows the GPU path: "GPU: Vortek", the headset's Vulkan version and the DXVK version.
+
+            **v0.11.0:**
+            - **Games play inside the app's own window.** Press Play → the loading screen → the same window turns into the game. No second app, no separate window, nothing to install. When you leave the game (**✕ Leave game** or Back → **Leave game**), or the game closes, you're back in the app.
+            - The game display is now built into the app (Winlator's X server, made for the same Windows runtime and GPU driver), which is faster than going through the Termux:X11 app.
+            - In the game: point and pull the trigger to click, thumbstick/mouse wheel to scroll, two fingers for right click; Bluetooth controllers go straight to the game.
+
+            **v0.10.4:**
+            - The game window (Termux:X11) now opens and connects to the display **before** the game starts (it showed only its "X" logo, i.e. it never connected), then the loading screen comes back in front.
+            - The game window is landscape, 1280x720 stretched to fill it, without the extra-keys bar.
+            - The loading screen shows the game's and the display's latest output (not just "waiting"), and the log says how many windows the game has made, so the next photo shows exactly where it stops.
+
+            **v0.10.3:**
+            - **Clear log** button on the Runtime screen's Log.
+            - **Cancel** on the loading screen (or Close on an error, Stop game, or the game ending) now goes straight back to the library you came from instead of the Runtime settings screen.
+
+            **v0.10.2:**
+            - The loading screen no longer waits forever: after at most 90 seconds it opens the game's window anyway, and from 20 seconds a **Show game window** button lets you look at the game while it's still starting.
+            - The loading screen shows the game's latest output lines, and the log says every 15 seconds what it's waiting for, so a stuck start can be diagnosed from a photo.
+
+            **v0.10.1:** fixes the game display stopping at once with "$XKB_CONFIG_ROOT is not set" (display server exited with code 1), so games never got a window. The keyboard layout data it needs is now included and set up automatically.
+
+            **v0.10.0:**
+            - **Play a game flat:** Play → choose **Play flat** → a loading screen with the game's picture shows what's happening ("Starting the game display…", "Loading R.E.P.O.… 12s"), then **Opening game now…**, then the game opens in its window. While playing: **Back to game** / **Stop game**. If a game fails to start, the screen says why and shows the log.
+            - **VR view is no longer just blue:** it shows the app itself in front of you — library, downloads, Store, and VR games start right there. Point with a Touch controller, pull the trigger to tap, thumbstick to scroll, click the thumbstick to bring the panel in front of you. **🥽 VR** in the top bar opens it; **Exit VR** closes it.
+            - **Old files are deleted after every update:** the first start of a new version removes old update downloads, caches, logs and temp files from older versions. Your games, sign-in and settings stay.
+
+            **v0.9.3:**
+            - **Games get their window without Termux.** The game display app (Termux:X11) now comes with Quest Steam: Runtime screen or the Play popup → **Install game display app** (one tap). Quest Steam starts the display by itself before every game, so "nodrv_CreateWindow … The graphics driver is missing" (game closing right after start) is fixed.
+            - If you press Play without it, a popup offers the install and then **Play**.
+
+            **v0.9.2:** Store tab fix: browsing and searching now list every Steam game page after page (Steam's search answers with a different format than expected).
+
+            **v0.9.1:**
+            - **The app opens again by itself after an in-app update** (or shows "Quest Steam updated · tap to open" if the headset doesn't allow that).
+            - **Controller on game cards:** A on a card turns it around and selects **Download** / **Play Game** / **Cancel**; D-pad reaches **Uninstall** and **Import from folder**; B turns the card back.
+            - **"Display over other apps"** switches to **✓ Already allowed** by itself as soon as you allow it.
+
+            **v0.9.0:**
+            - **Downloads no longer stop half-way.** They keep running when the app's panel is closed (a download notification shows progress), reconnect and resume by themselves if the connection drops or Steam stops sending data, and an unfinished download continues after the app or headset restarts.
+            - **Downloaded games stay installed** until you turn the card around and tap **Uninstall**.
+            - **Game sizes on every card** (from Steam), and while downloading a **blue bar sliding over grey** with "37% of 4.5 GB · 3m left".
+            - **Grey game pictures fixed**: newer games' pictures are loaded from Steam's new image address, with more fallbacks.
+            - **Store tab** between Home and Games: search bar at the top, top sellers, new & trending, specials, VR, free and all games on Steam, with prices. **Buy** opens Steam's own checkout in the app; when you come back, the game is in your library with Download.
+
+            **v0.8.0:**
+            - **Bluetooth controllers in games:** pair an Xbox, PlayStation (DualSense / DualShock), Switch Pro or 8BitDo controller with the Quest and Windows games see it as an Xbox (XInput) controller, with rumble. Works in flat games and in VR games.
+            - **The app shows your controller:** the top bar shows the exact model (for example "DualSense Wireless Controller (PS5)") when it's connected, or "No controller".
+            - **Play popup like Steam:** before a game starts, choose **Play in VR** (in the headset) or **Play flat** (on a big screen with your controller), and see the controller status.
+            - **Use the app like a console:** D-pad or left stick moves between cards and buttons, A selects, B goes back, LB/RB switch tabs, Y opens Filters, X syncs, Start checks for updates.
+            - **Update popup** also checks again whenever you come back to the app, not just when it starts.
+            - Flat games: allow "Display over other apps" (Play popup → Allow) so the controller keeps working while the game window is in front.
+
+            **v0.7.0:**
+            - **Download no longer closes the app.** An error while downloading now stops that download and shows the reason on the card, with **Retry download**. If the app ever does close unexpectedly, the next start shows the crash report with a **Copy** button.
+            - The download system is now tested for real on every build: CI signs in to Steam (anonymously) and downloads an actual Steam app from Steam's CDN with the same code the app uses.
+            - **Play** starts the game the way Steam does, using Steam's launch option (the right .exe and its arguments) instead of guessing the biggest .exe.
+            - **Home → Filters** (top right) opens a side panel with check boxes: VR games only, installed only, not installed only, played games only, genres, and sort order.
+
+            **v0.6.2:** fixes "Install failed … pm install exited with code 1": v0.6.1 was published unsigned by mistake. This build is signed again (and CI now refuses to publish an unsigned APK).
+
+            **v0.6.1:**
+            - **"wine: could not load kernel32.dll" (exit code 53) fixed for every install:** before each launch the app now checks the Wine prefix and repairs it automatically, so a runtime downloaded by an older version works without reinstalling.
+            - **New Runtime screen:** ✕ close button; the Windows runtime card shows **(Downloaded)** and the button becomes **Delete this runtime download** (your games are kept and come back if you download it again). If it's not downloaded: **Download runtime**.
+            - The phone version is gone; this is the Quest 3 app.
+
+            **v0.6.0:** in-app updates (Update now with progress and time left; Home → Check for updates).
+            **v0.5.x:** faster app (release builds), SteamVR bridge into the headset, Turnip GPU driver + DXVK.
+            Untested on hardware; feedback welcome.
+      - name: Check Steam endpoints the app uses (informational)
+        continue-on-error: true
+        run: |
+          set -x
+          # Steam for Windows client manifests (the app downloads these packages itself).
+          curl -sS -m 30 "https://client-update.steamstatic.com/steam_client_win64" | head -40
+          curl -sS -m 30 "https://client-update.steamstatic.com/steam_client_win32" | head -25
+          curl -sS -o /dev/null -w "new header %{http_code}\n" "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3241660/header.jpg"
+          curl -sS -o /dev/null -w "old header %{http_code}\n" "https://cdn.cloudflare.steamstatic.com/steam/apps/3241660/header.jpg"
