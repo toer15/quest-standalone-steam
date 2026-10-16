@@ -9,6 +9,8 @@ import com.winlator.sysvshm.SysVSharedMemory;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * One sound stream from a game (Wine's ALSA output through Winlator's android_aserver plugin),
@@ -50,7 +52,32 @@ public class ALSAClient {
         this.options = options;
     }
 
+    /** Every stream that has a sound track, so a mute reaches the ones already playing. */
+    private static final Set<ALSAClient> tracks = ConcurrentHashMap.newKeySet();
+    private static volatile boolean muted = false;
+
+    /**
+     * Mutes or unmutes every game sound stream, also the ones that open later (Quest Steam: a game
+     * getting ready in the background mustn't be heard).
+     */
+    public static void setMuted(boolean mute) {
+        muted = mute;
+        for (ALSAClient client : tracks) client.applyVolume();
+    }
+
+    private void applyVolume() {
+        AudioTrack track = audioTrack;
+        if (track == null) return;
+        try {
+            track.setVolume(muted ? 0f : options.volume);
+        }
+        catch (Exception e) {
+            // Released meanwhile.
+        }
+    }
+
     public void release() {
+        tracks.remove(this);
         if (sharedBuffer != null) {
             SysVSharedMemory.unmapSHMSegment(sharedBuffer, sharedBuffer.capacity());
             sharedBuffer = null;
@@ -95,7 +122,8 @@ public class ALSAClient {
             .setBufferSizeInBytes(getBufferSizeInBytes())
             .build();
         bufferCapacity = audioTrack.getBufferCapacityInFrames();
-        if (options.volume != 1.0f) audioTrack.setVolume(options.volume);
+        tracks.add(this);
+        if (muted || options.volume != 1.0f) applyVolume();
         audioTrack.play();
     }
 

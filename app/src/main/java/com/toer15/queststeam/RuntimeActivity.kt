@@ -18,6 +18,7 @@ import com.toer15.queststeam.play.SteamWindows
 import com.toer15.queststeam.display.PlayingService
 import com.toer15.queststeam.gamepad.ControllerRelay
 import com.toer15.queststeam.play.GameRunner
+import com.toer15.queststeam.play.LastGame
 import com.toer15.queststeam.play.LaunchStage
 import com.toer15.queststeam.play.LaunchOverlay
 import com.toer15.queststeam.gamepad.Controllers
@@ -625,6 +626,7 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
     var withGames by remember { mutableStateOf(SteamWindows.startWithGames(ctx)) }
     var light by remember { mutableStateOf(SteamWindows.light(ctx)) }
     var warm by remember { mutableStateOf(SteamWindows.warmUp(ctx)) }
+    var readyGame by remember { mutableStateOf(LastGame.enabled(ctx)) }
     Text(
         "Online games (like R.E.P.O.) need Steam running, as on a PC. This installs Valve's Steam for Windows inside the runtime; it starts in the background before your games.",
         color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
@@ -676,9 +678,24 @@ private fun SteamWindowsRow(vm: RuntimeViewModel, runtimeInstalled: Boolean) {
                 }
             }
             if (warm && withGames) {
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for ((value, label) in listOf(true to "Get my last game ready too", false to "Only Steam")) {
+                        val sel = readyGame == value
+                        Text(
+                            (if (sel) "✓ " else "") + label,
+                            color = if (sel) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                            modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) SteamColors.Accent else Color.White.copy(alpha = 0.08f))
+                                .focusRing().clickable { readyGame = value; LastGame.setEnabled(ctx, value) }.padding(horizontal = 18.dp, vertical = 10.dp),
+                        )
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
+                val last = remember(stage) { LastGame.get(ctx)?.title }
                 Text(
-                    "Steam starts in the background when you open the app and signs in, so pressing Play starts the game right away instead of waiting a minute or two for Steam first.",
+                    "Steam starts in the background when you open the app and signs in, so pressing Play starts the game right away instead of waiting a minute or two for Steam first." +
+                        if (!readyGame) "" else " Then the last game you played next to Steam" + (last?.let { " ($it)" } ?: "") +
+                            " starts too, muted and out of sight, and waits paused at its menu: Play shows it in a few seconds. Another game, or Steam's window, closes it.",
                     color = SteamColors.Muted, fontSize = 13.sp, lineHeight = 18.sp,
                 )
             }

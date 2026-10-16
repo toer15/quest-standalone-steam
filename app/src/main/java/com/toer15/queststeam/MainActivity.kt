@@ -11,6 +11,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import com.toer15.queststeam.gamepad.PadNav
 import com.toer15.queststeam.play.GameRunner
+import com.toer15.queststeam.play.LastGame
 import com.toer15.queststeam.steam.FriendsScreen
 import com.toer15.queststeam.store.StoreActivity
 import com.toer15.queststeam.store.StoreApi
@@ -436,6 +437,8 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, homeFocus: FocusRequester, av
                 }
             }
             Spacer(Modifier.weight(1f))
+            // A game waiting in the background: getting ready, or ready (Play shows it at once).
+            BackgroundGameChip(Modifier.padding(end = 8.dp))
             // Connected controller (exact model) or "No controller".
             ControllerChip(Modifier.padding(end = 8.dp))
             // The app in the headset view (library, downloads and VR games, with the Touch controllers).
@@ -472,6 +475,37 @@ private fun TopBar(tab: Tab, onTab: (Tab) -> Unit, homeFocus: FocusRequester, av
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.08f)))
     }
+}
+
+/**
+ * "R.E.P.O.: getting ready…", then "▶ R.E.P.O. ready" while a game waits in the background (see
+ * GameRunner.getLastGameReady, and Quick Resume): Play shows it in a few seconds. Tap it to play.
+ */
+@Composable
+private fun BackgroundGameChip(modifier: Modifier = Modifier) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val waiting by GameRunner.backgroundGame.collectAsState()
+    val g = waiting ?: return
+    val last = remember(g) { LastGame.get(ctx)?.takeIf { it.exe.name.equals(g.exe, ignoreCase = true) } }
+    Text(
+        if (g.ready) "▶ ${g.title} ready" else "${g.title}: getting ready…",
+        color = if (g.ready) Color(0xFF0E141B) else SteamColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1,
+        modifier = modifier.clip(RoundedCornerShape(50)).background(if (g.ready) SteamColors.GreenBright else Color.White.copy(alpha = 0.07f))
+            .then(
+                if (last == null) Modifier
+                else Modifier.focusRing().clickable {
+                    ctx.startActivity(
+                        Intent(ctx, RuntimeActivity::class.java)
+                            .putExtra(RuntimeActivity.EXTRA_EXE, last.exe.path)
+                            .putExtra(RuntimeActivity.EXTRA_ARGS, last.args)
+                            .putExtra(RuntimeActivity.EXTRA_TITLE, last.title)
+                            .putExtra(RuntimeActivity.EXTRA_MODE, RuntimeActivity.MODE_FLAT)
+                            .putExtra(RuntimeActivity.EXTRA_APPID, last.appId)
+                    )
+                }
+            )
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    )
 }
 
 @Composable

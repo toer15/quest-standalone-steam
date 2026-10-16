@@ -91,17 +91,24 @@ jobs:
           name: quest-steam-apks
           path: |
             quest-steam-quest3.apk
-      - name: Publish release v0.15.0
+      - name: Publish release v0.16.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.15.0
+          tag_name: v0.16.0
           target_commitish: ${{ github.sha }}
-          name: "v0.15.0: Quick Resume, Steam ready sooner"
+          name: "v0.16.0: your last game ready before you press Play"
           prerelease: true
           files: |
             quest-steam-quest3.apk
           body: |
             **Meta Quest 3 app:** `quest-steam-quest3.apk`
+
+            **v0.16.0:** your last game ready before you press Play, like a console.
+            - **Get my last game ready too** (Runtime settings → Steam for Windows, on by default together with **Get Steam ready when the app opens**). Once Steam has signed in in the background after you open the app, the last game you played next to Steam starts too, muted and out of sight, loads, and waits paused at its menu. **Play** then shows it in a few seconds instead of loading it for a minute or more.
+            - The top bar shows **R.E.P.O.: getting ready…**, then **▶ R.E.P.O. ready**. Tap it to play.
+            - Press Play while it's still loading and you get its loading screen, counting the time it has already loaded; nothing starts twice. Playing another game, opening Steam's window or closing Steam closes it. If it closes by itself while getting ready, it isn't started in the background again until you've played it.
+            - Its sound stays off until you press Play, and your controller and pointer only reach a game while it's on screen, so it can't react while you look around the app.
+            - The log says how long the game took to get ready and how fast Play showed it ("⏱ R.E.P.O. is on screen 1.2s after Play").
 
             **v0.15.0:**
             - **Quick Resume, like a console.** Leaving a game (✕ Leave game → **Leave (pause)**) no longer closes it: it waits paused, using no processor time, and **Play** brings it back in a few seconds, right where you were. **Close game** ends it. Starting another game, opening Steam's window or closing Steam ends a paused game first.

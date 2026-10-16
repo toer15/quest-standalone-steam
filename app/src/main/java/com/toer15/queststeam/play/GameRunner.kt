@@ -13,14 +13,18 @@ import com.toer15.queststeam.download.DownloadManager
 import com.toer15.queststeam.gamepad.Controllers
 import com.toer15.queststeam.gamepad.GamepadBridge
 import com.toer15.queststeam.launcher.GameLauncher
+import com.toer15.queststeam.launcher.LaunchResult
 import com.toer15.queststeam.launcher.WineRegistry
 import com.toer15.queststeam.launcher.RuntimeCore
 import com.toer15.queststeam.launcher.RuntimeInstaller
 import com.toer15.queststeam.launcher.XProbe
+import com.winlator.alsaserver.ALSAClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -240,8 +244,9 @@ object GameRunner {
     private fun priorityNow(): Priority = when (val st = _stage.value) {
         is LaunchStage.Running -> if (sessionGame == null && st.title.startsWith("Steam")) Priority.Normal else Priority.SteamLow
         is LaunchStage.Working, is LaunchStage.Opening -> if (sessionGame != null) Priority.SteamLow else Priority.Normal
-        // In the app: a Steam that's still signing in gets full speed (it's ready sooner; its browser
-        // waits paused afterwards), everything else the lowest priority.
+        // In the app: a game getting ready in the background (see getLastGameReady) or waiting paused
+        // keeps its priority, Steam's the lowest; a Steam that's still signing in gets full speed (it's
+        // ready sooner; its browser waits paused afterwards); otherwise everything the lowest priority.
         else -> if (sessionGame != null) Priority.SteamLow else if (!steamSignedIn) Priority.Normal else Priority.AllLow
     }
 
@@ -446,7 +451,7 @@ object GameRunner {
         appendLog("Game speed: ${GameSpeed.describe(ctx)}.")
         if (!launchSteamSession(ctx, l, env, gen)) { BuiltInDisplay.stop(); return }
         PlayingService.start(ctx, "Steam")
-        awaitSteamSignIn(l, null)
+        if (awaitSteamSignIn(l, null)) getLastGameReady(ctx, l)
     }
 
     /** How big the caches that make later starts faster are, for the log (they should grow, then stay). */
@@ -613,12 +618,19 @@ object GameRunner {
                     appendLog("Runtime downloaded and installed.")
                 }
                 val l = launcher ?: GameLauncher(app).also { launcher = it }
+                // A game getting ready in the background stops waiting: it's shown if it's this one, else closed.
+                readyJob?.cancelAndJoin()
+                val vrGame = mode == RuntimeActivity.MODE_VR && VrBridge.isVrGame(gameRoot(l, exe))
                 paused?.let { p ->
                     val alive = withContext(Dispatchers.IO) { l.isRunning(p.exe) } && (if (p.inSteam) steamRunning() else isRunning)
-                    if (alive && p.exe.equals(exe.name, ignoreCase = true)) { resumeGame(app, p, l); return@launch }
+                    if (alive && !vrGame && p.exe.equals(exe.name, ignoreCase = true)) { resumeGame(app, p, l); return@launch }
                     closePaused(app)
                 }
-                val vrGame = mode == RuntimeActivity.MODE_VR && VrBridge.isVrGame(gameRoot(l, exe))
+                readying?.let { r ->
+                    val alive = steamRunning() && withContext(Dispatchers.IO) { l.isRunning(r.exe) }
+                    if (alive && !vrGame && r.exe.equals(exe.name, ignoreCase = true)) { showReadying(app, l, r); return@launch }
+                    closeReadying()
+                }
                 if (!SteamWindows.isSteam(exe) && !vrGame && steamRunning()) {
                     // Steam is already running: the game starts inside its session right away.
                     startInSteam(app, exe, args, title)
@@ -931,6 +943,22 @@ object GameRunner {
                 appendLog("Starting $title anyway.")
             }
         }
+        appendLog("Starting $title next to the running Steam.")
+        trimAppMemory(ctx)
+        _stage.value = LaunchStage.Working(title, "Starting $title…")
+        val result = launchInSession(ctx, l, base, exe, args, title)
+        if (!result.ok) { _stage.value = LaunchStage.Failed(title, result.message); return }
+        LastGame.set(ctx, exe, args, title, gameRoot(l, exe).name.toIntOrNull() ?: 0)
+        PlayingService.start(ctx, title)
+        awaitOnScreen(ctx, l, exe.name, title, System.currentTimeMillis())
+    }
+
+    /**
+     * Starts [exe] inside Steam's running session ([base] is its environment), on its own game desktop
+     * on the same display (Steam's desktop belongs to Steam's explorer). On success it's the session's
+     * game ([sessionGame]).
+     */
+    private suspend fun launchInSession(ctx: Context, l: GameLauncher, base: Map<String, String>, exe: File, args: String, title: String): LaunchResult {
         gameStartedAt = System.currentTimeMillis()
         lastGameDir = exe.parentFile
         sessionGame?.let { old -> withContext(Dispatchers.IO) { l.kill(old) } }
@@ -942,14 +970,11 @@ object GameRunner {
             env["SteamAppId"] = appId.toString()
             env["SteamGameId"] = appId.toString()
         }
-        appendLog("Starting $title next to the running Steam.")
         markBackgroundErrors()
-        trimAppMemory(ctx)
         LogFile.setRunning(true)
         appendLog(withContext(Dispatchers.IO) { memoryNote() })
         foreground(steamLow = true)
         BuiltInDisplay.expectWindow(exe.name.lowercase(), null)
-        _stage.value = LaunchStage.Working(title, "Starting $title…")
         withContext(Dispatchers.IO) { applySteamUiPolicy() }
         val argv = GameLauncher.splitArgs(args)
         if (argv.isNotEmpty()) appendLog("Launch options from Steam: $args")
@@ -957,18 +982,22 @@ object GameRunner {
         val sizeArgs = unitySizeArgs(exe, argv, desktop)
         appendLog(pictureNote(ctx, desktop, sizeArgs))
         appendLog(withContext(Dispatchers.IO) { runCatching { cacheNote(ctx, l) }.getOrDefault("") })
-        // Its own game desktop on the same display (Steam's desktop belongs to Steam's explorer).
         val result = withContext(Dispatchers.IO) {
             l.launchExe(exe, BuiltInDisplay.DISPLAY, env, argv + sizeArgs, desktop = desktop, track = false, desktopName = nextDesktop("game"), onLine = ::appendLog)
         }
-        if (!result.ok) { appendLog(result.message); _stage.value = LaunchStage.Failed(title, result.message); return }
-        val name = exe.name
-        sessionGame = name
-        gameExe = name
+        if (!result.ok) { appendLog(result.message); LogFile.setRunning(false); return result }
+        sessionGame = exe.name
+        gameExe = exe.name
         gameTitle = title
         watchMemory(title)
-        PlayingService.start(ctx, title)
-        val started = System.currentTimeMillis()
+        return result
+    }
+
+    /**
+     * The loading screen until the session's game [name] ([title], started at [started]) draws its
+     * window, then the game screen; then [watchGameExit].
+     */
+    private suspend fun awaitOnScreen(ctx: Context, l: GameLauncher, name: String, title: String, started: Long) {
         var seenAt = 0L
         var lastNote = 0L
         var lastGameLog = ""
@@ -983,6 +1012,7 @@ object GameRunner {
             // while it starts), or it never showed up at all.
             if (if (seenAt > 0) now - seenAt > 8_000 else secs >= 60) {
                 sessionGame = null
+                LastGame.clear(ctx)
                 appendLog("$title closed while starting${if (seenAt > 0) "" else " (it never appeared)"}.")
                 appendLog(withContext(Dispatchers.IO) { memoryNote() })
                 withContext(Dispatchers.IO) { appendNativeLog(); appendUnityLog(); appendDxvkLogs() }
@@ -1010,6 +1040,11 @@ object GameRunner {
         _stage.value = LaunchStage.Opening(title)
         delay(900)
         _stage.value = LaunchStage.Running(title, vr = false)
+        watchGameExit(ctx, l, name, title)
+    }
+
+    /** Watches the session's game [name]: when it closes you're back in the app, and Steam keeps running. */
+    private fun watchGameExit(ctx: Context, l: GameLauncher, name: String, title: String) {
         scope.launch {
             var misses = 0
             while (sessionGame == name && steamRunning()) {
@@ -1021,6 +1056,8 @@ object GameRunner {
             sessionGame = null
             gameExe = null
             gameTitle = null
+            // A paused game can end too (Android may close it when memory runs short).
+            if (paused?.exe == name) { paused = null; ALSAClient.setMuted(false) }
             LogFile.setRunning(false)
             if (!steamRunning()) return@launch
             appendLog("$title closed. Steam keeps running in the background, so the next game starts faster.")
@@ -1040,6 +1077,7 @@ object GameRunner {
         val env = steamEnv ?: return
         BuiltInDisplay.expectWindow(null, SteamWindows.UI_WINDOW_CLASS)
         scope.launch {
+            closeReadying()
             closePaused(ctx)
             foreground(steamLow = false)
             withContext(Dispatchers.IO) {
@@ -1055,9 +1093,23 @@ object GameRunner {
     @Volatile private var gameExe: String? = null
     @Volatile private var gameTitle: String? = null
 
-    /** Quick Resume: a game left with "Leave" waits paused; [inSteam] = it runs next to Steam (only its own processes are paused). */
-    private data class Paused(val exe: String, val title: String, val inSteam: Boolean)
+    /**
+     * Quick Resume: a game left with "Leave" waits paused; [inSteam] = it runs next to Steam (only its
+     * own processes are paused); [ready] = it got ready in the background (see [getLastGameReady]).
+     */
+    private data class Paused(val exe: String, val title: String, val inSteam: Boolean, val ready: Boolean = false)
     @Volatile private var paused: Paused? = null
+        set(v) { field = v; updateBackgroundGame() }
+
+    /** A game waiting in the background, for the app's top bar: getting ready, or [ready] (paused: Play shows it at once). */
+    data class BackgroundGame(val title: String, val exe: String, val ready: Boolean)
+    private val _backgroundGame = MutableStateFlow<BackgroundGame?>(null)
+    val backgroundGame: StateFlow<BackgroundGame?> = _backgroundGame
+
+    private fun updateBackgroundGame() {
+        _backgroundGame.value = paused?.let { BackgroundGame(it.title, it.exe, ready = true) }
+            ?: readying?.let { BackgroundGame(it.title, it.exe, ready = false) }
+    }
 
     /** The game waiting paused for Quick Resume, if any (its title). */
     val pausedTitle: String? get() = paused?.title
@@ -1091,6 +1143,7 @@ object GameRunner {
         _stage.value = LaunchStage.Opening(p.title)
         val n = withContext(Dispatchers.IO) { if (p.inSteam) l.pause(p.exe, false) else l.pauseAll(false) }
         paused = null
+        ALSAClient.setMuted(false)
         LogFile.setRunning(true)
         if (p.inSteam) { sessionGame = p.exe; foreground(steamLow = true) }
         gameExe = p.exe
@@ -1098,9 +1151,14 @@ object GameRunner {
         BuiltInDisplay.expectWindow(p.exe.lowercase(), null)
         PlayingService.start(ctx, p.title)
         playPressedAt = 0L
-        val secs = if (pressed > 0) (System.currentTimeMillis() - pressed) / 1000.0 else 0.0
-        appendLog("⏱ ${p.title} is back ${"%.1f".format(java.util.Locale.US, secs)}s after Play (Quick Resume, $n process(es) continued).")
-        BuiltInDisplay.showStartTime("resumed in ${"%.1f".format(java.util.Locale.US, secs)}s")
+        val secs = "%.1f".format(java.util.Locale.US, if (pressed > 0) (System.currentTimeMillis() - pressed) / 1000.0 else 0.0)
+        if (p.ready) {
+            appendLog("⏱ ${p.title} is on screen ${secs}s after Play (it got ready in the background; $n process(es) continued).")
+            BuiltInDisplay.showStartTime("on screen ${secs}s after Play")
+        } else {
+            appendLog("⏱ ${p.title} is back ${secs}s after Play (Quick Resume, $n process(es) continued).")
+            BuiltInDisplay.showStartTime("resumed in ${secs}s")
+        }
         delay(300)
         _stage.value = LaunchStage.Running(p.title, vr = false)
     }
@@ -1109,6 +1167,7 @@ object GameRunner {
     private suspend fun closePaused(ctx: Context) {
         val p = paused ?: return
         paused = null
+        ALSAClient.setMuted(false)
         val l = launcher ?: return
         appendLog("Closing the paused ${p.title}.")
         if (p.inSteam) {
@@ -1120,6 +1179,130 @@ object GameRunner {
             withContext(Dispatchers.IO) { l.pauseAll(false); l.stop() }
             BuiltInDisplay.stop()
         }
+        gameExe = null
+        gameTitle = null
+    }
+
+    /** The game getting ready in the background (see [getLastGameReady]) while it loads: its exe name, title and start time. */
+    private data class Readying(val exe: String, val title: String, val startedAt: Long)
+    @Volatile private var readying: Readying? = null
+        set(v) { field = v; updateBackgroundGame() }
+    private var readyJob: Job? = null
+
+    /**
+     * "Get my last game ready too" (see [LastGame]): once Steam has signed in in the background as the
+     * app opens, the last game played next to Steam starts too, muted and out of sight, and waits
+     * paused at its menu like a Quick Resume game: Play shows it in a few seconds instead of loading
+     * it for a minute or more. Play while it still loads shows its loading screen; another game, or
+     * Steam's window, closes it.
+     */
+    private fun getLastGameReady(ctx: Context, l: GameLauncher) {
+        if (!LastGame.enabled(ctx)) return
+        val game = LastGame.get(ctx) ?: return
+        // Only while nothing else goes on: Play may have been pressed meanwhile.
+        if (_stage.value !is LaunchStage.Idle || job?.isActive == true || sessionGame != null || paused != null || readying != null) return
+        val base = steamEnv?.takeIf { steamRunning() } ?: return
+        val title = game.title
+        val name = game.exe.name
+        readyJob = scope.launch {
+            val t0 = System.currentTimeMillis()
+            try {
+                appendLog("Getting $title ready in the background (muted, out of sight): Play shows it in a few seconds once it's ready (Runtime settings → Steam for Windows).")
+                // Once started, it's always either readying or ended, also when Play cancels this.
+                val started = withContext(NonCancellable) {
+                    ALSAClient.setMuted(true)
+                    launchInSession(ctx, l, base, game.exe, game.args, title).ok.also { if (it) readying = Readying(name, title, t0) }
+                }
+                if (!started) return@launch
+                PlayingService.start(ctx, "$title (getting ready)")
+                var seenAt = 0L
+                var frameAt = 0L
+                while (true) {
+                    if (!steamRunning()) { readying = null; return@launch } // onGameExit reports it
+                    val now = System.currentTimeMillis()
+                    if (withContext(Dispatchers.IO) { l.isRunning(name) }) seenAt = now
+                    val ended = if (seenAt > 0) now - seenAt > 8_000 else now - t0 >= 60_000
+                    val tooLong = now - t0 >= BUILT_IN_TIMEOUT_S * 1000L
+                    if (ended || tooLong) {
+                        readying = null
+                        if (sessionGame == name) sessionGame = null
+                        gameExe = null
+                        gameTitle = null
+                        LogFile.setRunning(false)
+                        LastGame.clear(ctx)
+                        if (tooLong && !ended) withContext(Dispatchers.IO) { l.kill(name) }
+                        appendLog(
+                            if (ended) "$title closed while getting ready in the background; Play starts it as usual."
+                            else "$title didn't draw within ${BUILT_IN_TIMEOUT_S / 60} minutes in the background; closed it (Play starts it as usual)."
+                        )
+                        withContext(Dispatchers.IO) { appendNativeLog(); appendUnityLog() }
+                        appendBackgroundErrors()
+                        PlayingService.start(ctx, "Steam")
+                        return@launch
+                    }
+                    if (frameAt == 0L && BuiltInDisplay.gameWindow.value) {
+                        frameAt = now
+                        appendLog("$title is drawing (${(now - t0) / 1000}s after it started in the background); it pauses once it has loaded.")
+                    }
+                    if (frameAt > 0 && withContext(Dispatchers.IO) { loadedEnough(now - frameAt) }) break
+                    delay(1000)
+                }
+                withContext(NonCancellable) {
+                    val n = withContext(Dispatchers.IO) { l.pause(name, true) }
+                    readying = null
+                    if (n == 0) {
+                        if (sessionGame == name) sessionGame = null
+                        gameExe = null
+                        gameTitle = null
+                        LogFile.setRunning(false)
+                        appendLog("$title closed while getting ready in the background; Play starts it as usual.")
+                        return@withContext
+                    }
+                    paused = Paused(name, title, inSteam = true, ready = true)
+                    LogFile.setRunning(false)
+                    PlayingService.start(ctx, "$title (ready)")
+                    appendLog("✓ $title is ready (${(System.currentTimeMillis() - t0) / 1000}s in the background) and waits paused at its menu: Play shows it in a few seconds.")
+                    watchGameExit(ctx, l, name, title)
+                }
+            } finally {
+                if (readying == null && paused?.ready != true) ALSAClient.setMuted(false)
+            }
+        }
+    }
+
+    /**
+     * A game getting ready has loaded enough to pause, [sinceFrame] ms after its first frame: once its
+     * Unity log has been quiet for 5 seconds (it's waiting at its menu), else 15 seconds after the first
+     * frame; at most a minute.
+     */
+    private fun loadedEnough(sinceFrame: Long): Boolean {
+        if (sinceFrame < 5_000) return false
+        if (sinceFrame >= 60_000) return true
+        val log = gameLogFile() ?: return sinceFrame >= 15_000
+        return System.currentTimeMillis() - log.lastModified() >= 5_000
+    }
+
+    /** Play on the game that's getting ready in the background: it's shown as soon as it draws (maybe at once). */
+    private suspend fun showReadying(ctx: Context, l: GameLauncher, r: Readying) {
+        readying = null
+        ALSAClient.setMuted(false)
+        LogFile.setRunning(true)
+        appendLog("${r.title} has been getting ready in the background for ${(System.currentTimeMillis() - r.startedAt) / 1000}s: it shows as soon as it draws.")
+        foreground(steamLow = true)
+        PlayingService.start(ctx, r.title)
+        awaitOnScreen(ctx, l, r.exe, r.title, r.startedAt)
+    }
+
+    /** Ends the game getting ready in the background (another game starts, or Steam's window opens). */
+    private suspend fun closeReadying() {
+        readyJob?.cancelAndJoin()
+        val r = readying ?: return
+        readying = null
+        ALSAClient.setMuted(false)
+        LogFile.setRunning(false)
+        appendLog("Closing ${r.title}, which was getting ready in the background.")
+        launcher?.let { l -> withContext(Dispatchers.IO) { l.kill(r.exe) } }
+        if (sessionGame == r.exe) sessionGame = null
         gameExe = null
         gameTitle = null
     }
@@ -1171,6 +1354,9 @@ object GameRunner {
         steamUiPaused = false
         steamSignedIn = false
         paused = null
+        readyJob?.cancel()
+        readying = null
+        ALSAClient.setMuted(false)
         gameExe = null
         gameTitle = null
         LogFile.setRunning(false)
@@ -1231,14 +1417,19 @@ object GameRunner {
         }
     }
 
-    /** The last [n] lines the game wrote to its Unity Player.log since it started (nothing for other games). */
-    private fun gameLogTail(n: Int): List<String> {
-        val l = launcher ?: return emptyList()
+    /** The Unity Player.log the game has written since it started, if it's a Unity game. */
+    private fun gameLogFile(): File? {
+        val l = launcher ?: return null
         val since = gameStartedAt
-        val log = File(l.prefix, "drive_c/users").listFiles().orEmpty()
+        return File(l.prefix, "drive_c/users").listFiles().orEmpty()
             .mapNotNull { File(it, "AppData/LocalLow").takeIf(File::isDirectory) }
             .flatMap { low -> low.walkTopDown().maxDepth(3).filter { it.name == "Player.log" && it.lastModified() >= since - 5_000 }.toList() }
-            .maxByOrNull { it.lastModified() } ?: return emptyList()
+            .maxByOrNull { it.lastModified() }
+    }
+
+    /** The last [n] lines the game wrote to its Unity Player.log since it started (nothing for other games). */
+    private fun gameLogTail(n: Int): List<String> {
+        val log = gameLogFile() ?: return emptyList()
         return runCatching { log.readLines() }.getOrDefault(emptyList()).filter { it.isNotBlank() }.takeLast(n).map { it.take(200) }
     }
 
@@ -1342,9 +1533,13 @@ object GameRunner {
         appendUnityLog()
         job?.cancel()
         warmJob?.cancel()
+        readyJob?.cancel()
         // A paused game or Steam browser couldn't close with Steam.
         paused?.let { p -> launcher?.let { l -> if (p.inSteam) { l.pause(p.exe, false); l.kill(p.exe) } else l.pauseAll(false) } }
         paused = null
+        readying?.let { r -> launcher?.kill(r.exe) }
+        readying = null
+        ALSAClient.setMuted(false)
         gameExe = null
         gameTitle = null
         resumeSteamUi()
