@@ -12,6 +12,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import com.toer15.queststeam.gamepad.PadNav
 import com.toer15.queststeam.play.GameRunner
 import com.toer15.queststeam.play.LastGame
+import com.toer15.queststeam.play.SteamWindows
 import com.toer15.queststeam.steam.FriendsScreen
 import com.toer15.queststeam.store.StoreActivity
 import com.toer15.queststeam.store.StoreApi
@@ -142,8 +143,14 @@ class MainActivity : ComponentActivity() {
         }
         val toLogin = { startActivity(Intent(this, LoginActivity::class.java)); finish() }
         setContent { SteamTheme { LauncherApp(onSignedOut = toLogin, onSteamSignIn = toLogin) } }
-        // Steam for Windows gets ready in the background, so it's signed in by the time a game starts.
-        window.decorView.postDelayed({ GameRunner.warmUpSteam(this) }, 3000)
+        // The game display comes up in the background. Play then starts only the game you pick.
+        window.decorView.postDelayed({
+            if (SteamWindows.warmUp(this) && SteamWindows.startWithGames(this)) {
+                GameRunner.warmUpSteam(this)
+            } else {
+                GameRunner.warmDisplay(this)
+            }
+        }, 400)
     }
 
     // A Bluetooth controller drives the app like a console (see PadNav).

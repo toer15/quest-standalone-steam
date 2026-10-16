@@ -166,9 +166,10 @@ object GameRunner {
     }
 
     /** Before a game starts: the app gives back memory it can (its cache of game pictures). */
-    private fun trimAppMemory(ctx: Context) {
+    private fun trimAppMemory(ctx: Context, collect: Boolean = true) {
         runCatching { coil.Coil.imageLoader(ctx).memoryCache?.clear() }
-        System.gc()
+        // A full collection stalls the start. Games skip it; the display is already up.
+        if (collect) System.gc()
     }
 
     /** Memory the system could give out right now, in MB. */
@@ -395,6 +396,8 @@ object GameRunner {
     /** When Play was pressed, for "on screen N s after Play" (the start-time goal); 0 once reported. */
     @Volatile private var playPressedAt = 0L
     private var warmJob: Job? = null
+    /** Prepares the built-in display only. Never starts steam.exe. */
+    private var displayJob: Job? = null
 
     /**
      * Starts Steam in the background on the built-in display (-silent: no window), as the session's
@@ -484,6 +487,36 @@ object GameRunner {
                 throw e
             } catch (e: Exception) {
                 appendLog("Couldn't get Steam ready: $e")
+            }
+        }
+    }
+
+    /**
+     * Gets the game display ready when the app opens, so Play only has to start the chosen game.
+     * Does not start Wine or steam.exe. A later Play reuses this display.
+     */
+    fun warmDisplay(ctx: Context) {
+        val app = ctx.applicationContext
+        if (BuiltInDisplay.isRunning || displayJob?.isActive == true) return
+        if (job?.isActive == true || _stage.value !is LaunchStage.Idle) return
+        if (!BuiltInDisplay.isBuiltIn(display(app)) || !RuntimeInstaller(app).isInstalled) return
+        val l = launcher ?: GameLauncher(app).also { launcher = it }
+        displayJob = scope.launch {
+            try {
+                prepareRuntime(app, l, gamesOnly = true)
+                if (job?.isActive == true || _stage.value !is LaunchStage.Idle || BuiltInDisplay.isRunning) return@launch
+                val useVortek = Vortek.selected(app) == Vortek.VORTEK && withContext(Dispatchers.IO) {
+                    runCatching { Vortek.prepare(app, l.rootfs, ::appendLog) }
+                        .onFailure { appendLog("Vortek GPU driver setup failed: ${it.message}") }
+                        .getOrDefault(false)
+                }
+                if (job?.isActive == true || _stage.value !is LaunchStage.Idle || BuiltInDisplay.isRunning) return@launch
+                BuiltInDisplay.start(app, l.rootfs, useVortek, ::appendLog)
+                appendLog("Game display is ready. Play starts only the game you choose.")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appendLog("Couldn't get the game display ready: $e")
             }
         }
     }
@@ -586,7 +619,7 @@ object GameRunner {
         if (pressed == 0L) return
         playPressedAt = 0L
         val secs = (System.currentTimeMillis() - pressed) / 1000
-        appendLog("⏱ $title is on screen ${secs}s after Play (goal: 20–30 s).")
+        appendLog("⏱ $title is on screen ${secs}s after Play (goal: a few seconds).")
         BuiltInDisplay.showStartTime("on screen ${secs}s after Play")
     }
 
@@ -785,13 +818,21 @@ object GameRunner {
                     closeReadying()
                 }
                 if (!openingSteam) {
+                    // Keep a display that is already coming up. Do not treat it as a Steam warm-up.
+                    displayJob?.let { if (it.isActive) it.join() }
                     // Play is the game executable only. A Steam that the app started on its own is closed first.
                     if (steamRunning() || coreTrial) {
                         appendLog("Closing Steam. Play starts only $title.")
                         dropSteamSession(l)
                     }
+                    if (DirectLaunch.showImmediately(false) && mode != RuntimeActivity.MODE_VR && BuiltInDisplay.isRunning) {
+                        BuiltInDisplay.expectedWindowClass = exe.name.lowercase()
+                        _stage.value = LaunchStage.Opening(title)
+                    }
                     appendLog("Only $title starts. Steam is not started.")
-                    _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
+                    if (_stage.value !is LaunchStage.Opening) {
+                        _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
+                    }
                     start(ctx, exe, args, mode, title)
                     return@launch
                 }
@@ -826,9 +867,10 @@ object GameRunner {
         steamRestarting = false
         gameStartedAt = System.currentTimeMillis()
         markBackgroundErrors()
-        trimAppMemory(ctx)
+        val steamExe = SteamWindows.isSteam(requested)
+        trimAppMemory(ctx, collect = steamExe)
         LogFile.setRunning(true)
-        prepareRuntime(ctx, l)
+        prepareRuntime(ctx, l, gamesOnly = !steamExe)
         // The copy of steam.exe that was asked for may have been the stale one removed above.
         val exe = if (SteamWindows.isSteam(requested) && !requested.isFile) SteamWindows.exe(l) else requested
         val disp = display(ctx)
@@ -838,7 +880,7 @@ object GameRunner {
         env.putAll(GameSpeed.env(ctx, l))
         appendLog("Game speed: ${GameSpeed.describe(ctx)}.")
         val wantVr = mode == RuntimeActivity.MODE_VR
-        if (!SteamWindows.isSteam(exe)) _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
+        if (!SteamWindows.isSteam(exe)) keepShownGame(title, DirectLaunch.launching(title))
         else _stage.value = LaunchStage.Working(title, "Preparing ${if (wantVr) "VR" else "flat screen"} mode…")
         withContext(Dispatchers.IO) {
             runCatching { env["QSS_PAD_SHM"] = GamepadBridge.prepare(ctx, l.rootfs, ::appendLog).path }
@@ -872,7 +914,7 @@ object GameRunner {
         val termux = !builtIn && disp != null && (disp.startsWith("127.0.0.1") || disp.startsWith("localhost"))
         var baseline = 0
         if (builtIn) {
-            if (!SteamWindows.isSteam(exe)) _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
+            if (!SteamWindows.isSteam(exe)) keepShownGame(title, DirectLaunch.launching(title))
             else _stage.value = LaunchStage.Working(title, "Starting the game display…")
             // The game's own windows have its exe name as their class; Steam's UI is drawn by other processes.
             BuiltInDisplay.expectedWindowClass = if (SteamWindows.isSteam(exe)) null else exe.name.lowercase()
@@ -887,6 +929,9 @@ object GameRunner {
             env.putAll(BuiltInDisplay.start(ctx, l.rootfs, useVortek, ::appendLog))
             if (!SteamWindows.isSteam(exe)) gameFillsDisplay(true)
             setWineAudio(l, env.containsKey("ANDROID_ALSA_SERVER"))
+            if (!SteamWindows.isSteam(exe) && !inVr && DirectLaunch.showImmediately(false)) {
+                _stage.value = LaunchStage.Opening(title)
+            }
         } else if (termux) {
             if (!GameDisplay.isAppInstalled(ctx)) {
                 appendLog("The game display app (Termux:X11) isn't installed. Install it, or clear the display setting to use the built-in display.")
@@ -901,7 +946,7 @@ object GameRunner {
             GameDisplay.configureApp(ctx)
             if (!inVr) {
                 GameDisplay.show(ctx)
-                delay(1500)
+                delay(300)
                 bringBack(ctx)
             }
             baseline = withContext(Dispatchers.IO) { XProbe.visibleWindows()?.size ?: 0 }
@@ -915,7 +960,7 @@ object GameRunner {
                 env["SteamGameId"] = appId.toString()
             }
             appendLog("Direct launch: $title${if (appId > 0) " (app $appId)" else ""}. Only this game starts; Steam is not started.")
-            _stage.value = LaunchStage.Working(title, DirectLaunch.launching(title))
+            keepShownGame(title, DirectLaunch.launching(title))
         } else {
             _stage.value = LaunchStage.Working(title, "Starting Steam…")
         }
@@ -926,7 +971,6 @@ object GameRunner {
         val sizeArgs = if (builtIn && !SteamWindows.isSteam(exe)) unitySizeArgs(exe, argv, desktop) else emptyList()
         if (builtIn && !SteamWindows.isSteam(exe)) {
             appendLog(pictureNote(ctx, desktop, sizeArgs))
-            appendLog(withContext(Dispatchers.IO) { runCatching { cacheNote(ctx, l) }.getOrDefault("") })
         }
         if (builtIn && SteamWindows.isSteam(exe)) {
             steamLogOffset = withContext(Dispatchers.IO) { SteamWindows.connectionLog(l).let { if (it.isFile) it.length() else 0L } }
@@ -954,9 +998,15 @@ object GameRunner {
 
         if (inVr) {
             _stage.value = LaunchStage.Working(title, "Opening the VR view…")
-            delay(2500)
+            delay(400)
             VrBridge.enterVr(ctx)
             _stage.value = LaunchStage.Running(title, vr = true)
+            return
+        }
+        if (builtIn && !SteamWindows.isSteam(exe) && DirectLaunch.showImmediately(false)) {
+            _stage.value = LaunchStage.Running(title, vr = false)
+            appendLog("The game display is up. $title is starting in it.")
+            watchOnScreen(ctx, l, title, gen)
             return
         }
         if (builtIn || termux) {
@@ -1678,6 +1728,7 @@ object GameRunner {
         appendUnityLog()
         job?.cancel()
         warmJob?.cancel()
+        displayJob?.cancel()
         readyJob?.cancel()
         // A paused game or Steam browser couldn't close with Steam.
         paused?.let { p -> launcher?.let { l -> if (p.inSteam) { l.pause(p.exe, false); l.kill(p.exe) } else l.pauseAll(false) } }
@@ -1742,50 +1793,83 @@ object GameRunner {
         (if (BuiltInDisplay.directView(ctx)) "Game picture: direct view (only the game's own frames, scaled to the screen like a game stream), game draws at $desktop"
         else "Game picture: whole Windows desktop, $desktop") + (if (sizeArgs.isNotEmpty()) " (Unity: ${sizeArgs.joinToString(" ")})." else ".")
 
+    /** Written once per process. Later Plays only close leftover Wine processes. */
+    @Volatile private var runtimeReady = false
+
     /**
-     * What every start does first (a game, Steam, or Steam getting ready in the background): Winlator's
+     * What every start does first (a game, Steam, or the game display getting ready): Winlator's
      * per-game Box64 file, DXVK's settings, Wine processes left over, Wine's network info and DLL
-     * settings, and Steam's own settings and library.
+     * settings. Steam's library is updated only when opening Steam, not when starting a game.
      */
-    private suspend fun prepareRuntime(ctx: Context, l: GameLauncher) {
+    private suspend fun prepareRuntime(ctx: Context, l: GameLauncher, gamesOnly: Boolean = false) {
         withContext(Dispatchers.IO) {
-            runCatching { SteamWindows.dedupeExe(l)?.let { appendLog("Steam folder: $it (two copies of steam.exe).") } }
-            // Box64's per-game settings from Winlator (bundled as an asset by CI).
-            runCatching {
-                val rc = File(l.rootfs, "etc/config.box64rc")
-                // Without Winlator's pre-exec hook (see RuntimeCore.disablePreExec): it made Steam.exe wait forever.
-                val bytes = RuntimeCore.sanitizeBox64Rc(ctx.assets.open("graphics/default.box64rc").use { String(it.readBytes()) }).toByteArray()
-                if (!rc.isFile || !rc.readBytes().contentEquals(bytes)) { rc.parentFile?.mkdirs(); rc.writeBytes(bytes) }
+            if (!gamesOnly) {
+                runCatching { SteamWindows.dedupeExe(l)?.let { appendLog("Steam folder: $it (two copies of steam.exe).") } }
             }
-            // DXVK settings: Winlator's (constant buffer range checks avoid out-of-bounds reads), plus less
-            // memory: the Quest's GPU shares its RAM with everything else, and Steam runs next to the game.
-            // Games see 2 GB of video memory (and size their caches to it), and two shader compiler
-            // threads run instead of one per CPU core.
-            runCatching {
-                File(l.rootfs, "home/xuser/.config/dxvk.conf").apply { parentFile?.mkdirs() }.writeText(
-                    "d3d11.constantBufferRangeCheck = \"True\"\n" +
-                        "dxgi.maxDeviceMemory = 2048\n" +
-                        "dxvk.numCompilerThreads = 2\n"
-                )
+            if (!runtimeReady) {
+                var ok = true
+                // Box64's per-game settings from Winlator (bundled as an asset by CI).
+                runCatching {
+                    val rc = File(l.rootfs, "etc/config.box64rc")
+                    // Without Winlator's pre-exec hook (see RuntimeCore.disablePreExec): it made Steam.exe wait forever.
+                    val bytes = RuntimeCore.sanitizeBox64Rc(ctx.assets.open("graphics/default.box64rc").use { String(it.readBytes()) }).toByteArray()
+                    if (!rc.isFile || !rc.readBytes().contentEquals(bytes)) { rc.parentFile?.mkdirs(); rc.writeBytes(bytes) }
+                }.onFailure { ok = false }
+                // DXVK settings: Winlator's (constant buffer range checks avoid out-of-bounds reads), plus less
+                // memory: the Quest's GPU shares its RAM with everything else.
+                // Games see 2 GB of video memory (and size their caches to it), and two shader compiler
+                // threads run instead of one per CPU core.
+                runCatching {
+                    File(l.rootfs, "home/xuser/.config/dxvk.conf").apply { parentFile?.mkdirs() }.writeText(
+                        "d3d11.constantBufferRangeCheck = \"True\"\n" +
+                            "dxgi.maxDeviceMemory = 2048\n" +
+                            "dxvk.numCompilerThreads = 2\n"
+                    )
+                }.onFailure { ok = false }
+                runCatching { NetworkInfo.write(ctx, l.rootfs) }.onFailure { ok = false; appendLog("Couldn't write the network info for Wine: ${it.message}") }
+                // Games started by Steam itself get the same DLLs as the app's own launches: Winlator's
+                // settings replace WINEDLLOVERRIDES for steam.exe, and Steam's games inherit that.
+                runCatching {
+                    val reg = File(l.prefix, "user.reg")
+                    for ((dll, order) in RuntimeCore.dllOverrides(l.environment(null)["WINEDLLOVERRIDES"].orEmpty())) {
+                        WineRegistry.setString(reg, "Software\\Wine\\DllOverrides", dll, order)
+                    }
+                }.onFailure { ok = false; appendLog("Couldn't write Wine's DLL settings: ${it.message}") }
+                if (ok) runtimeReady = true
             }
             val k = l.killLeftovers()
             if (k > 0) appendLog("Closed $k Wine process(es) left over from the last game.")
-            runCatching { NetworkInfo.write(ctx, l.rootfs) }.onFailure { appendLog("Couldn't write the network info for Wine: ${it.message}") }
-            // Games started by Steam itself get the same DLLs as the app's own launches: Winlator's
-            // settings replace WINEDLLOVERRIDES for steam.exe, and Steam's games inherit that.
-            runCatching {
-                val reg = File(l.prefix, "user.reg")
-                for ((dll, order) in RuntimeCore.dllOverrides(l.environment(null)["WINEDLLOVERRIDES"].orEmpty())) {
-                    WineRegistry.setString(reg, "Software\\Wine\\DllOverrides", dll, order)
-                }
-            }.onFailure { appendLog("Couldn't write Wine's DLL settings: ${it.message}") }
-            if (SteamWindows.isInstalled(l)) runCatching {
+            if (!gamesOnly && SteamWindows.isInstalled(l)) runCatching {
                 SteamWindows.keepOffGpu(l)
                 SteamWindows.applyFastSettings(l)
                 val names = DownloadManager.get(ctx)
                 val added = SteamLibrary.register(SteamWindows.dir(l), l.gamesDir) { id -> names.nameOf(id).takeIf { it != "game" } }
                 if (added.isNotEmpty()) appendLog("Steam's library: added ${added.size} game(s) downloaded by the app (${added.joinToString { names.nameOf(it) }}); Play in Steam starts them.")
             }.onFailure { appendLog("Couldn't update Steam's library: ${it.message}") }
+        }
+    }
+
+    /** Leaves the game display up once it is showing. Loading text is only for before that. */
+    private fun keepShownGame(title: String, step: String) {
+        if (_stage.value is LaunchStage.Opening || _stage.value is LaunchStage.Running) return
+        _stage.value = LaunchStage.Working(title, step)
+    }
+
+    /** Logs when the chosen game actually draws, without holding the loading screen. */
+    private fun watchOnScreen(ctx: Context, l: GameLauncher, title: String, gen: Int) {
+        scope.launch {
+            val started = System.currentTimeMillis()
+            while (gen == launchGen && !BuiltInDisplay.gameWindow.value) {
+                if ((System.currentTimeMillis() - started) / 1000 >= BUILT_IN_TIMEOUT_S) {
+                    appendLog("No game window after ${BUILT_IN_TIMEOUT_S}s. The game display stays open.")
+                    return@launch
+                }
+                delay(500)
+            }
+            if (gen == launchGen && BuiltInDisplay.gameWindow.value) noteOnScreen(title)
+        }
+        scope.launch(Dispatchers.IO) {
+            appendLog(runCatching { cacheNote(ctx, l) }.getOrDefault(""))
         }
     }
 

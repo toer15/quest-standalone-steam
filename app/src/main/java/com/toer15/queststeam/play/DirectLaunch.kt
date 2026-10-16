@@ -29,6 +29,12 @@ object DirectLaunch {
     fun launching(title: String) = "Launching $title…"
     fun launching(title: String, seconds: Long) = "Launching $title… ${seconds}s"
 
+    /**
+     * A library game fills the display as soon as its process is started.
+     * Opening Steam itself keeps the Steam loading screen.
+     */
+    fun showImmediately(openingSteam: Boolean) = !openingSteam
+
     fun plan(
         title: String,
         openingSteam: Boolean,

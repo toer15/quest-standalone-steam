@@ -160,6 +160,9 @@ object BuiltInDisplay {
 
     val isRunning get() = server != null
 
+    @Volatile private var startedVortek: Boolean? = null
+    private var startedEnv: Map<String, String>? = null
+
     /** X clients connected to the display right now (Wine processes and their GUI threads). */
     fun clientCount(): Int = server?.resourceIDs?.inUse() ?: 0
 
@@ -173,6 +176,14 @@ object BuiltInDisplay {
      */
     @Synchronized
     fun start(ctx: Context, rootfs: File, useVortek: Boolean, log: (String) -> Unit): Map<String, String> {
+        val ready = startedEnv
+        if (server != null && ready != null && startedVortek == useVortek) {
+            _gameWindow.value = false
+            VortekRendererComponent.lastFrameTime = 0L
+            VortekRendererComponent.fps = 0
+            log("Game display already up. Starting the game.")
+            return ready
+        }
         stop()
         _gameWindow.value = false
         val xs = XServer(ScreenInfo(SCREEN))
@@ -260,6 +271,8 @@ object BuiltInDisplay {
                 log("GPU: Vortek couldn't start (${t.javaClass.simpleName}: ${t.message}); using Turnip.")
             }
         } else log("GPU: Turnip.")
+        startedVortek = useVortek
+        startedEnv = env
         return env
     }
 
@@ -275,6 +288,8 @@ object BuiltInDisplay {
         view?.let { v -> (v.parent as? ViewGroup)?.removeView(v) }
         xConnector = null; shmConnector = null; shm = null
         server = null; view = null
+        startedVortek = null
+        startedEnv = null
         _viewState.value = null
         _gameWindow.value = false
     }

@@ -2,6 +2,7 @@ package com.toer15.queststeam.play
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DirectLaunchTest {
@@ -31,5 +32,10 @@ class DirectLaunchTest {
         assertFalse(steam.waitForSteamSignIn)
         assertEquals("Launching R.E.P.O.… 12s", DirectLaunch.launching("R.E.P.O.", 12))
         assertEquals(DirectLaunch.RUNNING, "Running")
+    }
+
+    @Test fun aGameShowsAsSoonAsItsProcessStarts() {
+        assertTrue(DirectLaunch.showImmediately(openingSteam = false))
+        assertFalse(DirectLaunch.showImmediately(openingSteam = true))
     }
 }
