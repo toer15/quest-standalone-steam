@@ -7,6 +7,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -39,7 +42,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.toer15.queststeam.steam.OwnedGame
 
 /** Letter filter: "" = all, "A" = single letter, "A-F" = range, "#" = non-letters. */
@@ -76,16 +78,24 @@ fun CategoryPopup(
     }
     val counts = remember(games) { games.groupingBy { LetterFilter.first(it.name).let { c -> if (c in 'A'..'Z') c.toString() else "#" } }.eachCount() }
     val pill = RoundedCornerShape(50)
+    val ui = LocalDeviceUi.current
 
-    Dialog(onDismissRequest = onDismiss) {
+    // Drawn inside the screen (not a separate dialog window), so it also works on the VR panel.
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
         Column(
             Modifier
+                .padding(16.dp)
                 .graphicsLayer { scaleX = scale.value; scaleY = scale.value; alpha = ((scale.value - 0.6f) / 0.4f).coerceIn(0f, 1f) }
                 .clip(RoundedCornerShape(24.dp))
                 .background(Color(0xF216212C))
                 .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(24.dp))
                 .animateContentSize(tween(260))
-                .widthIn(min = 300.dp, max = if (expanded) 580.dp else 340.dp)
+                .widthIn(min = 300.dp, max = if (expanded) ui.popupMaxWidth else 340.dp)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .padding(20.dp)
                 .verticalScroll(rememberScrollState())
         ) {
@@ -130,7 +140,7 @@ fun CategoryPopup(
                         val n = counts[c.toString()] ?: 0
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.size(width = 42.dp, height = 48.dp)
+                            modifier = Modifier.size(width = ui.letterCell, height = ui.letterCell + 6.dp)
                                 .clip(RoundedCornerShape(14.dp)).clickable(enabled = n > 0) { onLetters(c.toString()) }
                                 .background(if (n > 0) SteamColors.Card else Color.White.copy(alpha = 0.04f)).padding(top = 6.dp),
                         ) {

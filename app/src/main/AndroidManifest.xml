@@ -2,17 +2,26 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Quest: declare headtracking; required=false lets it also run as a 2D panel app -->
-    <uses-feature android:name="android.hardware.vr.headtracking" android:required="false" android:version="1" />
-    <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- In-app updates: hand the downloaded APK to Android's installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Controllers: rumble, and passing the controller to a flat game while its window is in front. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Downloads keep going while the panel is closed. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- "Updated · tap to open" if the headset blocks opening the new version by itself. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
+        android:name=".QssApp"
         android:allowBackup="false"
         android:extractNativeLibs="true"
-        android:label="Quest Standalone Steam"
+        android:largeHeap="true"
+        android:label="@string/app_name"
         android:theme="@style/Theme.AppCompat.NoActionBar">
-
-        <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s|quest2|questpro" />
 
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
@@ -21,6 +30,26 @@
             </intent-filter>
         </activity>
         <activity android:name=".LoginActivity" android:exported="false" />
+        <activity android:name=".store.StoreActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <receiver android:name=".update.InstallResultReceiver" android:exported="false" />
+        <!-- Opens the app again after an in-app update. -->
+        <receiver android:name=".update.UpdatedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <service android:name=".gamepad.ControllerRelay" android:exported="false" />
+        <service android:name=".download.DownloadService" android:exported="false" />
+        <service android:name=".display.PlayingService" android:exported="false" />
         <activity android:name=".RuntimeActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shared_files" />
+        </provider>
     </application>
 </manifest>

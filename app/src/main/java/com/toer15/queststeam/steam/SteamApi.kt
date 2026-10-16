@@ -12,12 +12,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
 
+/** Stable for Compose: equality covers every field, and lists are re-emitted after changes. */
+@androidx.compose.runtime.Stable
 data class OwnedGame(
     val appId: Int,
     val name: String,
     val playtimeMinutes: Int,
     var isVr: Boolean = false,
     var genres: List<String> = emptyList(),
+    /** Install size from Steam (bytes), 0 until known. */
+    var sizeBytes: Long = 0L,
 ) {
     val headerUrl get() = "https://cdn.cloudflare.steamstatic.com/steam/apps/$appId/header.jpg"
     val capsuleUrl get() = "https://cdn.cloudflare.steamstatic.com/steam/apps/$appId/library_600x900.jpg"

@@ -1,0 +1,14 @@
+LIBRARY xinput1_4
+EXPORTS
+    XInputGetState = QssXInputGetState @2
+    XInputSetState = QssXInputSetState @3
+    XInputGetCapabilities = QssXInputGetCapabilities @4
+    XInputEnable = QssXInputEnable @5
+    XInputGetBatteryInformation = QssXInputGetBatteryInformation @7
+    XInputGetKeystroke = QssXInputGetKeystroke @8
+    XInputGetDSoundAudioDeviceGuids = QssXInputGetDSoundAudioDeviceGuids @6
+    XInputGetAudioDeviceIds = QssXInputGetAudioDeviceIds @10
+    XInputGetStateEx = QssXInputGetStateEx @100
+    XInputWaitForGuideButton = QssXInputWaitForGuideButton @101
+    XInputCancelGuideButtonWait = QssXInputCancelGuideButtonWait @102
+    XInputPowerOffController = QssXInputPowerOffController @103

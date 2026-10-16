@@ -3,7 +3,9 @@ package com.toer15.queststeam.download
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import com.toer15.queststeam.CrashGuard
 import com.toer15.queststeam.launcher.GameLauncher
+import com.toer15.queststeam.steam.SteamAccount
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,7 +20,7 @@ import java.io.File
 /** Per-game install state shown on the cards. */
 sealed interface GameState {
     data object NotInstalled : GameState
-    data class Downloading(val bytes: Long, val total: Long, val etaSeconds: Long?, val source: String) : GameState {
+    data class Downloading(val bytes: Long, val total: Long, val etaSeconds: Long?, val source: String, val note: String? = null) : GameState {
         val fraction get() = if (total > 0) bytes.toFloat() / total else 0f
     }
     data object Installed : GameState
@@ -31,29 +33,33 @@ typealias ProgressFn = (Long, Long) -> Unit
 /** Pluggable source of a game's Windows files. */
 interface DownloadSource {
     val name: String
+    /** True when files already in the install dir can be reused (resume), so they aren't wiped first. */
+    val resumable: Boolean get() = false
     /** Writes the game's files into [dest]; throws with a user-readable message on failure. */
-    suspend fun fetch(ctx: Context, appId: Int, dest: File, progress: ProgressFn)
+    suspend fun fetch(ctx: Context, appId: Int, dest: File, status: (String) -> Unit, progress: ProgressFn)
 }
 
 /**
- * Steam depot download. Not implemented yet: needs a Steam CM client (e.g. JavaSteam's
- * ContentDownloader) with the user's own Steam login + Steam Guard, depot manifests and keys.
- * Kept as a pluggable source so it can be dropped in without touching the UI.
+ * Downloads the game's Windows depots straight from Steam's CDN (JavaSteam DepotDownloader)
+ * with the player's own Steam sign-in. Existing files are validated and reused on retry.
  */
 class SteamDepotSource : DownloadSource {
     override val name = "Steam"
-    override suspend fun fetch(ctx: Context, appId: Int, dest: File, progress: ProgressFn) {
-        throw UnsupportedOperationException(
-            "Direct Steam downloads aren't implemented yet. Download the game's Windows files on a PC " +
-                "(SteamCMD/DepotDownloader, see docs/DEPOTS.md) and use \"Import from folder\"."
+    override val resumable = true
+    override suspend fun fetch(ctx: Context, appId: Int, dest: File, status: (String) -> Unit, progress: ProgressFn) {
+        val account = SteamAccount.get(ctx)
+        if (!account.session.isSignedIn) throw IllegalStateException(
+            "To download, sign in with your Steam account: profile picture → Sign in to Steam."
         )
+        account.downloader.download(appId, dest, status, progress)
     }
 }
 
 /** Copies a folder the user picked (SAF tree URI) into the game's install dir. Works today. */
 class FolderImportSource(private val tree: Uri) : DownloadSource {
     override val name = "Import"
-    override suspend fun fetch(ctx: Context, appId: Int, dest: File, progress: ProgressFn) {
+    override suspend fun fetch(ctx: Context, appId: Int, dest: File, status: (String) -> Unit, progress: ProgressFn) {
+        status("Copying files…")
         val root = DocumentFile.fromTreeUri(ctx, tree) ?: error("Can't open folder")
         val total = sizeOf(root)
         var done = 0L
@@ -77,6 +83,8 @@ class FolderImportSource(private val tree: Uri) : DownloadSource {
 /** App-wide download/install manager. Install dir: <wine prefix>/drive_c/games/<appId>. */
 class DownloadManager private constructor(private val ctx: Context) {
     companion object {
+        /** Automatic reconnect-and-resume attempts before a download shows "failed". */
+        const val MAX_RETRIES = 6
         @Volatile private var inst: DownloadManager? = null
         fun get(ctx: Context) = inst ?: synchronized(this) { inst ?: DownloadManager(ctx.applicationContext).also { inst = it } }
     }
@@ -88,54 +96,177 @@ class DownloadManager private constructor(private val ctx: Context) {
     val states: StateFlow<Map<Int, GameState>> = _states
 
     var primarySource: DownloadSource = SteamDepotSource()
+    @Volatile private var names: Map<Int, String> = emptyMap()
+    private val crashRestarts = HashMap<Int, Int>()
+
+    init {
+        // An error on a downloader/Steam thread would otherwise close the app: restart (resume) the
+        // download instead, and only give up with the reason after a few tries.
+        CrashGuard.onBackgroundError = { msg ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post { restartActive(msg) }
+        }
+        // Downloads interrupted by the app closing or the headset restarting continue by themselves.
+        scope.launch(Dispatchers.Main) { resumePending() }
+    }
+
+    private fun restartActive(message: String) {
+        val active = jobs.filterValues { it.isActive }.keys.toList()
+        for (id in active) {
+            jobs.remove(id)?.cancel()
+            val n = (crashRestarts[id] ?: 0) + 1
+            crashRestarts[id] = n
+            if (n > MAX_RETRIES) set(id, GameState.Failed("Download stopped: $message. Tap Retry download to continue."))
+            else download(id)
+        }
+    }
+
+    /** Game names for the download notification. */
+    fun setNames(map: Map<Int, String>) { names = map }
+    fun nameOf(appId: Int) = names[appId] ?: "game"
 
     fun dirFor(appId: Int) = File(launcher.gamesDir, appId.toString())
     private fun marker(appId: Int) = File(dirFor(appId), ".qss-installed")
+    /** Present while a download is unfinished, so it resumes after the app or headset restarts. */
+    private fun pending(appId: Int) = File(dirFor(appId), ".qss-downloading")
 
-    fun refresh(appIds: Collection<Int>) = _states.update { m ->
-        m + appIds.filter { m[it] !is GameState.Downloading }.associateWith { if (marker(it).exists()) GameState.Installed else GameState.NotInstalled }
+    private fun resumePending() {
+        val dirs = launcher.gamesDir.listFiles() ?: return
+        for (d in dirs) {
+            val id = d.name.toIntOrNull() ?: continue
+            if (File(d, ".qss-downloading").exists() && !File(d, ".qss-installed").exists()) download(id)
+        }
     }
 
-    fun stateOf(appId: Int) = _states.value[appId] ?: if (marker(appId).exists()) GameState.Installed else GameState.NotInstalled
+    fun refresh(appIds: Collection<Int>) = _states.update { m ->
+        m + appIds.filter { m[it] !is GameState.Downloading && m[it] !is GameState.Failed }.associateWith { diskState(it) }
+    }
+
+    fun stateOf(appId: Int) = _states.value[appId] ?: diskState(appId)
+
+    /** Installed games stay installed until the player taps Uninstall. */
+    private fun diskState(appId: Int): GameState = when {
+        marker(appId).exists() -> GameState.Installed
+        pending(appId).exists() -> GameState.Downloading(0, -1, null, primarySource.name, "Resuming…")
+        else -> GameState.NotInstalled
+    }
 
     fun download(appId: Int, source: DownloadSource = primarySource) {
         if (jobs[appId]?.isActive == true) return
-        if (!launcher.isInstalled && source !is SteamDepotSource) {
-            // Files can be imported before the runtime exists, but the prefix dir must exist.
-            launcher.gamesDir.mkdirs()
-        }
-        set(appId, GameState.Downloading(0, -1, null, source.name))
+        // Files can arrive before the runtime is installed, but the prefix dir must exist.
+        launcher.gamesDir.mkdirs()
+        val prev = _states.value[appId] as? GameState.Downloading
+        set(appId, GameState.Downloading(prev?.bytes ?: 0, prev?.total ?: -1, null, source.name, "Starting…"))
+        // Keeps downloading while the panel is closed (Horizon OS pauses background apps).
+        DownloadService.start(ctx)
         jobs[appId] = scope.launch {
             val dest = dirFor(appId)
-            val start = System.nanoTime()
+            var note: String? = "Starting…"
+            var last = GameState.Downloading(prev?.bytes ?: 0, prev?.total ?: -1, null, source.name, note)
+            // Rate from bytes received in this run only, so resumed bytes don't inflate it.
+            var firstBytes = -1L
+            var firstAt = 0L
             try {
-                dest.deleteRecursively(); dest.mkdirs()
+                if (!source.resumable) dest.deleteRecursively()
+                dest.mkdirs()
+                if (source.resumable) pending(appId).writeText(source.name)
                 var lastEmit = 0L
-                source.fetch(ctx, appId, dest) { done, total ->
-                    val now = System.nanoTime()
-                    if (now - lastEmit < 200_000_000L && done != total) return@fetch
-                    lastEmit = now
-                    val secs = (now - start) / 1e9
-                    val rate = if (secs > 0.5) done / secs else 0.0
-                    val eta = if (rate > 0 && total > 0) ((total - done) / rate).toLong() else null
-                    set(appId, GameState.Downloading(done, total, eta, source.name))
+                var attempt = 0
+                while (true) {
+                    try {
+                        source.fetch(ctx, appId, dest, status = { msg ->
+                            note = msg
+                            last = last.copy(note = msg)
+                            set(appId, last)
+                        }) { done, total ->
+                            val now = System.nanoTime()
+                            if (now - lastEmit < 250_000_000L && done != total) return@fetch
+                            lastEmit = now
+                            if (firstBytes < 0 || done < firstBytes) { firstBytes = done; firstAt = now }
+                            val secs = (now - firstAt) / 1e9
+                            val rate = if (secs > 1.0) (done - firstBytes) / secs else 0.0
+                            val eta = if (rate > 0 && total > 0) ((total - done) / rate).toLong() else null
+                            last = GameState.Downloading(done, total, eta, source.name, note)
+                            set(appId, last)
+                        }
+                        break
+                    } catch (e: Throwable) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        // Network drops and stalls: reconnect and resume (files already written are kept).
+                        attempt++
+                        if (!source.resumable || attempt > MAX_RETRIES || isPermanent(e)) throw e
+                        val wait = minOf(60L, 5L * attempt * attempt)
+                        note = "Connection lost, resuming in ${wait}s (try $attempt of $MAX_RETRIES)…"
+                        last = last.copy(note = note, etaSeconds = null)
+                        set(appId, last)
+                        kotlinx.coroutines.delay(wait * 1000)
+                        firstBytes = -1L
+                        note = "Resuming…"
+                    }
                 }
                 if (!isActive) return@launch
-                if (launcher.findExes(dest).isEmpty()) throw IllegalStateException("No .exe found in the imported files")
+                if (launcher.findExes(dest).isEmpty()) throw IllegalStateException("Download finished, but the game has no Windows .exe")
                 marker(appId).writeText(source.name)
+                pending(appId).delete()
+                crashRestarts.remove(appId)
                 set(appId, GameState.Installed)
             } catch (e: Throwable) {
-                dest.deleteRecursively()
-                set(appId, GameState.Failed(e.message ?: e.toString()))
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                // Keep Steam files so the next tap on Download resumes; imports start over.
+                if (!source.resumable) dest.deleteRecursively()
+                set(appId, GameState.Failed(friendly(e)))
             }
         }
     }
 
-    fun cancel(appId: Int) { jobs.remove(appId)?.cancel(); dirFor(appId).deleteRecursively(); set(appId, GameState.NotInstalled) }
+    private fun isPermanent(e: Throwable): Boolean =
+        e is IllegalStateException || (e is com.toer15.queststeam.steamclient.SteamLoginException && e.needsNewLogin) ||
+            e.message.orEmpty().contains("No space left", ignoreCase = true)
+
+    private fun friendly(e: Throwable): String {
+        val m = e.message ?: e.toString()
+        return when {
+            m.contains("No space left", true) -> "Not enough free space on the headset for this game."
+            e is com.toer15.queststeam.steamclient.SteamStallException -> "Steam stopped sending data. Check your Wi-Fi and tap Retry download to continue where it stopped."
+            else -> m
+        }
+    }
+
+    /** Stops a download and deletes its files. */
+    fun cancel(appId: Int) {
+        jobs.remove(appId)?.cancel()
+        crashRestarts.remove(appId)
+        dirFor(appId).deleteRecursively()
+        set(appId, GameState.NotInstalled)
+    }
 
     fun uninstall(appId: Int) { cancel(appId) }
 
-    fun mainExe(appId: Int): File? = launcher.findExes(dirFor(appId)).firstOrNull()
+    /** The .exe Steam itself starts (saved at download time), else the largest .exe in the game folder. */
+    /** The .exe Steam starts for this game; [vr] picks Steam's separate "Launch in VR" entry when there is one. */
+    fun mainExe(appId: Int, vr: Boolean = false): File? {
+        val dir = dirFor(appId)
+        val lines = launchLines(appId)
+        val rel = (if (vr) lines?.getOrNull(3) else null)?.takeIf { it.isNotBlank() } ?: lines?.firstOrNull()
+        rel?.takeIf { it.isNotBlank() }?.let { r ->
+            val f = File(dir, r)
+            if (f.isFile) return f
+            // Steam paths are case-insensitive on Windows.
+            dir.walkTopDown().firstOrNull { it.isFile && it.relativeTo(dir).path.equals(r, ignoreCase = true) }?.let { return it }
+        }
+        return launcher.findExes(dir).firstOrNull()
+    }
+
+    /** Launch arguments Steam uses for this game ("" if none). */
+    fun launchArgs(appId: Int, vr: Boolean = false): String {
+        val lines = launchLines(appId)
+        return if (vr && !lines?.getOrNull(3).isNullOrBlank()) lines?.getOrNull(4).orEmpty() else lines?.getOrNull(1).orEmpty()
+    }
+
+    /** True if Steam lists a separate VR launch entry for this game. */
+    fun hasVrLaunch(appId: Int) = !launchLines(appId)?.getOrNull(3).isNullOrBlank()
+
+    private fun launchLines(appId: Int): List<String>? =
+        File(dirFor(appId), com.toer15.queststeam.steamclient.SteamDownloader.LAUNCH_FILE).takeIf { it.isFile }?.readLines()
 
     private fun set(appId: Int, s: GameState) = _states.update { it + (appId to s) }
 }
